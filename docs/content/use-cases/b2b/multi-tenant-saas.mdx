@@ -6,8 +6,24 @@ sidebar_position: 1
 
 # Multi-Tenant SaaS Identity (B2B)
 
-Use this pattern when your platform serves customer organizations and each organization needs an isolated workspace with
-controlled access.
+## When to Choose This Pattern
+
+Choose this pattern if you build one product that serves many customer companies, and each company needs isolated users,
+roles, and data inside its own workspace.
+
+Use this pattern when you need to:
+
+- Isolate each customer organization so users and data from one organization never appear in another organization.
+- Let each organization assign its own administrators to invite users, manage roles, and control access without platform-team intervention.
+- Support enterprise authentication requirements, such as single sign-on (SSO) and centralized identity provider policies.
+- Apply organization-specific access rules, approval requirements, or compliance controls at the tenant level.
+- Enforce subscription or contract differences per organization, such as feature access, usage limits, or API entitlements.
+
+This pattern may not fit when:
+
+- You run an internal tool for one organization with one shared directory and one global administrator model.
+- You build a consumer-only product where individual users sign up directly and do not belong to managed customer organizations.
+- You do not need organization-level isolation, delegated administration, or tenant-specific access controls.
 
 ## Use Case Scope
 

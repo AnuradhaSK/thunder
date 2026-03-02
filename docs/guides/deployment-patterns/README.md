@@ -57,6 +57,24 @@ Deploy Thunder on OpenChoreo platform for advanced orchestration and cell-based 
 - Advanced networking
 - Service mesh integration
 
+---
+
+### 🏢 [Multi-Tenant SaaS Pattern](multi-tenant-saas.mdx)
+
+Deploy Thunder as a shared identity platform serving multiple tenants (organizations) with isolated identity management.
+
+**Best for:**
+- SaaS applications with multiple customers
+- B2B platforms requiring tenant-level identity isolation
+- Centralized identity management across organizations
+- Cost-efficient multi-tenant architectures
+
+**Key Features:**
+- Logical tenant isolation via deployment identifiers
+- Shared infrastructure with per-tenant data separation
+- Centralized control plane for all tenants
+- Scalable multi-tenant identity management
+
 ## Getting Started
 
 ### For Docker

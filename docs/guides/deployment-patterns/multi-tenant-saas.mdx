@@ -1,0 +1,63 @@
+# Multi-Tenant SaaS Deployment Pattern
+
+This guide describes the multi-tenant SaaS (Software as a Service) deployment pattern for Thunder, where a single Thunder instance serves multiple tenants (organizations or customers) with isolated identity management.
+
+## When to Choose This Pattern
+
+A SaaS platform is a cloud-hosted software application that serves multiple customers (tenants) from a shared infrastructure, where each tenant's data and configurations are logically isolated while the underlying resources are centrally managed. Instead of each customer deploying and maintaining their own instance, a SaaS platform provides the software as a managed service—accessible on demand, typically via a web browser or API.
+
+Choose this pattern if your:
+
+- **Application is a SaaS product** that onboards multiple customers (tenants), and each tenant needs its own isolated set of users, roles, and authentication configurations managed through a single Thunder deployment.
+- **Platform requires tenant-level identity isolation**, where each tenant's users, credentials, and login flows must be kept separate so that one tenant's data is never exposed to another.
+- **Infrastructure strategy favors shared resources**, where running a single Thunder instance (or cluster) to serve all tenants is preferred over deploying a dedicated instance per customer, reducing operational overhead and cost.
+- **Product needs centralized identity management**, where administrators can manage authentication policies, identity providers, and user schemas across all tenants from a single control plane.
+- **Deployment model aligns with a multi-tenant architecture**, such as a B2B platform, a marketplace, or an enterprise suite, where each subscribing organization is represented as a separate tenant with its own identity boundary.
+
+## Architecture Overview
+
+In the multi-tenant SaaS pattern, Thunder uses the `DEPLOYMENT_ID` to logically partition data across tenants within shared database tables. Each tenant operates within its own organizational boundary while sharing the same Thunder infrastructure.
+
+```
+┌─────────────────────────────────────────────────┐
+│                  Load Balancer                   │
+└──────────────────────┬──────────────────────────┘
+                       │
+┌──────────────────────▼──────────────────────────┐
+│              Thunder Instance(s)                 │
+│                                                  │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐      │
+│  │ Tenant A │  │ Tenant B │  │ Tenant C │      │
+│  │  (Org A) │  │  (Org B) │  │  (Org C) │      │
+│  └──────────┘  └──────────┘  └──────────┘      │
+└──────────────────────┬──────────────────────────┘
+                       │
+┌──────────────────────▼──────────────────────────┐
+│         Shared PostgreSQL Database               │
+│  (Data isolated by DEPLOYMENT_ID per tenant)     │
+└─────────────────────────────────────────────────┘
+```
+
+## Key Characteristics
+
+| Characteristic | Description |
+|---|---|
+| **Tenant Isolation** | Each tenant's data is logically isolated using deployment identifiers |
+| **Shared Infrastructure** | All tenants share the same Thunder instances and database |
+| **Centralized Management** | Single control plane for managing all tenants |
+| **Scalability** | Scale the shared infrastructure to handle all tenants collectively |
+| **Cost Efficiency** | Lower per-tenant cost compared to dedicated instance deployments |
+
+## Prerequisites
+
+- **PostgreSQL Database**: Required for production multi-tenant deployments (SQLite is not recommended for multi-tenant scenarios)
+- **Kubernetes Cluster**: Recommended for production deployments with auto-scaling
+- **Load Balancer**: To distribute traffic across Thunder replicas
+
+## Getting Started
+
+For deployment instructions, refer to:
+
+- [Kubernetes Deployment Guide](kubernetes/kubernetes-deployment.md) for deploying Thunder on Kubernetes
+- [Docker Deployment Guide](docker/docker-deployment.md) for containerized deployments
+- [OpenChoreo Deployment Guide](openchoreo/openchoreo-deployment.md) for platform-based deployments

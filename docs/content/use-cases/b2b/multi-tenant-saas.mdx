@@ -1,6 +1,6 @@
 ---
 title: Multi-Tenant SaaS Identity (B2B)
-description: Define identity, access, and governance requirements for multi-tenant B2B SaaS workspaces.
+description: Identify when to use Thunder for B2B SaaS identity and review the supported use case scope.
 sidebar_position: 1
 ---
 
@@ -8,116 +8,97 @@ sidebar_position: 1
 
 ## When to Choose This Pattern
 
-Choose this pattern if you build one product that serves many customer companies, and each company needs isolated users,
-roles, and data inside its own workspace.
+Choose this pattern if your application is a B2B SaaS product and you need a reliable identity and access management (IAM) foundation from day one.
 
-Use this pattern when you need to:
+A B2B SaaS product is software that one business provides to other businesses through the cloud. Each customer business expects separate users, administrators, policies, and branding. If your product serves multiple customer companies and each company needs its own workspace, your product follows a B2B SaaS model.
 
-- Isolate each customer organization so users and data from one organization never appear in another organization.
-- Let each organization assign its own administrators to invite users, manage roles, and control access without platform-team intervention.
-- Support enterprise authentication requirements, such as single sign-on (SSO) and centralized identity provider policies.
-- Apply organization-specific access rules, approval requirements, or compliance controls at the tenant level.
-- Enforce subscription or contract differences per organization, such as feature access, usage limits, or API entitlements.
-
-This pattern may not fit when:
-
-- You run an internal tool for one organization with one shared directory and one global administrator model.
-- You build a consumer-only product where individual users sign up directly and do not belong to managed customer organizations.
-- You do not need organization-level isolation, delegated administration, or tenant-specific access controls.
+Thunder helps you solve the IAM challenges in that model. You can onboard organizations, control access, connect enterprise identity providers, and apply security and governance controls without building each capability from scratch.
 
 ## Use Case Scope
 
-The SaaS platform must provide identity, access control, and governance for multiple customer organizations, where each
-organization operates in an isolated workspace.
+From a B2B application owner view, you need to solve the full customer lifecycle, from signup to security, governance, and growth reporting. Thunder provides capabilities for each stage.
 
-## Organization Onboarding and Authentication
+### Organization Onboarding (Signup)
 
-The first interaction in the SaaS application must onboard a new customer by completing two mandatory actions in a
-single flow:
+As the first problem, you define how a new customer company subscribes to your application. In this stage, one user acts on behalf of a business and completes two mandatory actions in one flow:
 
 1. Register the user in the platform.
-2. Create a dedicated workspace for that user and assign them as the workspace owner.
+2. Create a dedicated workspace for that user and assign that user as the workspace owner.
 
-User registration must support:
+Thunder supports flexible signup models that you can align with your product journey:
 
-- Email with OTP or password
-- Google authentication
-- GitHub authentication
+- Username, password, and other user profile attributes.
+- Google authentication.
+- GitHub authentication.
+- Microsoft authentication.
 
-For operational integrations, the platform must expose organization lifecycle events, including workspace creation
-status, so internal and third-party systems can synchronize and provision related data.
+Thunder also supports administrator verification during signup by using:
 
-Workspace administrator authentication must include:
+- Email OTP.
+- SMS OTP.
+- Magic link.
 
-- Secure login with email and OTP or password
-- OAuth login through Google and GitHub
-- Login failure tracking
-- Secure session management
+A visitor can sign up as an **Organization Admin** to create a new workspace (organization). Thunder manages admin users at the root-level organizational unit (OU).
 
-## Organization-Level User Management
+For operational integration needs, Thunder exposes organization lifecycle events, including workspace creation status, so your internal systems and third-party systems can synchronize and provision related data.
 
-The platform must allow workspace owners and administrators to:
+If your registration flow includes commercial controls, Thunder helps you integrate subscription models before workspace onboarding completes, including:
 
-- Send team invitations by email
-- Assign roles during invitation or onboarding
+- Billing service integration.
+- Business verification service integration.
 
-The platform must ensure invited users:
+### Collaboration
 
-- Become platform users with access only to the specific workspace
-- Be blocked from accessing other workspaces
+After onboarding, you need each customer company to grow safely inside its own workspace. Thunder lets organization admins invite users to collaborate in the workspace. If your business model allows it, invited users can create new workspaces.
 
-Invitation management must support:
+### Organizational Identity Management
 
-- Invitation expiry
-- Invitation revocation by the inviter
+As your customers scale, identity operations become a daily requirement. Thunder lets you onboard users directly, invite users, connect bring your own identity provider (BYOIDP), use just-in-time (JIT) provisioning, and support account linking. Thunder also supports user store configuration for advanced edge cases.
 
-## Workspace Authorization and Subscription Controls
+### Identity Recovery
 
-Each workspace must enforce role-based access control:
+When users lose access, fast recovery reduces support cost and user frustration. Thunder provides username recovery and password recovery flows to restore access securely.
 
-- Roles define permission scopes
-- The platform enforces permissions at both API and UI levels
-- Only authorized users can perform privileged actions
+### Account and Access Administration
 
-Each workspace must be linked to a subscription tier. The tier must control:
+You need access controls that match organization policy and risk posture. Thunder provides account locking, user grouping, and role assignment so you can enforce least-privilege access across customer workspaces.
 
-- Feature availability
-- Usage limits
-- API access constraints
+### Organizational Branding
 
-When a workspace subscription changes, the platform must update authorization and entitlements dynamically based on the
-new tier.
+Enterprise customers expect workspace-level branding and access URL control. Thunder lets you override allowed user interface branding elements for each organization, define an organization subdomain, and plan for fully custom domains in phase 2.
 
-## API Access Enforcement
+### Organization Discovery Mechanisms
 
-Every API request must pass authentication and authorization checks. Authorization must validate:
+In multi-organization products, users need a reliable way to reach the correct organization context. Thunder supports organization discovery by organization ID for direct child organization access. Thunder also supports email-domain discovery in phase 2 and extensibility to plug in custom discovery mechanisms in phase 2.
 
-- User identity
-- Workspace membership
-- Role permissions
-- Subscription tier
+### Organizational Sign-In and Authentication
 
-The platform must reject unauthorized access attempts.
+Some B2B products use one global sign-in flow, while others need organization-specific controls. Thunder supports both models. You can use the globally defined sign-in flow and alter login options based on the capabilities allowed for each organization.
 
-## Platform Monitoring and Governance
+### Security and Governance
 
-The platform must provide platform administrators with a cross-workspace dashboard that includes:
+B2B customers expect strong controls by default. Thunder provides security and privacy capabilities that you can apply at organization level.
 
-- Total organization registrations
-- Monthly active users (MAU)
-- Authentication attempts
-- Login failures
-- Workspace growth trends
+Security capabilities include:
 
-The platform must allow platform administrators to govern customer workspaces by:
+- Account locking.
+- CAPTCHA.
+- Rate limiting.
 
-- Viewing all registered workspaces
-- Viewing workspace metadata
-- Monitoring workspace activity indicators
-- Deactivating workspaces
+Privacy and compliance capabilities include:
 
-When a workspace is deactivated, the platform must prevent users in that workspace from:
+- General Data Protection Regulation (GDPR) support.
+- Consent management.
 
-- Logging in
-- Accessing APIs
-- Using the platform
+### Troubleshooting
+
+When a customer reports an access issue, you need organization-level diagnostic visibility. Thunder provides logs that help your teams troubleshoot organization-level issues quickly.
+
+### Insights
+
+To run a SaaS business, you need usage and risk insights per customer organization. Thunder provides organization insights, including:
+
+- Monthly active users (MAU).
+- Inactive users.
+- Locked users.
+- Failed login attempts.

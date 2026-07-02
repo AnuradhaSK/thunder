@@ -81,6 +81,12 @@ type OrganizationUnitServiceInterface interface {
 	GetOrganizationUnitGroupsByPath(
 		ctx context.Context, handlePath string, limit, offset int,
 	) (*GroupListResponse, *tidcommon.ServiceError)
+	GetOrganizationUnitRoles(
+		ctx context.Context, id string, limit, offset int,
+	) (*RoleListResponse, *tidcommon.ServiceError)
+	GetOrganizationUnitRolesByPath(
+		ctx context.Context, handlePath string, limit, offset int,
+	) (*RoleListResponse, *tidcommon.ServiceError)
 	GetOrganizationUnitHandlesByIDs(
 		ctx context.Context, ids []string,
 	) (map[string]string, *tidcommon.ServiceError)
@@ -93,6 +99,7 @@ type ConfigurableOUService interface {
 	OrganizationUnitServiceInterface
 	SetOUUserResolver(resolver OUUserResolver)
 	SetOUGroupResolver(resolver OUGroupResolver)
+	SetOURoleResolver(resolver OURoleResolver)
 }
 
 // OrganizationUnitService provides organization unit management operations.
@@ -102,6 +109,7 @@ type organizationUnitService struct {
 	transactioner transaction.Transactioner
 	userResolver  OUUserResolver
 	groupResolver OUGroupResolver
+	roleResolver  OURoleResolver
 }
 
 func (ous *organizationUnitService) SetOUUserResolver(resolver OUUserResolver) {
@@ -110,6 +118,10 @@ func (ous *organizationUnitService) SetOUUserResolver(resolver OUUserResolver) {
 
 func (ous *organizationUnitService) SetOUGroupResolver(resolver OUGroupResolver) {
 	ous.groupResolver = resolver
+}
+
+func (ous *organizationUnitService) SetOURoleResolver(resolver OURoleResolver) {
+	ous.roleResolver = resolver
 }
 
 // newOrganizationUnitService creates a new instance of OrganizationUnitService.
@@ -922,6 +934,29 @@ func (ous *organizationUnitService) GetOrganizationUnitGroups(
 	return buildGroupListResponse(base, items, totalCount, limit, offset)
 }
 
+// GetOrganizationUnitRoles retrieves a list of roles for a given organization unit ID.
+func (ous *organizationUnitService) GetOrganizationUnitRoles(
+	ctx context.Context, id string, limit, offset int,
+) (*RoleListResponse, *tidcommon.ServiceError) {
+	if ous.roleResolver == nil {
+		return nil, &tidcommon.InternalServerError
+	}
+
+	items, totalCount, svcErr := ous.getResourceListWithExistenceCheck(
+		ctx, id, limit, offset, "roles",
+		func(ctx context.Context, id string, limit, offset int) (interface{}, error) {
+			return ous.roleResolver.GetRoleListByOUID(ctx, id, limit, offset)
+		},
+		ous.roleResolver.GetRoleCountByOUID,
+		false, // No composite error mapping for roles
+	)
+	if svcErr != nil {
+		return nil, svcErr
+	}
+	base := fmt.Sprintf("/organization-units/%s/roles", id)
+	return buildRoleListResponse(base, items, totalCount, limit, offset)
+}
+
 // GetOrganizationUnitChildren retrieves a list of child organization units for a given organization unit ID.
 func (ous *organizationUnitService) GetOrganizationUnitChildren(
 	ctx context.Context, id string, limit, offset int, f *tidcommon.FilterGroup,
@@ -1025,6 +1060,46 @@ func (ous *organizationUnitService) GetOrganizationUnitGroupsByPath(
 	}
 
 	return ous.GetOrganizationUnitGroups(ctx, ou.ID, limit, offset)
+}
+
+// GetOrganizationUnitRolesByPath retrieves a list of roles by hierarchical handle path.
+func (ous *organizationUnitService) GetOrganizationUnitRolesByPath(
+	ctx context.Context, handlePath string, limit, offset int,
+) (*RoleListResponse, *tidcommon.ServiceError) {
+	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, loggerComponentNameService))
+	logger.Debug(ctx, "Getting organization unit roles by path", log.String("path", handlePath))
+
+	handles, serviceError := validateAndProcessHandlePath(handlePath)
+	if serviceError != nil {
+		return nil, serviceError
+	}
+
+	if ous.roleResolver == nil {
+		return nil, &tidcommon.InternalServerError
+	}
+
+	ou, err := ous.ouStore.GetOrganizationUnitByPath(ctx, handles)
+	if err != nil {
+		if errors.Is(err, ErrOrganizationUnitNotFound) {
+			return nil, &ErrorOrganizationUnitNotFound
+		}
+		logger.Error(ctx, "Failed to get organization unit by path", log.Error(err))
+		return nil, &tidcommon.InternalServerError
+	}
+
+	items, totalCount, svcErr := ous.getResourceListWithExistenceCheck(
+		ctx, ou.ID, limit, offset, "roles",
+		func(ctx context.Context, id string, limit, offset int) (interface{}, error) {
+			return ous.roleResolver.GetRoleListByOUID(ctx, id, limit, offset)
+		},
+		ous.roleResolver.GetRoleCountByOUID,
+		false,
+	)
+	if svcErr != nil {
+		return nil, svcErr
+	}
+	base := fmt.Sprintf("/organization-units/tree/%s/roles", handlePath)
+	return buildRoleListResponse(base, items, totalCount, limit, offset)
 }
 
 // checkCircularDependency checks if setting the parent would create a circular dependency.
@@ -1186,6 +1261,22 @@ func buildGroupListResponse(
 		Groups:       groups,
 		StartIndex:   offset + 1,
 		Count:        len(groups),
+		Links:        utils.BuildPaginationLinks(base, limit, offset, totalCount, ""),
+	}, nil
+}
+
+func buildRoleListResponse(
+	base string, items interface{}, totalCount, limit, offset int,
+) (*RoleListResponse, *tidcommon.ServiceError) {
+	roles, ok := items.([]Role)
+	if !ok {
+		return nil, &tidcommon.InternalServerError
+	}
+	return &RoleListResponse{
+		TotalResults: totalCount,
+		Roles:        roles,
+		StartIndex:   offset + 1,
+		Count:        len(roles),
 		Links:        utils.BuildPaginationLinks(base, limit, offset, totalCount, ""),
 	}, nil
 }

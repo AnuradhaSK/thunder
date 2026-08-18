@@ -164,6 +164,7 @@ func (suite *OURolesAPITestSuite) TestGetOrganizationUnitRoles() {
 	for _, role := range response.Roles {
 		suite.NotEmpty(role.Name, "role name must be populated")
 		suite.False(role.IsReadOnly, "API-created roles are mutable")
+		suite.Equal("owned", role.Origin, "the OU's own role must be tagged owned")
 	}
 }
 
@@ -248,4 +249,147 @@ func (suite *OURolesAPITestSuite) TestGetOrganizationUnitRolesByInvalidPath() {
 	var errorResp ErrorResponse
 	suite.Require().NoError(json.NewDecoder(resp.Body).Decode(&errorResp))
 	suite.Equal("OU-1003", errorResp.Code)
+}
+
+// OUSharedRolesAPITestSuite covers the same two role-listing endpoints against a role shared
+// (rather than owned) into the queried OU, on fixtures dedicated to this suite so sharing a role
+// into an otherwise-empty OU can't be observed by (or interfere with) OURolesAPITestSuite's own
+// "empty OU" assertions.
+//
+// Both fixture OUs are created without a parent so the owner is itself a Root; that makes the
+// share a root-targeting share (the simplest, always-allowed Root-to-Root case), keeping this
+// suite focused on shared-role visibility rather than the sharing framework's own tree-position
+// rules.
+type OUSharedRolesAPITestSuite struct {
+	suite.Suite
+
+	ownerOUID  string
+	sharedOUID string
+
+	roleID  string
+	grantID string
+}
+
+const (
+	sharedRolesOwnerOUHandle  = "shared-roles-owner-ou"
+	sharedRolesShareeOUHandle = "shared-roles-sharee-ou"
+)
+
+func TestOUSharedRolesAPITestSuite(t *testing.T) {
+	suite.Run(t, new(OUSharedRolesAPITestSuite))
+}
+
+func (suite *OUSharedRolesAPITestSuite) SetupSuite() {
+	ownerID, err := testutils.CreateOrganizationUnit(testutils.OrganizationUnit{
+		Handle:      sharedRolesOwnerOUHandle,
+		Name:        "Shared Roles Owner OU",
+		Description: "Owns the role shared into the sharee OU below",
+	})
+	suite.Require().NoError(err, "Failed to create owner OU")
+	suite.ownerOUID = ownerID
+
+	shareeID, err := testutils.CreateOrganizationUnit(testutils.OrganizationUnit{
+		Handle:      sharedRolesShareeOUHandle,
+		Name:        "Shared Roles Sharee OU",
+		Description: "Has no roles of its own; only sees the owner's shared role",
+	})
+	suite.Require().NoError(err, "Failed to create sharee OU")
+	suite.sharedOUID = shareeID
+
+	roleID, err := testutils.CreateRole(testutils.Role{
+		Name:        "ou-shared-role",
+		Description: "Role owned by the owner OU, shared to the sharee OU",
+		OUID:        suite.ownerOUID,
+	})
+	suite.Require().NoError(err, "Failed to create role")
+	suite.roleID = roleID
+
+	grantID, err := testutils.ShareRole(roleID, map[string]interface{}{
+		"rootOuIds": []string{suite.sharedOUID},
+	})
+	suite.Require().NoError(err, "Failed to share role to sharee OU")
+	suite.grantID = grantID
+}
+
+func (suite *OUSharedRolesAPITestSuite) TearDownSuite() {
+	if suite.grantID != "" {
+		if err := testutils.UnshareRole(suite.roleID, suite.grantID); err != nil {
+			suite.T().Logf("Failed to unshare role: %v", err)
+		}
+	}
+	if suite.roleID != "" {
+		if err := testutils.DeleteRole(suite.roleID); err != nil {
+			suite.T().Logf("Failed to delete role %s: %v", suite.roleID, err)
+		}
+	}
+	for _, id := range []string{suite.sharedOUID, suite.ownerOUID} {
+		if id != "" {
+			if err := testutils.DeleteOrganizationUnit(id); err != nil {
+				suite.T().Logf("Failed to delete OU %s: %v", id, err)
+			}
+		}
+	}
+}
+
+func (suite *OUSharedRolesAPITestSuite) listRoles(path string) RoleListResponse {
+	suite.T().Helper()
+
+	req, err := http.NewRequest("GET", testServerURL+path, nil)
+	suite.Require().NoError(err)
+
+	resp, err := testutils.GetHTTPClient().Do(req)
+	suite.Require().NoError(err)
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			suite.T().Logf("Failed to close response body: %v", err)
+		}
+	}()
+
+	body, err := io.ReadAll(resp.Body)
+	suite.Require().NoError(err)
+	suite.Require().Equalf(http.StatusOK, resp.StatusCode, "unexpected status, body: %s", body)
+
+	var rolesResponse RoleListResponse
+	suite.Require().NoError(json.Unmarshal(body, &rolesResponse))
+	return rolesResponse
+}
+
+// TestGetOrganizationUnitRoles_IncludesSharedRole verifies the ID-based endpoint includes a role
+// shared into the OU, tagged with origin "shared" and the owning OU's own ID/handle — this is the
+// bug this suite exists to catch: the OU package's role-listing endpoints previously queried the
+// ROLE table directly, bypassing the sharing framework entirely.
+func (suite *OUSharedRolesAPITestSuite) TestGetOrganizationUnitRoles_IncludesSharedRole() {
+	response := suite.listRoles("/organization-units/" + suite.sharedOUID + "/roles")
+
+	suite.Equal(1, response.TotalResults)
+	suite.Equal(1, response.Count)
+	suite.Require().Len(response.Roles, 1)
+
+	role := response.Roles[0]
+	suite.Equal(suite.roleID, role.ID)
+	suite.Equal("shared", role.Origin)
+	suite.Equal(suite.ownerOUID, role.OUID, "a shared role's OUID must reflect its owner, not the queried OU")
+	suite.Equal(sharedRolesOwnerOUHandle, role.OUHandle)
+}
+
+// TestGetOrganizationUnitRolesByPath_IncludesSharedRole verifies the handle-path form of the same
+// endpoint also includes the shared role.
+func (suite *OUSharedRolesAPITestSuite) TestGetOrganizationUnitRolesByPath_IncludesSharedRole() {
+	response := suite.listRoles("/organization-units/tree/" + sharedRolesShareeOUHandle + "/roles")
+
+	suite.Equal(1, response.TotalResults)
+	suite.Require().Len(response.Roles, 1)
+	suite.Equal(suite.roleID, response.Roles[0].ID)
+	suite.Equal("shared", response.Roles[0].Origin)
+}
+
+// TestGetOrganizationUnitRoles_OwnerSeesItsOwnRoleAsOwned verifies the owning OU's own listing
+// still tags the same role "owned", not "shared" — origin is relative to the OU being queried.
+func (suite *OUSharedRolesAPITestSuite) TestGetOrganizationUnitRoles_OwnerSeesItsOwnRoleAsOwned() {
+	response := suite.listRoles("/organization-units/" + suite.ownerOUID + "/roles")
+
+	suite.Equal(1, response.TotalResults)
+	suite.Require().Len(response.Roles, 1)
+	suite.Equal(suite.roleID, response.Roles[0].ID)
+	suite.Equal("owned", response.Roles[0].Origin)
 }

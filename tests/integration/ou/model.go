@@ -100,6 +100,9 @@ type Role struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	IsReadOnly  bool   `json:"isReadOnly"`
+	OUID        string `json:"ouId,omitempty"`
+	OUHandle    string `json:"ouHandle,omitempty"`
+	Origin      string `json:"origin"`
 }
 
 // RoleListResponse represents the response for listing roles in an organization unit.

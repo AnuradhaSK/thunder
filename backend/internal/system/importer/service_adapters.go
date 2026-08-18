@@ -18,6 +18,7 @@ import (
 	"github.com/thunder-id/thunderid/internal/group"
 	"github.com/thunder-id/thunderid/internal/resource"
 	"github.com/thunder-id/thunderid/internal/role"
+	"github.com/thunder-id/thunderid/internal/sharing"
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	i18nmgt "github.com/thunder-id/thunderid/internal/system/i18n/mgt"
 	"github.com/thunder-id/thunderid/internal/system/log"
@@ -60,6 +61,7 @@ type roleDeclarativeYAML struct {
 	OUHandle    string                     `yaml:"ouHandle,omitempty"`
 	Permissions []role.ResourcePermissions `yaml:"permissions"`
 	Assignments []role.RoleAssignment      `yaml:"assignments,omitempty"`
+	Grants      []role.ShareRequest        `yaml:"grants,omitempty"`
 }
 
 type userDeclarativeYAML struct {
@@ -300,13 +302,15 @@ func (s *importService) importRole(
 	}
 	req.OUID = resolvedOUID
 
+	// Assignments are deliberately not carried inline on create: they are applied after the grants,
+	// because an assignment recorded under a sharee OU is only legal once that OU's grant
+	// exists. applyRoleAssignments handles both the create and the update path.
 	createReq := role.RoleCreationDetail{
 		ID:          req.ID,
 		Name:        req.Name,
 		Description: req.Description,
 		OUID:        req.OUID,
 		Permissions: req.Permissions,
-		Assignments: req.Assignments,
 	}
 	updateReq := role.RoleUpdateDetail{
 		Name:        req.Name,
@@ -337,16 +341,11 @@ func (s *importService) importRole(
 			if updateErr != nil {
 				return serviceErrorOutcome(resourceTypeRole, req.ID, req.Name, operationUpdate, updateErr)
 			}
-			if len(req.Assignments) > 0 {
-				if s.roleAssignmentService == nil {
-					return serviceErrorOutcome(resourceTypeRole, updated.ID, updated.Name, operationUpdate,
-						tidcommon.CustomServiceError(tidcommon.InternalServerError,
-							tidcommon.I18nMessage{DefaultValue: "roleAssignmentService not configured"}))
-				}
-				assignErr := s.roleAssignmentService.AddAssignments(ctx, updated.ID, req.Assignments)
-				if assignErr != nil {
-					return serviceErrorOutcome(resourceTypeRole, updated.ID, updated.Name, operationUpdate, assignErr)
-				}
+			if svcErr := s.applyRoleSharing(ctx, updated.ID, updated.OUID, req); svcErr != nil {
+				return serviceErrorOutcome(resourceTypeRole, updated.ID, updated.Name, operationUpdate, svcErr)
+			}
+			if svcErr := s.applyRoleAssignments(ctx, updated.ID, req.Assignments); svcErr != nil {
+				return serviceErrorOutcome(resourceTypeRole, updated.ID, updated.Name, operationUpdate, svcErr)
 			}
 			return successOutcome(resourceTypeRole, updated.ID, updated.Name, operationUpdate)
 		}
@@ -360,7 +359,66 @@ func (s *importService) importRole(
 	if svcErr != nil {
 		return serviceErrorOutcome(resourceTypeRole, req.ID, req.Name, operationCreate, svcErr)
 	}
+	if svcErr := s.applyRoleSharing(ctx, created.ID, created.OUID, req); svcErr != nil {
+		return serviceErrorOutcome(resourceTypeRole, created.ID, created.Name, operationCreate, svcErr)
+	}
+	if svcErr := s.applyRoleAssignments(ctx, created.ID, req.Assignments); svcErr != nil {
+		return serviceErrorOutcome(resourceTypeRole, created.ID, created.Name, operationCreate, svcErr)
+	}
 	return successOutcome(resourceTypeRole, created.ID, created.Name, operationCreate)
+}
+
+// applyRoleSharing replays a declaratively-declared role's grants via sharingService.Share, so
+// they go through the same eligibility checks a live POST /roles/{id}/grants call would, in
+// declared order. A no-op when the import declares none.
+func (s *importService) applyRoleSharing(
+	ctx context.Context, id, ownerOUID string, req roleDeclarativeYAML,
+) *tidcommon.ServiceError {
+	if len(req.Grants) == 0 {
+		return nil
+	}
+	if s.sharingService == nil {
+		return tidcommon.CustomServiceError(tidcommon.InternalServerError,
+			tidcommon.I18nMessage{DefaultValue: "sharingService not configured"})
+	}
+
+	for _, grant := range req.Grants {
+		actingOUID := grant.InitiatingOUID
+		if actingOUID == "" {
+			actingOUID = ownerOUID
+		}
+		if _, svcErr := s.sharingService.Share(
+			ctx, sharing.ResourceType(resourceTypeRole), id, ownerOUID, actingOUID, grant.ToSharePolicy(),
+		); svcErr != nil {
+			return svcErr
+		}
+	}
+
+	return nil
+}
+
+// applyRoleAssignments writes a declaratively-declared role's assignments, whichever OU each is
+// recorded under. Assignments that omit ouId have it resolved to the assignee's own OU first; the
+// assignment service then buckets them by OU and authorizes each bucket independently (the owning
+// OU always may; a sharee OU must hold a grant with assignments editable), so this must run
+// after applyRoleSharing has replayed the grants.
+func (s *importService) applyRoleAssignments(
+	ctx context.Context, id string, assignments []role.RoleAssignment,
+) *tidcommon.ServiceError {
+	if len(assignments) == 0 {
+		return nil
+	}
+	if s.roleAssignmentService == nil {
+		return tidcommon.CustomServiceError(tidcommon.InternalServerError,
+			tidcommon.I18nMessage{DefaultValue: "roleAssignmentService not configured"})
+	}
+
+	resolved, svcErr := s.roleAssignmentService.ResolveAssignmentOUIDs(ctx, assignments)
+	if svcErr != nil {
+		return svcErr
+	}
+
+	return s.roleAssignmentService.AddAssignments(ctx, id, "", resolved)
 }
 
 func (s *importService) importGroup(

@@ -80,12 +80,26 @@ type GroupListResponse struct {
 	Links        []utils.Link `json:"links"`
 }
 
-// Role represents a role with basic information for OU endpoints.
+// Role origin values distinguishing whether a role returned for an OU is owned by that OU or was
+// shared (directly or via reshare) to it. Mirrors internal/role's RoleOriginOwned/RoleOriginShared,
+// duplicated here to avoid this package importing internal/role.
+const (
+	RoleOriginOwned  = "owned"
+	RoleOriginShared = "shared"
+)
+
+// Role represents a role with basic information for OU endpoints. OUID/OUHandle identify the
+// role's owning organization unit, always populated regardless of Origin; they differ from the
+// queried OU exactly when Origin is "shared".
 type Role struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	IsReadOnly  bool   `json:"isReadOnly"`
+	OUID        string `json:"ouId,omitempty"`
+	OUHandle    string `json:"ouHandle,omitempty"`
+	// Origin is RoleOriginOwned or RoleOriginShared.
+	Origin string `json:"origin"`
 }
 
 // RoleListResponse represents the response for listing roles in an organization unit.

@@ -1,0 +1,50 @@
+{
+  "id": "9b1a2f3c-4d5e-4f6a-8b9c-role-sharing-env",
+  "name": "ThunderID - Role Sharing Demo",
+  "values": [
+    {
+      "key": "scheme",
+      "value": "https",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "host",
+      "value": "localhost",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "port",
+      "value": "8090",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "baseUrl",
+      "value": "{{scheme}}://{{host}}:{{port}}",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "clientId",
+      "value": "",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "clientSecret",
+      "value": "",
+      "type": "secret",
+      "enabled": true
+    },
+    {
+      "key": "accessToken",
+      "value": "",
+      "type": "secret",
+      "enabled": true
+    }
+  ],
+  "_postman_variable_scope": "environment",
+  "_postman_exported_using": "Postman/11.81.4"
+}

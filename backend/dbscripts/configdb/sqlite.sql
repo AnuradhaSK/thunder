@@ -45,15 +45,104 @@ CREATE TABLE "ROLE_PERMISSION" (
 -- Index for resource server queries with deployment isolation on ROLE_PERMISSION
 CREATE INDEX idx_role_permission_resource_server ON "ROLE_PERMISSION" (RESOURCE_SERVER_ID, DEPLOYMENT_ID);
 
--- Table to store Role assignments (to entities and groups)
+-- Table to store Role assignments (to entities and groups). ASSIGNING_OU_ID is the organization
+-- unit that made the assignment: the role's owning OU for its own assignments, or a sharee OU's ID
+-- when the role has been shared to that OU (see RESOURCE_GRANT). This is what makes authorization
+-- checks OU-scoped without a join: filtering ROLE_ASSIGNMENT by ASSIGNING_OU_ID directly answers
+-- "what is this OU allowed to grant", since only a valid owner or sharee is ever permitted to write
+-- a row here (enforced at the application layer, not by a foreign key, to avoid a cross-cutting
+-- dependency on the sharing tables from this pre-existing table).
 CREATE TABLE "ROLE_ASSIGNMENT" (
     DEPLOYMENT_ID       VARCHAR(255) NOT NULL,
     ROLE_ID         VARCHAR(36) NOT NULL,
+    ASSIGNING_OU_ID VARCHAR(36) NOT NULL,
     ASSIGNEE_TYPE   VARCHAR(6)  NOT NULL CHECK (ASSIGNEE_TYPE IN ('entity', 'group')),
     ASSIGNEE_ID     VARCHAR(36) NOT NULL,
     CREATED_AT      TEXT DEFAULT (datetime('now')),
     UPDATED_AT      TEXT DEFAULT (datetime('now')),
-    PRIMARY KEY (ROLE_ID, DEPLOYMENT_ID, ASSIGNEE_TYPE, ASSIGNEE_ID)
+    PRIMARY KEY (ROLE_ID, DEPLOYMENT_ID, ASSIGNING_OU_ID, ASSIGNEE_TYPE, ASSIGNEE_ID)
+);
+
+-- Index supporting the OU-scoped authorization lookup (entity/group -> ASSIGNING_OU_ID) and
+-- OU-scoped assignment cleanup on unshare.
+CREATE INDEX idx_role_assignment_authz ON "ROLE_ASSIGNMENT" (DEPLOYMENT_ID, ASSIGNEE_TYPE, ASSIGNEE_ID, ASSIGNING_OU_ID);
+CREATE INDEX idx_role_assignment_ou ON "ROLE_ASSIGNMENT" (DEPLOYMENT_ID, ROLE_ID, ASSIGNING_OU_ID);
+
+-- Table capturing the resource-sharing graph. Generic across resource types: a RESOURCE_GRANT row
+-- either represents step 1 (SHARE_STAGE='share', owning OU -> one or all Root OUs) or step 2
+-- (SHARE_STAGE='reshare', a Root OU -> its own subtree). "All future children" reshare grants
+-- (TARGET_SCOPE='all_children' or 'ou_subtree') are NOT snapshotted; TARGET_OU_ID holds the anchor
+-- OU, and subtree membership is evaluated dynamically at read time by walking the target OU's
+-- ancestor chain up to that anchor, so newly created child OUs are automatically in scope with no
+-- backfill. 'ou_subtree' differs from 'all_children' only in that its anchor is a named direct child
+-- of the issuing OU rather than the issuing OU itself, and that the anchor is itself in scope.
+CREATE TABLE "RESOURCE_GRANT" (
+    DEPLOYMENT_ID   VARCHAR(255) NOT NULL,
+    ID              VARCHAR(36) PRIMARY KEY,
+    RESOURCE_TYPE   VARCHAR(50) NOT NULL,
+    RESOURCE_ID     VARCHAR(36) NOT NULL,
+    OWNING_OU_ID    VARCHAR(36) NOT NULL,
+    SHARE_STAGE     VARCHAR(7) NOT NULL CHECK (SHARE_STAGE IN ('share', 'reshare')),
+    TARGET_SCOPE    VARCHAR(12) NOT NULL CHECK (TARGET_SCOPE IN ('all_roots', 'root', 'all_children', 'ou', 'ou_subtree')),
+    TARGET_OU_ID    VARCHAR(36),
+    PARENT_GRANT_ID VARCHAR(36) REFERENCES "RESOURCE_GRANT" (ID) ON DELETE CASCADE,
+    CREATED_AT      TEXT DEFAULT (datetime('now')),
+    UPDATED_AT      TEXT DEFAULT (datetime('now'))
+);
+
+-- Supports "list grants for a resource" and the anchored visibility lookup (resource + target).
+CREATE INDEX idx_resource_grant_resource ON "RESOURCE_GRANT" (DEPLOYMENT_ID, RESOURCE_TYPE, RESOURCE_ID);
+CREATE INDEX idx_resource_grant_target ON "RESOURCE_GRANT"
+    (DEPLOYMENT_ID, RESOURCE_TYPE, RESOURCE_ID, TARGET_SCOPE, TARGET_OU_ID);
+
+-- Per-grant exclusion list for "all roots"/"all children" scoped grants: an OU listed here (or any
+-- descendant of it) is carved out of an otherwise-blanket share/reshare, e.g. "share to all Roots
+-- except this one" or "reshare to all children except these". Meaningless (and never populated) for
+-- the explicit 'root'/'ou' target scopes, since those are already precise about who is targeted.
+CREATE TABLE "RESOURCE_GRANT_EXCLUSION" (
+    DEPLOYMENT_ID  VARCHAR(255) NOT NULL,
+    GRANT_ID       VARCHAR(36) NOT NULL REFERENCES "RESOURCE_GRANT" (ID) ON DELETE CASCADE,
+    EXCLUDED_OU_ID VARCHAR(36) NOT NULL,
+    PRIMARY KEY (GRANT_ID, EXCLUDED_OU_ID, DEPLOYMENT_ID)
+);
+
+-- Supports the visibility lookup's per-grant exclusion check.
+CREATE INDEX idx_resource_grant_exclusion_grant ON "RESOURCE_GRANT_EXCLUSION" (DEPLOYMENT_ID, GRANT_ID);
+
+-- Per-grant materialized set of templated field keys editable through that grant, fixed at grant
+-- creation time (see Grant.EditableFields): every declared field, for a grant issued by the
+-- resource's own owning OU, unless the Share call named an explicit subset; exactly the acting OU's
+-- own current editable set, for a reshare, unless the call named an explicit (narrower) subset of
+-- that set. Grants are immutable once created, so this table is never updated in place, only
+-- inserted at creation and cascade-deleted with its grant.
+CREATE TABLE "RESOURCE_GRANT_EDITABLE_FIELD" (
+    DEPLOYMENT_ID VARCHAR(255) NOT NULL,
+    GRANT_ID      VARCHAR(36) NOT NULL REFERENCES "RESOURCE_GRANT" (ID) ON DELETE CASCADE,
+    FIELD_KEY     VARCHAR(100) NOT NULL,
+    PRIMARY KEY (GRANT_ID, FIELD_KEY, DEPLOYMENT_ID)
+);
+
+-- Supports the editability lookup's per-grant field-membership check.
+CREATE INDEX idx_resource_grant_editable_field_grant ON "RESOURCE_GRANT_EDITABLE_FIELD" (DEPLOYMENT_ID, GRANT_ID);
+
+-- Generic per-(resource, OU) templated field overlay: one row per (resource, OU), holding that OU's
+-- entire set of templated field overrides as a single JSON object keyed by field key. Default
+-- backing store for a resource type's templated fields; a resource type may opt a specific field
+-- out to a specialized store instead (e.g. role assignments use ROLE_ASSIGNMENT directly, because
+-- they are relational and sit on the authorization hot path). No resource-type-specific tables are
+-- added for sharing/overrides beyond this generic set.
+--
+-- FIELDS replaces the earlier row-per-field (FIELD_KEY, VALUE, UPDATED_AT) shape. A templated field
+-- set is read and written as a whole by the one OU that owns it, so splitting it across rows bought
+-- nothing; one row per (resource, OU) makes a read a single-row primary key lookup rather than a
+-- scan, and keeps the row count independent of how many fields a resource type declares.
+CREATE TABLE "RESOURCE_OVERLAY" (
+    DEPLOYMENT_ID   VARCHAR(255) NOT NULL,
+    RESOURCE_TYPE   VARCHAR(50) NOT NULL,
+    RESOURCE_ID     VARCHAR(36) NOT NULL,
+    OU_ID           VARCHAR(36) NOT NULL,
+    FIELDS          TEXT NOT NULL,
+    PRIMARY KEY (RESOURCE_TYPE, RESOURCE_ID, OU_ID, DEPLOYMENT_ID)
 );
 
 -- Table to store theme configurations.

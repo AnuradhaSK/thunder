@@ -6,6 +6,7 @@ package role
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 
 	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
@@ -15,9 +16,11 @@ import (
 
 	"github.com/thunder-id/thunderid/internal/group"
 	oupkg "github.com/thunder-id/thunderid/internal/ou"
+	"github.com/thunder-id/thunderid/internal/sharing"
 	"github.com/thunder-id/thunderid/internal/system/config"
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	"github.com/thunder-id/thunderid/internal/system/resourcedependency"
+	"github.com/thunder-id/thunderid/internal/system/security"
 	"github.com/thunder-id/thunderid/internal/system/sysauthz"
 	"github.com/thunder-id/thunderid/internal/system/utils"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
@@ -31,7 +34,30 @@ import (
 
 const (
 	testUserID1 = "user1"
+	testUserID2 = "user2"
 )
+
+func TestMain(m *testing.M) {
+	security.InitSystemPermissions("")
+	os.Exit(m.Run())
+}
+
+// testRootContext returns a context carrying the root system OAuth scope, so tests that predate
+// the system:roles OU-scoping checks exercise their intended behavior without needing every test
+// to construct a specific caller OU — a root-scoped caller is always unrestricted, matching this
+// package's pre-existing test expectations. Tests that specifically exercise own-OU-scope behavior
+// build their own narrower context instead (see testOwnOUContext).
+func testRootContext() context.Context {
+	authCtx := security.NewSecurityContextForTest("test-subject", "test-ou", "test-token", []string{"system"}, nil)
+	return security.WithSecurityContextTest(context.Background(), authCtx)
+}
+
+// testOwnOUContext returns a context carrying ouID as the caller's own OU claim, with no root
+// permission — i.e. a system:roles-only caller confined to ouID.
+func testOwnOUContext(ouID string) context.Context {
+	authCtx := security.NewSecurityContextForTest("test-subject", ouID, "test-token", nil, nil)
+	return security.WithSecurityContextTest(context.Background(), authCtx)
+}
 
 // fakeTransactioner is a light-weight test double to capture transaction usage.
 type fakeTransactioner struct {
@@ -47,6 +73,162 @@ func (f *fakeTransactioner) Transact(ctx context.Context, txFunc func(context.Co
 	return txFunc(ctx)
 }
 
+// fakeSharingService is a light-weight test double for sharing.ServiceInterface. Existing tests
+// build contexts with no OU claim, so the acting OU always resolves to the role's own OU and the
+// sharing-checked path is never exercised; any unexpected call fails loudly rather than silently
+// returning a zero value.
+type fakeSharingService struct {
+	isSharedFunc func(
+		ctx context.Context, resourceType sharing.ResourceType, resourceID, ouID string,
+	) (bool, *tidcommon.ServiceError)
+	resolveEditabilityFunc func(
+		ctx context.Context, resourceType sharing.ResourceType, resourceID, owningOUID, ouID, fieldKey string,
+	) (bool, *tidcommon.ServiceError)
+	resolveEditableFieldsFunc func(
+		ctx context.Context, resourceType sharing.ResourceType, resourceID, owningOUID, ouID string,
+	) ([]string, *tidcommon.ServiceError)
+	listSharedResourceIDsFunc func(
+		ctx context.Context, resourceType sharing.ResourceType, ouID string,
+	) ([]string, *tidcommon.ServiceError)
+	shareFunc func(
+		ctx context.Context, resourceType sharing.ResourceType, resourceID, owningOUID, actingOUID string,
+		policy sharing.SharePolicy,
+	) ([]sharing.Grant, *tidcommon.ServiceError)
+	shareDeclarativeFunc func(
+		ctx context.Context, resourceType sharing.ResourceType, resourceID, owningOUID, actingOUID string,
+		policy sharing.SharePolicy,
+	) ([]sharing.Grant, *tidcommon.ServiceError)
+	unshareFunc    func(ctx context.Context, grantID string) *tidcommon.ServiceError
+	listGrantsFunc func(
+		ctx context.Context, resourceType sharing.ResourceType, resourceID string,
+	) ([]sharing.Grant, *tidcommon.ServiceError)
+	listGrantsPageFunc func(
+		ctx context.Context, resourceType sharing.ResourceType, resourceID string, limit, offset int,
+	) (*sharing.GrantPage, *tidcommon.ServiceError)
+	exportGrantsFunc func(
+		ctx context.Context, resourceType sharing.ResourceType, resourceID string,
+	) ([]sharing.ReplayableGrant, *tidcommon.ServiceError)
+	requireOwnershipFunc func(
+		ctx context.Context, resourceType sharing.ResourceType, owningOUID string,
+	) *tidcommon.ServiceError
+	requireOwnershipForDeletionFunc func(
+		ctx context.Context, resourceType sharing.ResourceType, owningOUID string,
+	) *tidcommon.ServiceError
+}
+
+// RegisterResourceType is a no-op: Initialize always calls this once during wiring to onboard
+// role onto the sharing framework, so unlike the other methods here it's an expected call in
+// every test that exercises Initialize, not just tests specifically targeting sharing behavior.
+func (f *fakeSharingService) RegisterResourceType(_ sharing.ResourceTypeDeclaration) {}
+
+func (f *fakeSharingService) Share(
+	ctx context.Context, resourceType sharing.ResourceType, resourceID, owningOUID, actingOUID string,
+	policy sharing.SharePolicy,
+) ([]sharing.Grant, *tidcommon.ServiceError) {
+	if f.shareFunc != nil {
+		return f.shareFunc(ctx, resourceType, resourceID, owningOUID, actingOUID, policy)
+	}
+	panic("fakeSharingService: unexpected call to Share")
+}
+
+func (f *fakeSharingService) ShareDeclarative(
+	ctx context.Context, resourceType sharing.ResourceType, resourceID, owningOUID, actingOUID string,
+	policy sharing.SharePolicy,
+) ([]sharing.Grant, *tidcommon.ServiceError) {
+	if f.shareDeclarativeFunc != nil {
+		return f.shareDeclarativeFunc(ctx, resourceType, resourceID, owningOUID, actingOUID, policy)
+	}
+	panic("fakeSharingService: unexpected call to ShareDeclarative")
+}
+
+func (f *fakeSharingService) Unshare(ctx context.Context, grantID string) *tidcommon.ServiceError {
+	if f.unshareFunc != nil {
+		return f.unshareFunc(ctx, grantID)
+	}
+	panic("fakeSharingService: unexpected call to Unshare")
+}
+
+func (f *fakeSharingService) ListGrants(
+	ctx context.Context, resourceType sharing.ResourceType, resourceID string,
+) ([]sharing.Grant, *tidcommon.ServiceError) {
+	if f.listGrantsFunc != nil {
+		return f.listGrantsFunc(ctx, resourceType, resourceID)
+	}
+	panic("fakeSharingService: unexpected call to ListGrants")
+}
+
+func (f *fakeSharingService) ListGrantsPage(
+	ctx context.Context, resourceType sharing.ResourceType, resourceID string, limit, offset int,
+) (*sharing.GrantPage, *tidcommon.ServiceError) {
+	if f.listGrantsPageFunc != nil {
+		return f.listGrantsPageFunc(ctx, resourceType, resourceID, limit, offset)
+	}
+	panic("fakeSharingService: unexpected call to ListGrantsPage")
+}
+
+func (f *fakeSharingService) ExportGrants(
+	ctx context.Context, resourceType sharing.ResourceType, resourceID string,
+) ([]sharing.ReplayableGrant, *tidcommon.ServiceError) {
+	if f.exportGrantsFunc != nil {
+		return f.exportGrantsFunc(ctx, resourceType, resourceID)
+	}
+	panic("fakeSharingService: unexpected call to ExportGrants")
+}
+
+func (f *fakeSharingService) IsShared(
+	ctx context.Context, resourceType sharing.ResourceType, resourceID, ouID string,
+) (bool, *tidcommon.ServiceError) {
+	if f.isSharedFunc != nil {
+		return f.isSharedFunc(ctx, resourceType, resourceID, ouID)
+	}
+	panic("fakeSharingService: unexpected call to IsShared")
+}
+
+func (f *fakeSharingService) ListSharedResourceIDs(
+	ctx context.Context, resourceType sharing.ResourceType, ouID string,
+) ([]string, *tidcommon.ServiceError) {
+	if f.listSharedResourceIDsFunc != nil {
+		return f.listSharedResourceIDsFunc(ctx, resourceType, ouID)
+	}
+	panic("fakeSharingService: unexpected call to ListSharedResourceIDs")
+}
+
+func (f *fakeSharingService) ResolveEditability(
+	ctx context.Context, resourceType sharing.ResourceType, resourceID, owningOUID, ouID, fieldKey string,
+) (bool, *tidcommon.ServiceError) {
+	if f.resolveEditabilityFunc != nil {
+		return f.resolveEditabilityFunc(ctx, resourceType, resourceID, owningOUID, ouID, fieldKey)
+	}
+	panic("fakeSharingService: unexpected call to ResolveEditability")
+}
+
+func (f *fakeSharingService) RequireOwnership(
+	ctx context.Context, resourceType sharing.ResourceType, owningOUID string,
+) *tidcommon.ServiceError {
+	if f.requireOwnershipFunc != nil {
+		return f.requireOwnershipFunc(ctx, resourceType, owningOUID)
+	}
+	panic("fakeSharingService: unexpected call to RequireOwnership")
+}
+
+func (f *fakeSharingService) RequireOwnershipForDeletion(
+	ctx context.Context, resourceType sharing.ResourceType, owningOUID string,
+) *tidcommon.ServiceError {
+	if f.requireOwnershipForDeletionFunc != nil {
+		return f.requireOwnershipForDeletionFunc(ctx, resourceType, owningOUID)
+	}
+	panic("fakeSharingService: unexpected call to RequireOwnershipForDeletion")
+}
+
+func (f *fakeSharingService) ResolveEditableFields(
+	ctx context.Context, resourceType sharing.ResourceType, resourceID, owningOUID, ouID string,
+) ([]string, *tidcommon.ServiceError) {
+	if f.resolveEditableFieldsFunc != nil {
+		return f.resolveEditableFieldsFunc(ctx, resourceType, resourceID, owningOUID, ouID)
+	}
+	panic("fakeSharingService: unexpected call to ResolveEditableFields")
+}
+
 // Test Suite
 type RoleServiceTestSuite struct {
 	suite.Suite
@@ -56,6 +238,7 @@ type RoleServiceTestSuite struct {
 	mockOUService         *oumock.OrganizationUnitServiceInterfaceMock
 	mockResourceService   *resourcemock.ResourceServiceInterfaceMock
 	mockEntityTypeService *entitytypemock.EntityTypeServiceInterfaceMock
+	sharingService        *fakeSharingService
 	transactioner         *fakeTransactioner
 	service               RoleServiceInterface
 }
@@ -83,6 +266,20 @@ func (suite *RoleServiceTestSuite) SetupTest() {
 	suite.mockOUService = oumock.NewOrganizationUnitServiceInterfaceMock(suite.T())
 	suite.mockResourceService = resourcemock.NewResourceServiceInterfaceMock(suite.T())
 	suite.mockEntityTypeService = entitytypemock.NewEntityTypeServiceInterfaceMock(suite.T())
+	suite.sharingService = &fakeSharingService{
+		// Permissive default so the many Create/Update/Delete tests that don't care about the
+		// ownership check keep passing unchanged; tests that do care override this field directly.
+		requireOwnershipFunc: func(
+			_ context.Context, _ sharing.ResourceType, _ string,
+		) *tidcommon.ServiceError {
+			return nil
+		},
+		requireOwnershipForDeletionFunc: func(
+			_ context.Context, _ sharing.ResourceType, _ string,
+		) *tidcommon.ServiceError {
+			return nil
+		},
+	}
 	suite.transactioner = &fakeTransactioner{}
 	suite.service = newRoleService(
 		suite.mockStore,
@@ -90,6 +287,7 @@ func (suite *RoleServiceTestSuite) SetupTest() {
 		suite.mockGroupService,
 		suite.mockOUService,
 		suite.mockResourceService,
+		suite.sharingService,
 		suite.transactioner,
 		newAllowAllRoleAuthz(suite.T()),
 	)
@@ -112,7 +310,7 @@ func (suite *RoleServiceTestSuite) TestGetRoleList_Success() {
 	suite.mockOUService.On("GetOrganizationUnitHandlesByIDs", mock.Anything,
 		[]string{"ou1"}).Return(map[string]string{"ou1": "default"}, nil)
 
-	result, err := suite.service.GetRoleList(context.Background(), 10, 0)
+	result, err := suite.service.GetRoleList(testRootContext(), 10, 0)
 
 	suite.Nil(err)
 	suite.NotNil(result)
@@ -142,7 +340,7 @@ func (suite *RoleServiceTestSuite) TestGetRoleList_InvalidPagination() {
 
 	for _, tc := range testCases {
 		suite.T().Run(tc.name, func(t *testing.T) {
-			result, err := suite.service.GetRoleList(context.Background(), tc.limit, tc.offset)
+			result, err := suite.service.GetRoleList(testRootContext(), tc.limit, tc.offset)
 			suite.Nil(result)
 			suite.NotNil(err)
 			suite.Equal(tc.errCode, err.Code)
@@ -176,7 +374,7 @@ func (suite *RoleServiceTestSuite) TestGetRoleList_StoreErrors() {
 		suite.Run(tc.name, func() {
 			tc.mockSetup()
 
-			result, err := suite.service.GetRoleList(context.Background(), 10, 0)
+			result, err := suite.service.GetRoleList(testRootContext(), 10, 0)
 
 			suite.Nil(result)
 			suite.NotNil(err)
@@ -195,13 +393,155 @@ func (suite *RoleServiceTestSuite) TestGetRoleList_OUHandlesError() {
 	suite.mockOUService.On("GetOrganizationUnitHandlesByIDs", mock.Anything,
 		[]string{"ou1"}).Return(nil, &tidcommon.ServiceError{Code: "INTERNAL_ERROR"})
 
-	result, err := suite.service.GetRoleList(context.Background(), 10, 0)
+	result, err := suite.service.GetRoleList(testRootContext(), 10, 0)
 
 	suite.Nil(err)
 	suite.NotNil(result)
 	suite.Equal(1, result.Count)
 	suite.Equal("role1", result.Roles[0].ID)
 	suite.Equal("", result.Roles[0].OUHandle)
+}
+
+// GetRolesForOU Tests
+
+func (suite *RoleServiceTestSuite) TestGetRolesForOU_MissingOUID() {
+	result, err := suite.service.GetRolesForOU(testRootContext(), "", 10, 0)
+
+	suite.Nil(result)
+	suite.NotNil(err)
+	suite.Equal(ErrorMissingOUIDParam.Code, err.Code)
+}
+
+func (suite *RoleServiceTestSuite) TestGetRolesForOU_InvalidPagination() {
+	result, err := suite.service.GetRolesForOU(testRootContext(), "ou1", 0, -1)
+
+	suite.Nil(result)
+	suite.NotNil(err)
+}
+
+// TestGetRolesForOU_RejectsOutsideCallerOwnOU proves a system:roles-only caller (no root
+// permission) may only list the OU its own token was issued for.
+func (suite *RoleServiceTestSuite) TestGetRolesForOU_RejectsOutsideCallerOwnOU() {
+	result, err := suite.service.GetRolesForOU(testOwnOUContext("ou1"), "ou2", 10, 0)
+
+	suite.Nil(result)
+	suite.NotNil(err)
+	suite.Equal(ErrorRoleOutsideOwnOUScope.Code, err.Code)
+	suite.mockStore.AssertNotCalled(suite.T(), "GetRoleListCountByOUID", mock.Anything, mock.Anything)
+}
+
+// TestGetRolesForOU_AllowsCallerOwnOU proves a system:roles-only caller can list its own OU.
+func (suite *RoleServiceTestSuite) TestGetRolesForOU_AllowsCallerOwnOU() {
+	owned := []Role{{ID: "role1", Name: "Admin", OUID: "ou1"}}
+	suite.mockStore.On("GetRoleListCountByOUID", mock.Anything, "ou1").Return(1, nil)
+	suite.mockStore.On("GetRoleListByOUID", mock.Anything, "ou1", 1, 0).Return(owned, nil)
+	suite.sharingService.listSharedResourceIDsFunc = func(
+		context.Context, sharing.ResourceType, string,
+	) ([]string, *tidcommon.ServiceError) {
+		return []string{}, nil
+	}
+	suite.mockOUService.On("GetOrganizationUnitHandlesByIDs", mock.Anything, []string{"ou1"}).
+		Return(map[string]string{"ou1": "acme"}, nil)
+
+	result, err := suite.service.GetRolesForOU(testOwnOUContext("ou1"), "ou1", 10, 0)
+
+	suite.Nil(err)
+	suite.Require().Len(result.Roles, 1)
+}
+
+func (suite *RoleServiceTestSuite) TestGetRolesForOU_OwnedOnly_Success() {
+	owned := []Role{{ID: "role1", Name: "Admin", OUID: "ou1"}}
+
+	suite.mockStore.On("GetRoleListCountByOUID", mock.Anything, "ou1").Return(1, nil)
+	suite.mockStore.On("GetRoleListByOUID", mock.Anything, "ou1", 1, 0).Return(owned, nil)
+	suite.sharingService.listSharedResourceIDsFunc = func(
+		context.Context, sharing.ResourceType, string,
+	) ([]string, *tidcommon.ServiceError) {
+		return []string{}, nil
+	}
+	suite.mockOUService.On("GetOrganizationUnitHandlesByIDs", mock.Anything, []string{"ou1"}).
+		Return(map[string]string{"ou1": "acme"}, nil)
+
+	result, err := suite.service.GetRolesForOU(testRootContext(), "ou1", 10, 0)
+
+	suite.Nil(err)
+	suite.Require().Len(result.Roles, 1)
+	suite.Equal(RoleOriginOwned, result.Roles[0].Origin)
+	suite.Equal("acme", result.Roles[0].OUHandle)
+	suite.Equal(1, result.TotalResults)
+}
+
+func (suite *RoleServiceTestSuite) TestGetRolesForOU_OwnedAndShared_Success() {
+	owned := []Role{{ID: "role1", Name: "Admin", OUID: "ou1"}}
+
+	suite.mockStore.On("GetRoleListCountByOUID", mock.Anything, "ou1").Return(1, nil)
+	suite.mockStore.On("GetRoleListByOUID", mock.Anything, "ou1", 1, 0).Return(owned, nil)
+	suite.sharingService.listSharedResourceIDsFunc = func(
+		_ context.Context, resourceType sharing.ResourceType, ouID string,
+	) ([]string, *tidcommon.ServiceError) {
+		suite.Equal(roleSharingResourceType, resourceType)
+		suite.Equal("ou1", ouID)
+		return []string{"role2"}, nil
+	}
+	suite.mockStore.On("GetRole", mock.Anything, "role2").
+		Return(RoleWithPermissions{ID: "role2", Name: "Viewer", OUID: "owner-ou"}, nil)
+	suite.mockOUService.On("GetOrganizationUnitHandlesByIDs", mock.Anything, mock.MatchedBy(func(ids []string) bool {
+		return len(ids) == 2
+	})).Return(map[string]string{"ou1": "acme", "owner-ou": "globex"}, nil)
+
+	result, err := suite.service.GetRolesForOU(testRootContext(), "ou1", 10, 0)
+
+	suite.Nil(err)
+	suite.Require().Len(result.Roles, 2)
+
+	byID := map[string]RoleForOU{}
+	for _, r := range result.Roles {
+		byID[r.ID] = r
+	}
+	suite.Equal(RoleOriginOwned, byID["role1"].Origin)
+	suite.Equal(RoleOriginShared, byID["role2"].Origin)
+	suite.Equal("globex", byID["role2"].OUHandle, "shared role's core is resolved from its owning OU")
+}
+
+func (suite *RoleServiceTestSuite) TestGetRolesForOU_SkipsStaleSharedRole() {
+	suite.mockStore.On("GetRoleListCountByOUID", mock.Anything, "ou1").Return(0, nil)
+	suite.mockStore.On("GetRoleListByOUID", mock.Anything, "ou1", 0, 0).Return([]Role{}, nil)
+	suite.sharingService.listSharedResourceIDsFunc = func(
+		context.Context, sharing.ResourceType, string,
+	) ([]string, *tidcommon.ServiceError) {
+		return []string{"deleted-role"}, nil
+	}
+	suite.mockStore.On("GetRole", mock.Anything, "deleted-role").Return(RoleWithPermissions{}, ErrRoleNotFound)
+
+	result, err := suite.service.GetRolesForOU(testRootContext(), "ou1", 10, 0)
+
+	suite.Nil(err)
+	suite.Empty(result.Roles, "a grant pointing at a since-deleted role should be skipped, not error")
+}
+
+func (suite *RoleServiceTestSuite) TestGetRolesForOU_SharingServiceError() {
+	suite.mockStore.On("GetRoleListCountByOUID", mock.Anything, "ou1").Return(0, nil)
+	suite.mockStore.On("GetRoleListByOUID", mock.Anything, "ou1", 0, 0).Return([]Role{}, nil)
+	suite.sharingService.listSharedResourceIDsFunc = func(
+		context.Context, sharing.ResourceType, string,
+	) ([]string, *tidcommon.ServiceError) {
+		return nil, &tidcommon.InternalServerError
+	}
+
+	result, err := suite.service.GetRolesForOU(testRootContext(), "ou1", 10, 0)
+
+	suite.Nil(result)
+	suite.NotNil(err)
+}
+
+func (suite *RoleServiceTestSuite) TestGetRolesForOU_CountStoreError() {
+	suite.mockStore.On("GetRoleListCountByOUID", mock.Anything, "ou1").Return(0, errors.New("db error"))
+
+	result, err := suite.service.GetRolesForOU(testRootContext(), "ou1", 10, 0)
+
+	suite.Nil(result)
+	suite.NotNil(err)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
 }
 
 // CreateRole Tests
@@ -229,7 +569,7 @@ func (suite *RoleServiceTestSuite) TestCreateRole_Success() {
 		mock.AnythingOfType("string"),
 		mock.AnythingOfType("RoleCreationDetail")).Return(nil)
 
-	result, err := suite.service.CreateRole(context.Background(), request)
+	result, err := suite.service.CreateRole(testRootContext(), request)
 
 	suite.Nil(err)
 	suite.NotNil(result)
@@ -242,6 +582,33 @@ func (suite *RoleServiceTestSuite) TestCreateRole_Success() {
 	// Verify permission validation was called
 	suite.mockResourceService.AssertCalled(suite.T(), "ValidatePermissions", mock.Anything,
 		"rs1", []string{"perm1", "perm2"})
+}
+
+// TestCreateRole_WrapsOUServiceCallWithRuntimeContext proves the OU-existence lookup doesn't
+// re-authorize a caller who already passed RequireOwnership above. A system:roles-only caller
+// (testOwnOUContext, no root permission) holds no system:ou/system:ou:view permission at all; if
+// this call weren't wrapped in a runtime context, the real internal/ou service would reject it as
+// Unauthorized even though the caller legitimately owns the target OU, and CreateRole would 500.
+func (suite *RoleServiceTestSuite) TestCreateRole_WrapsOUServiceCallWithRuntimeContext() {
+	request := RoleCreationDetail{
+		Name: "Test Role",
+		OUID: "ou1",
+	}
+
+	ou := providers.OrganizationUnit{ID: "ou1", Name: "Test OU", Handle: "default"}
+	suite.mockOUService.On("GetOrganizationUnit",
+		mock.MatchedBy(security.IsRuntimeContext),
+		"ou1").Return(ou, nil)
+	suite.mockStore.On("CheckRoleNameExists", mock.Anything,
+		"ou1", "Test Role").Return(false, nil)
+	suite.mockStore.On("CreateRole", mock.Anything,
+		mock.AnythingOfType("string"),
+		mock.AnythingOfType("RoleCreationDetail")).Return(nil)
+
+	result, err := suite.service.CreateRole(testOwnOUContext("ou1"), request)
+
+	suite.Nil(err)
+	suite.NotNil(result)
 }
 
 func (suite *RoleServiceTestSuite) TestCreateRole_ValidationErrors() {
@@ -296,7 +663,7 @@ func (suite *RoleServiceTestSuite) TestCreateRole_ValidationErrors() {
 
 	for _, tc := range testCases {
 		suite.T().Run(tc.name, func(t *testing.T) {
-			result, err := suite.service.CreateRole(context.Background(), tc.request)
+			result, err := suite.service.CreateRole(testRootContext(), tc.request)
 			suite.Nil(result)
 			suite.NotNil(err)
 			suite.Equal(tc.errCode, err.Code)
@@ -413,7 +780,7 @@ func (suite *RoleServiceTestSuite) TestCreateRole_PermissionValidationErrors() {
 			suite.SetupTest()
 			tc.setupMocks()
 
-			result, err := suite.service.CreateRole(context.Background(), tc.request)
+			result, err := suite.service.CreateRole(testRootContext(), tc.request)
 
 			if tc.expectedError != nil {
 				suite.Nil(result)
@@ -437,7 +804,7 @@ func (suite *RoleServiceTestSuite) TestCreateRole_OrganizationUnitNotFound() {
 	suite.mockOUService.On("GetOrganizationUnit", mock.Anything, "nonexistent").
 		Return(providers.OrganizationUnit{}, &oupkg.ErrorOrganizationUnitNotFound)
 
-	result, err := suite.service.CreateRole(context.Background(), request)
+	result, err := suite.service.CreateRole(testRootContext(), request)
 
 	suite.Nil(result)
 	suite.NotNil(err)
@@ -460,7 +827,7 @@ func (suite *RoleServiceTestSuite) TestCreateRole_InvalidUserID() {
 		[]string{"invalid_user"}).
 		Return([]providers.Entity{}, nil)
 
-	result, err := suite.service.CreateRole(context.Background(), request)
+	result, err := suite.service.CreateRole(testRootContext(), request)
 
 	suite.Nil(result)
 	suite.NotNil(err)
@@ -483,7 +850,7 @@ func (suite *RoleServiceTestSuite) TestCreateRole_InvalidGroupID() {
 		[]string{"invalid_group"}).
 		Return(&group.ErrorInvalidGroupMemberID)
 
-	result, err := suite.service.CreateRole(context.Background(), request)
+	result, err := suite.service.CreateRole(testRootContext(), request)
 
 	suite.Nil(result)
 	suite.NotNil(err)
@@ -507,7 +874,7 @@ func (suite *RoleServiceTestSuite) TestCreateRole_StoreError() {
 		mock.AnythingOfType("string"),
 		mock.AnythingOfType("RoleCreationDetail")).Return(errors.New("database error"))
 
-	result, err := suite.service.CreateRole(context.Background(), request)
+	result, err := suite.service.CreateRole(testRootContext(), request)
 
 	suite.Nil(result)
 	suite.NotNil(err)
@@ -528,7 +895,7 @@ func (suite *RoleServiceTestSuite) TestCreateRole_NameConflict() {
 	suite.mockStore.On("CheckRoleNameExists", mock.Anything,
 		"ou1", "Test Role").Return(true, nil)
 
-	result, err := suite.service.CreateRole(context.Background(), request)
+	result, err := suite.service.CreateRole(testRootContext(), request)
 
 	suite.Nil(result)
 	suite.NotNil(err)
@@ -550,7 +917,7 @@ func (suite *RoleServiceTestSuite) TestCreateRole_CheckNameExistsError() {
 		"ou1", "Test Role").
 		Return(false, errors.New("database error"))
 
-	result, err := suite.service.CreateRole(context.Background(), request)
+	result, err := suite.service.CreateRole(testRootContext(), request)
 
 	suite.Nil(result)
 	suite.NotNil(err)
@@ -580,11 +947,33 @@ func (suite *RoleServiceTestSuite) TestCreateRole_DeclarativeMode_Denied() {
 		OUID: "ou1",
 	}
 
-	result, err := suite.service.CreateRole(context.Background(), request)
+	result, err := suite.service.CreateRole(testRootContext(), request)
 
 	suite.Nil(result)
 	suite.NotNil(err)
 	suite.Equal(ErrorDeclarativeModeCreateNotAllowed.Code, err.Code)
+}
+
+// TestCreateRole_RejectsWhenCallerDoesNotOwnRequestedOU proves core config (here: the very act of
+// claiming ownership for a new role) is gated by sharing.RequireOwnership before any store access
+// — a caller may only create a role owned by its own OU, unless unrestricted.
+// TestCreateRole_RejectsWhenCallerDoesNotOwnRequestedOU proves a caller naming an ouId outside its
+// own OU is rejected with ROL-1023 (OU-reach), not SHR-1007 (core-config ownership) — there is no
+// existing role yet for SHR-1007's "core config" framing to apply to, so this is gated by
+// requireOwnOUScope, the same reach check used for read/list/assignment paths, not
+// sharing.RequireOwnership.
+func (suite *RoleServiceTestSuite) TestCreateRole_RejectsWhenCallerDoesNotOwnRequestedOU() {
+	request := RoleCreationDetail{
+		Name: "Test Role",
+		OUID: "ou1",
+	}
+
+	result, err := suite.service.CreateRole(testOwnOUContext("caller-ou"), request)
+
+	suite.Nil(result)
+	suite.NotNil(err)
+	suite.Equal(ErrorRoleOutsideOwnOUScope.Code, err.Code)
+	suite.mockOUService.AssertNotCalled(suite.T(), "GetOrganizationUnit", mock.Anything, mock.Anything)
 }
 
 func (suite *RoleServiceTestSuite) TestUpdateRole_DeclarativeMode_Denied() {
@@ -612,10 +1001,10 @@ func (suite *RoleServiceTestSuite) TestUpdateRole_DeclarativeMode_Denied() {
 
 	suite.mockResourceService.On("ValidatePermissions", mock.Anything,
 		"rs1", []string{"perm1"}).Return([]string{}, nil)
-	suite.mockStore.On("IsRoleExist", mock.Anything, "role1").Return(true, nil)
+	suite.mockStore.On("GetRole", mock.Anything, "role1").Return(RoleWithPermissions{ID: "role1", OUID: "ou1"}, nil)
 	suite.mockStore.On("IsRoleDeclarative", mock.Anything, "role1").Return(true, nil)
 
-	result, err := suite.service.UpdateRoleWithPermissions(context.Background(), "role1", request)
+	result, err := suite.service.UpdateRoleWithPermissions(testRootContext(), "role1", request)
 
 	suite.Nil(result)
 	suite.NotNil(err)
@@ -636,13 +1025,74 @@ func (suite *RoleServiceTestSuite) TestGetRole_Success() {
 	suite.mockOUService.On("GetOrganizationUnit", mock.Anything,
 		"ou1").Return(providers.OrganizationUnit{ID: "ou1", Handle: "default"}, nil)
 
-	result, err := suite.service.GetRoleWithPermissions(context.Background(), "role1")
+	result, err := suite.service.GetRoleWithPermissions(testRootContext(), "role1")
 
 	suite.Nil(err)
 	suite.NotNil(result)
 	suite.Equal(expectedRole.ID, result.ID)
 	suite.Equal(expectedRole.Name, result.Name)
 	suite.Equal("default", result.OUHandle)
+}
+
+// TestGetRole_AllowsCallerOwnOU proves a system:roles-only caller can view a role owned by its
+// own OU.
+func (suite *RoleServiceTestSuite) TestGetRole_AllowsCallerOwnOU() {
+	expectedRole := RoleWithPermissions{ID: "role1", Name: "Admin", OUID: "ou1"}
+	suite.mockStore.On("GetRole", mock.Anything, "role1").Return(expectedRole, nil)
+	suite.mockOUService.On("GetOrganizationUnit", mock.Anything,
+		"ou1").Return(providers.OrganizationUnit{ID: "ou1", Handle: "default"}, nil)
+
+	result, err := suite.service.GetRoleWithPermissions(testOwnOUContext("ou1"), "role1")
+
+	suite.Nil(err)
+	suite.NotNil(result)
+}
+
+// TestGetRole_RejectsOutsideCallerOwnOU_NotShared proves a system:roles-only caller cannot view a
+// role owned by a different OU when it hasn't been shared to the caller's own OU.
+func (suite *RoleServiceTestSuite) TestGetRole_RejectsOutsideCallerOwnOU_NotShared() {
+	expectedRole := RoleWithPermissions{ID: "role1", Name: "Admin", OUID: "ou1"}
+	suite.mockStore.On("GetRole", mock.Anything, "role1").Return(expectedRole, nil)
+	suite.sharingService.isSharedFunc = func(
+		_ context.Context, resourceType sharing.ResourceType, resourceID, ouID string,
+	) (bool, *tidcommon.ServiceError) {
+		suite.Equal(roleSharingResourceType, resourceType)
+		suite.Equal("role1", resourceID)
+		suite.Equal("sharee-ou", ouID)
+		return false, nil
+	}
+
+	result, err := suite.service.GetRoleWithPermissions(testOwnOUContext("sharee-ou"), "role1")
+
+	suite.Nil(result)
+	suite.NotNil(err)
+	suite.Equal(ErrorRoleOutsideOwnOUScope.Code, err.Code)
+	suite.mockOUService.AssertNotCalled(suite.T(), "GetOrganizationUnit", mock.Anything, mock.Anything)
+}
+
+// TestGetRole_AllowsOutsideCallerOwnOU_Shared proves a system:roles-only caller can still view a
+// role owned by a different OU when it has genuinely been shared to the caller's own OU.
+// TestGetRole_AllowsOutsideCallerOwnOU_Shared also proves the OU-handle lookup below the
+// shared-fallback doesn't re-authorize the caller: a system:roles-only caller viewing a role
+// shared to it (not owned by it) holds no system:ou/system:ou:view permission on the role's
+// actual owning OU, so this lookup must run under a runtime context or the real internal/ou
+// service would reject it as Unauthorized.
+func (suite *RoleServiceTestSuite) TestGetRole_AllowsOutsideCallerOwnOU_Shared() {
+	expectedRole := RoleWithPermissions{ID: "role1", Name: "Admin", OUID: "ou1"}
+	suite.mockStore.On("GetRole", mock.Anything, "role1").Return(expectedRole, nil)
+	suite.sharingService.isSharedFunc = func(
+		context.Context, sharing.ResourceType, string, string,
+	) (bool, *tidcommon.ServiceError) {
+		return true, nil
+	}
+	suite.mockOUService.On("GetOrganizationUnit",
+		mock.MatchedBy(security.IsRuntimeContext),
+		"ou1").Return(providers.OrganizationUnit{ID: "ou1", Handle: "default"}, nil)
+
+	result, err := suite.service.GetRoleWithPermissions(testOwnOUContext("sharee-ou"), "role1")
+
+	suite.Nil(err)
+	suite.NotNil(result)
 }
 
 func (suite *RoleServiceTestSuite) TestGetRole_OUHandleError() {
@@ -656,7 +1106,7 @@ func (suite *RoleServiceTestSuite) TestGetRole_OUHandleError() {
 	suite.mockOUService.On("GetOrganizationUnit", mock.Anything,
 		"ou1").Return(providers.OrganizationUnit{}, &tidcommon.ServiceError{Code: "INTERNAL_ERROR"})
 
-	result, err := suite.service.GetRoleWithPermissions(context.Background(), "role1")
+	result, err := suite.service.GetRoleWithPermissions(testRootContext(), "role1")
 
 	suite.Nil(err)
 	suite.NotNil(result)
@@ -666,7 +1116,7 @@ func (suite *RoleServiceTestSuite) TestGetRole_OUHandleError() {
 }
 
 func (suite *RoleServiceTestSuite) TestGetRole_MissingID() {
-	result, err := suite.service.GetRoleWithPermissions(context.Background(), "")
+	result, err := suite.service.GetRoleWithPermissions(testRootContext(), "")
 
 	suite.Nil(result)
 	suite.NotNil(err)
@@ -677,7 +1127,7 @@ func (suite *RoleServiceTestSuite) TestGetRole_NotFound() {
 	suite.mockStore.On("GetRole", mock.Anything,
 		"nonexistent").Return(RoleWithPermissions{}, ErrRoleNotFound)
 
-	result, err := suite.service.GetRoleWithPermissions(context.Background(), "nonexistent")
+	result, err := suite.service.GetRoleWithPermissions(testRootContext(), "nonexistent")
 
 	suite.Nil(result)
 	suite.NotNil(err)
@@ -688,7 +1138,7 @@ func (suite *RoleServiceTestSuite) TestGetRole_StoreError() {
 	suite.mockStore.On("GetRole", mock.Anything,
 		"role1").Return(RoleWithPermissions{}, errors.New("database error"))
 
-	result, err := suite.service.GetRoleWithPermissions(context.Background(), "role1")
+	result, err := suite.service.GetRoleWithPermissions(testRootContext(), "role1")
 
 	suite.Nil(result)
 	suite.NotNil(err)
@@ -703,7 +1153,7 @@ func (suite *RoleServiceTestSuite) TestUpdateRole_MissingRoleID() {
 		Permissions: []ResourcePermissions{{ResourceServerID: "rs1", Permissions: []string{"perm1"}}},
 	}
 
-	result, err := suite.service.UpdateRoleWithPermissions(context.Background(), "", request)
+	result, err := suite.service.UpdateRoleWithPermissions(testRootContext(), "", request)
 
 	suite.Nil(result)
 	suite.NotNil(err)
@@ -742,7 +1192,7 @@ func (suite *RoleServiceTestSuite) TestUpdateRole_ValidationErrors() {
 
 	for _, tc := range testCases {
 		suite.T().Run(tc.name, func(t *testing.T) {
-			result, err := suite.service.UpdateRoleWithPermissions(context.Background(), "role1", tc.request)
+			result, err := suite.service.UpdateRoleWithPermissions(testRootContext(), "role1", tc.request)
 			suite.Nil(result)
 			suite.NotNil(err)
 			suite.Equal(tc.errCode, err.Code)
@@ -750,7 +1200,7 @@ func (suite *RoleServiceTestSuite) TestUpdateRole_ValidationErrors() {
 	}
 }
 
-func (suite *RoleServiceTestSuite) TestUpdateRole_GetRoleError() {
+func (suite *RoleServiceTestSuite) TestUpdateRole_IsRoleExistError() {
 	request := RoleUpdateDetail{
 		Name:        "New Name",
 		OUID:        "ou1",
@@ -759,10 +1209,10 @@ func (suite *RoleServiceTestSuite) TestUpdateRole_GetRoleError() {
 
 	suite.mockResourceService.On("ValidatePermissions", mock.Anything,
 		"rs1", []string{"perm1"}).Return([]string{}, nil)
-	suite.mockStore.On("IsRoleExist", mock.Anything,
-		"role1").Return(false, errors.New("database error"))
+	suite.mockStore.On("GetRole", mock.Anything,
+		"role1").Return(RoleWithPermissions{}, errors.New("database error"))
 
-	result, err := suite.service.UpdateRoleWithPermissions(context.Background(), "role1", request)
+	result, err := suite.service.UpdateRoleWithPermissions(testRootContext(), "role1", request)
 
 	suite.Nil(result)
 	suite.NotNil(err)
@@ -778,12 +1228,12 @@ func (suite *RoleServiceTestSuite) TestUpdateRole_OUNotFound() {
 
 	suite.mockResourceService.On("ValidatePermissions", mock.Anything,
 		"rs1", []string{"perm1"}).Return([]string{}, nil)
-	suite.mockStore.On("IsRoleExist", mock.Anything,
-		"role1").Return(true, nil)
+	suite.mockStore.On("GetRole", mock.Anything,
+		"role1").Return(RoleWithPermissions{ID: "role1", OUID: "ou1"}, nil)
 	suite.mockOUService.On("GetOrganizationUnit", mock.Anything, "nonexistent_ou").
 		Return(providers.OrganizationUnit{}, &oupkg.ErrorOrganizationUnitNotFound)
 
-	result, err := suite.service.UpdateRoleWithPermissions(context.Background(), "role1", request)
+	result, err := suite.service.UpdateRoleWithPermissions(testRootContext(), "role1", request)
 
 	suite.Nil(result)
 	suite.NotNil(err)
@@ -799,12 +1249,12 @@ func (suite *RoleServiceTestSuite) TestUpdateRole_OUServiceError() {
 
 	suite.mockResourceService.On("ValidatePermissions", mock.Anything,
 		"rs1", []string{"perm1"}).Return([]string{}, nil)
-	suite.mockStore.On("IsRoleExist", mock.Anything,
-		"role1").Return(true, nil)
+	suite.mockStore.On("GetRole", mock.Anything,
+		"role1").Return(RoleWithPermissions{ID: "role1", OUID: "ou1"}, nil)
 	suite.mockOUService.On("GetOrganizationUnit", mock.Anything, "ou1").
 		Return(providers.OrganizationUnit{}, &tidcommon.ServiceError{Code: "INTERNAL_ERROR"})
 
-	result, err := suite.service.UpdateRoleWithPermissions(context.Background(), "role1", request)
+	result, err := suite.service.UpdateRoleWithPermissions(testRootContext(), "role1", request)
 
 	suite.Nil(result)
 	suite.NotNil(err)
@@ -821,8 +1271,8 @@ func (suite *RoleServiceTestSuite) TestUpdateRole_UpdateStoreError() {
 	ou := providers.OrganizationUnit{ID: "ou1"}
 	suite.mockResourceService.On("ValidatePermissions", mock.Anything,
 		"rs1", []string{"perm1"}).Return([]string{}, nil)
-	suite.mockStore.On("IsRoleExist", mock.Anything,
-		"role1").Return(true, nil)
+	suite.mockStore.On("GetRole", mock.Anything,
+		"role1").Return(RoleWithPermissions{ID: "role1", OUID: "ou1"}, nil)
 	suite.mockOUService.On("GetOrganizationUnit", mock.Anything, "ou1").Return(ou, nil)
 	suite.mockStore.On("CheckRoleNameExistsExcludingID", mock.Anything,
 		"ou1", "New Name", "role1").Return(false, nil)
@@ -830,7 +1280,7 @@ func (suite *RoleServiceTestSuite) TestUpdateRole_UpdateStoreError() {
 		mock.AnythingOfType("string"),
 		mock.AnythingOfType("RoleUpdateDetail")).Return(errors.New("update error"))
 
-	result, err := suite.service.UpdateRoleWithPermissions(context.Background(), "role1", request)
+	result, err := suite.service.UpdateRoleWithPermissions(testRootContext(), "role1", request)
 
 	suite.Nil(result)
 	suite.NotNil(err)
@@ -849,8 +1299,8 @@ func (suite *RoleServiceTestSuite) TestUpdateRole_Success() {
 	ou := providers.OrganizationUnit{ID: "ou1", Handle: "default"}
 	suite.mockResourceService.On("ValidatePermissions", mock.Anything,
 		"rs1", []string{"perm1", "perm2"}).Return([]string{}, nil)
-	suite.mockStore.On("IsRoleExist", mock.Anything,
-		"role1").Return(true, nil)
+	suite.mockStore.On("GetRole", mock.Anything,
+		"role1").Return(RoleWithPermissions{ID: "role1", OUID: "ou1"}, nil)
 	suite.mockOUService.On("GetOrganizationUnit", mock.Anything, "ou1").Return(ou, nil)
 	suite.mockStore.On("CheckRoleNameExistsExcludingID", mock.Anything,
 		"ou1", "New Name", "role1").Return(false, nil)
@@ -858,7 +1308,7 @@ func (suite *RoleServiceTestSuite) TestUpdateRole_Success() {
 		mock.AnythingOfType("string"),
 		mock.AnythingOfType("RoleUpdateDetail")).Return(nil)
 
-	result, err := suite.service.UpdateRoleWithPermissions(context.Background(), "role1", request)
+	result, err := suite.service.UpdateRoleWithPermissions(testRootContext(), "role1", request)
 
 	suite.Nil(err)
 	suite.NotNil(result)
@@ -870,6 +1320,93 @@ func (suite *RoleServiceTestSuite) TestUpdateRole_Success() {
 		"rs1", []string{"perm1", "perm2"})
 }
 
+// TestUpdateRole_WrapsOUServiceCallWithRuntimeContext proves the OU-existence lookup doesn't
+// re-authorize a caller who already passed RequireOwnership above, mirroring
+// TestCreateRole_WrapsOUServiceCallWithRuntimeContext for the update path.
+func (suite *RoleServiceTestSuite) TestUpdateRole_WrapsOUServiceCallWithRuntimeContext() {
+	request := RoleUpdateDetail{
+		Name: "New Name",
+		OUID: "ou1",
+	}
+
+	ou := providers.OrganizationUnit{ID: "ou1", Handle: "default"}
+	suite.mockStore.On("GetRole", mock.Anything,
+		"role1").Return(RoleWithPermissions{ID: "role1", OUID: "ou1"}, nil)
+	suite.mockOUService.On("GetOrganizationUnit",
+		mock.MatchedBy(security.IsRuntimeContext),
+		"ou1").Return(ou, nil)
+	suite.mockStore.On("CheckRoleNameExistsExcludingID", mock.Anything,
+		"ou1", "New Name", "role1").Return(false, nil)
+	suite.mockStore.On("UpdateRole", mock.Anything,
+		mock.AnythingOfType("string"),
+		mock.AnythingOfType("RoleUpdateDetail")).Return(nil)
+
+	result, err := suite.service.UpdateRoleWithPermissions(testOwnOUContext("ou1"), "role1", request)
+
+	suite.Nil(err)
+	suite.NotNil(result)
+}
+
+// TestUpdateRole_RejectsWhenCallerDoesNotOwnExistingRole proves core config edits are gated by
+// sharing.RequireOwnership against the role's existing owning OU before any mutation is attempted.
+func (suite *RoleServiceTestSuite) TestUpdateRole_RejectsWhenCallerDoesNotOwnExistingRole() {
+	request := RoleUpdateDetail{
+		Name:        "New Name",
+		OUID:        "ou1",
+		Permissions: []ResourcePermissions{{ResourceServerID: "rs1", Permissions: []string{"perm1"}}},
+	}
+
+	suite.mockResourceService.On("ValidatePermissions", mock.Anything,
+		"rs1", []string{"perm1"}).Return([]string{}, nil)
+	suite.mockStore.On("GetRole", mock.Anything,
+		"role1").Return(RoleWithPermissions{ID: "role1", OUID: "ou1"}, nil)
+	suite.sharingService.requireOwnershipFunc = func(
+		_ context.Context, resourceType sharing.ResourceType, owningOUID string,
+	) *tidcommon.ServiceError {
+		suite.Equal(roleSharingResourceType, resourceType)
+		suite.Equal("ou1", owningOUID)
+		return &sharing.ErrorCoreConfigOwnerOnly
+	}
+
+	result, err := suite.service.UpdateRoleWithPermissions(testRootContext(), "role1", request)
+
+	suite.Nil(result)
+	suite.NotNil(err)
+	suite.Equal(sharing.ErrorCoreConfigOwnerOnly.Code, err.Code)
+	suite.mockOUService.AssertNotCalled(suite.T(), "GetOrganizationUnit", mock.Anything, mock.Anything)
+}
+
+// TestUpdateRole_RejectsWhenMovingToOUCallerDoesNotOwn proves that moving a role to a different OU
+// requires ownership of *both* the existing and the destination OU: the first RequireOwnership
+// call (existing OU) is allowed, but the second (destination OU) is denied.
+func (suite *RoleServiceTestSuite) TestUpdateRole_RejectsWhenMovingToOUCallerDoesNotOwn() {
+	request := RoleUpdateDetail{
+		Name:        "New Name",
+		OUID:        "ou2",
+		Permissions: []ResourcePermissions{{ResourceServerID: "rs1", Permissions: []string{"perm1"}}},
+	}
+
+	suite.mockResourceService.On("ValidatePermissions", mock.Anything,
+		"rs1", []string{"perm1"}).Return([]string{}, nil)
+	suite.mockStore.On("GetRole", mock.Anything,
+		"role1").Return(RoleWithPermissions{ID: "role1", OUID: "ou1"}, nil)
+	suite.sharingService.requireOwnershipFunc = func(
+		_ context.Context, _ sharing.ResourceType, owningOUID string,
+	) *tidcommon.ServiceError {
+		if owningOUID == "ou1" {
+			return nil
+		}
+		return &sharing.ErrorCoreConfigOwnerOnly
+	}
+
+	result, err := suite.service.UpdateRoleWithPermissions(testRootContext(), "role1", request)
+
+	suite.Nil(result)
+	suite.NotNil(err)
+	suite.Equal(sharing.ErrorCoreConfigOwnerOnly.Code, err.Code)
+	suite.mockOUService.AssertNotCalled(suite.T(), "GetOrganizationUnit", mock.Anything, mock.Anything)
+}
+
 func (suite *RoleServiceTestSuite) TestUpdateRole_RoleNotFound() {
 	request := RoleUpdateDetail{
 		Name:        "New Name",
@@ -879,10 +1416,10 @@ func (suite *RoleServiceTestSuite) TestUpdateRole_RoleNotFound() {
 
 	suite.mockResourceService.On("ValidatePermissions", mock.Anything,
 		"rs1", []string{"perm1"}).Return([]string{}, nil)
-	suite.mockStore.On("IsRoleExist", mock.Anything,
-		"nonexistent").Return(false, nil)
+	suite.mockStore.On("GetRole", mock.Anything,
+		"nonexistent").Return(RoleWithPermissions{}, ErrRoleNotFound)
 
-	result, err := suite.service.UpdateRoleWithPermissions(context.Background(), "nonexistent", request)
+	result, err := suite.service.UpdateRoleWithPermissions(testRootContext(), "nonexistent", request)
 
 	suite.Nil(result)
 	suite.NotNil(err)
@@ -899,14 +1436,14 @@ func (suite *RoleServiceTestSuite) TestUpdateRole_NameConflict() {
 	ou := providers.OrganizationUnit{ID: "ou1"}
 	suite.mockResourceService.On("ValidatePermissions", mock.Anything,
 		"rs1", []string{"perm1"}).Return([]string{}, nil)
-	suite.mockStore.On("IsRoleExist", mock.Anything,
-		"role1").Return(true, nil)
+	suite.mockStore.On("GetRole", mock.Anything,
+		"role1").Return(RoleWithPermissions{ID: "role1", OUID: "ou1"}, nil)
 	suite.mockOUService.On("GetOrganizationUnit", mock.Anything, "ou1").Return(ou, nil)
 	suite.mockStore.On("CheckRoleNameExistsExcludingID", mock.Anything,
 		"ou1", "Conflicting Name",
 		"role1").Return(true, nil)
 
-	result, err := suite.service.UpdateRoleWithPermissions(context.Background(), "role1", request)
+	result, err := suite.service.UpdateRoleWithPermissions(testRootContext(), "role1", request)
 
 	suite.Nil(result)
 	suite.NotNil(err)
@@ -923,14 +1460,14 @@ func (suite *RoleServiceTestSuite) TestUpdateRole_CheckNameExistsError() {
 	ou := providers.OrganizationUnit{ID: "ou1"}
 	suite.mockResourceService.On("ValidatePermissions", mock.Anything,
 		"rs1", []string{"perm1"}).Return([]string{}, nil)
-	suite.mockStore.On("IsRoleExist", mock.Anything,
-		"role1").Return(true, nil)
+	suite.mockStore.On("GetRole", mock.Anything,
+		"role1").Return(RoleWithPermissions{ID: "role1", OUID: "ou1"}, nil)
 	suite.mockOUService.On("GetOrganizationUnit", mock.Anything, "ou1").Return(ou, nil)
 	suite.mockStore.On("CheckRoleNameExistsExcludingID", mock.Anything,
 		"ou1", "New Name", "role1").
 		Return(false, errors.New("database error"))
 
-	result, err := suite.service.UpdateRoleWithPermissions(context.Background(), "role1", request)
+	result, err := suite.service.UpdateRoleWithPermissions(testRootContext(), "role1", request)
 
 	suite.Nil(result)
 	suite.NotNil(err)
@@ -952,7 +1489,7 @@ func (suite *RoleServiceTestSuite) TestUpdateRole_PermissionValidationErrors() {
 				Permissions: []ResourcePermissions{{ResourceServerID: "rs1", Permissions: []string{"perm1"}}},
 			},
 			setupMocks: func() {
-				// Permission validation happens before IsRoleExist check in UpdateRole
+				// Permission validation happens before the IsRoleExist check in UpdateRole
 				suite.mockResourceService.On("ValidatePermissions", mock.Anything,
 					"rs1", []string{"perm1"}).
 					Return([]string{"perm1"}, nil).Once()
@@ -967,7 +1504,7 @@ func (suite *RoleServiceTestSuite) TestUpdateRole_PermissionValidationErrors() {
 				Permissions: []ResourcePermissions{{ResourceServerID: "rs1", Permissions: []string{"perm1"}}},
 			},
 			setupMocks: func() {
-				// Permission validation happens before IsRoleExist check in UpdateRole
+				// Permission validation happens before the IsRoleExist check in UpdateRole
 				suite.mockResourceService.On("ValidatePermissions", mock.Anything,
 					"rs1", []string{"perm1"}).
 					Return([]string{}, &tidcommon.ServiceError{Code: "INTERNAL_ERROR"}).Once()
@@ -1000,8 +1537,8 @@ func (suite *RoleServiceTestSuite) TestUpdateRole_PermissionValidationErrors() {
 			},
 			setupMocks: func() {
 				ou := providers.OrganizationUnit{ID: "ou1"}
-				suite.mockStore.On("IsRoleExist", mock.Anything,
-					"role1").Return(true, nil).Once()
+				suite.mockStore.On("GetRole", mock.Anything,
+					"role1").Return(RoleWithPermissions{ID: "role1", OUID: "ou1"}, nil).Once()
 				suite.mockResourceService.On("ValidatePermissions", mock.Anything,
 					"rs1", []string{"perm1"}).
 					Return([]string{}, nil).Once()
@@ -1028,8 +1565,8 @@ func (suite *RoleServiceTestSuite) TestUpdateRole_PermissionValidationErrors() {
 			},
 			setupMocks: func() {
 				ou := providers.OrganizationUnit{ID: "ou1"}
-				suite.mockStore.On("IsRoleExist", mock.Anything,
-					"role1").Return(true, nil).Once()
+				suite.mockStore.On("GetRole", mock.Anything,
+					"role1").Return(RoleWithPermissions{ID: "role1", OUID: "ou1"}, nil).Once()
 				suite.mockOUService.On("GetOrganizationUnit", mock.Anything, "ou1").Return(ou, nil).Once()
 				suite.mockStore.On("CheckRoleNameExistsExcludingID", mock.Anything,
 					"ou1",
@@ -1049,7 +1586,7 @@ func (suite *RoleServiceTestSuite) TestUpdateRole_PermissionValidationErrors() {
 			suite.SetupTest()
 			tc.setupMocks()
 
-			result, err := suite.service.UpdateRoleWithPermissions(context.Background(), "role1", tc.request)
+			result, err := suite.service.UpdateRoleWithPermissions(testRootContext(), "role1", tc.request)
 
 			if tc.expectedError != nil {
 				suite.Nil(result)
@@ -1065,78 +1602,101 @@ func (suite *RoleServiceTestSuite) TestUpdateRole_PermissionValidationErrors() {
 
 // DeleteRole Tests
 func (suite *RoleServiceTestSuite) TestDeleteRole_Success() {
-	suite.mockStore.On("IsRoleExist", mock.Anything,
-		"role1").Return(true, nil)
+	suite.mockStore.On("GetRole", mock.Anything,
+		"role1").Return(RoleWithPermissions{ID: "role1", OUID: "ou1"}, nil)
 	suite.mockStore.On("DeleteAssignmentsByRoleID", mock.Anything,
 		"role1").Return(nil)
 	suite.mockStore.On("DeleteRole", mock.Anything,
 		"role1").Return(nil)
 
-	err := suite.service.DeleteRole(context.Background(), "role1")
+	err := suite.service.DeleteRole(testRootContext(), "role1")
 
 	suite.Nil(err)
 }
 
 func (suite *RoleServiceTestSuite) TestDeleteRole_WithAssignments() {
-	suite.mockStore.On("IsRoleExist", mock.Anything,
-		"role1").Return(true, nil)
+	suite.mockStore.On("GetRole", mock.Anything,
+		"role1").Return(RoleWithPermissions{ID: "role1", OUID: "ou1"}, nil)
 	suite.mockStore.On("DeleteAssignmentsByRoleID", mock.Anything,
 		"role1").Return(nil)
 	suite.mockStore.On("DeleteRole", mock.Anything,
 		"role1").Return(nil)
 
-	err := suite.service.DeleteRole(context.Background(), "role1")
+	err := suite.service.DeleteRole(testRootContext(), "role1")
 
 	suite.Nil(err)
 }
 
-func (suite *RoleServiceTestSuite) TestDeleteRole_NotFound_ReturnsNil() {
-	suite.mockStore.On("IsRoleExist", mock.Anything,
-		"nonexistent").Return(false, nil)
+// TestDeleteRole_RejectsWhenCallerDoesNotOwnRole proves deletion is gated by
+// sharing.RequireOwnershipForDeletion (not RequireOwnership) before any assignment or role
+// deletion is attempted, and that DeleteRole propagates whatever error that call returns —
+// including a resource-type-specific one, not just the generic core-config error.
+func (suite *RoleServiceTestSuite) TestDeleteRole_RejectsWhenCallerDoesNotOwnRole() {
+	suite.mockStore.On("GetRole", mock.Anything,
+		"role1").Return(RoleWithPermissions{ID: "role1", OUID: "ou1"}, nil)
+	suite.sharingService.requireOwnershipForDeletionFunc = func(
+		_ context.Context, resourceType sharing.ResourceType, owningOUID string,
+	) *tidcommon.ServiceError {
+		suite.Equal(roleSharingResourceType, resourceType)
+		suite.Equal("ou1", owningOUID)
+		return &ErrorRoleDeletionRestrictedToOwner
+	}
 
-	err := suite.service.DeleteRole(context.Background(), "nonexistent")
+	err := suite.service.DeleteRole(testRootContext(), "role1")
+
+	suite.NotNil(err)
+	suite.Equal(ErrorRoleDeletionRestrictedToOwner.Code, err.Code)
+	suite.mockStore.AssertNotCalled(suite.T(), "DeleteAssignmentsByRoleID", mock.Anything, mock.Anything)
+	suite.mockStore.AssertNotCalled(suite.T(), "DeleteRole", mock.Anything, mock.Anything)
+}
+
+func (suite *RoleServiceTestSuite) TestDeleteRole_NotFound_ReturnsNil() {
+	suite.mockStore.On("GetRole", mock.Anything,
+		"nonexistent").Return(RoleWithPermissions{}, ErrRoleNotFound)
+
+	err := suite.service.DeleteRole(testRootContext(), "nonexistent")
 
 	suite.Nil(err)
 }
 
 func (suite *RoleServiceTestSuite) TestDeleteRole_MissingID() {
-	err := suite.service.DeleteRole(context.Background(), "")
+	err := suite.service.DeleteRole(testRootContext(), "")
 
 	suite.NotNil(err)
 	suite.Equal(ErrorMissingRoleID.Code, err.Code)
 }
 
-func (suite *RoleServiceTestSuite) TestDeleteRole_GetRoleError() {
-	suite.mockStore.On("IsRoleExist", mock.Anything,
-		"role1").Return(false, errors.New("database error"))
+func (suite *RoleServiceTestSuite) TestDeleteRole_IsRoleExistError() {
+	suite.mockStore.On("GetRole", mock.Anything,
+		"role1").Return(RoleWithPermissions{}, errors.New("database error"))
 
-	err := suite.service.DeleteRole(context.Background(), "role1")
+	err := suite.service.DeleteRole(testRootContext(), "role1")
 
 	suite.NotNil(err)
 	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
 }
 
 func (suite *RoleServiceTestSuite) TestDeleteRole_GetAssignmentsCountError() {
-	suite.mockStore.On("IsRoleExist", mock.Anything,
-		"role1").Return(true, nil)
+	suite.mockStore.On("GetRole", mock.Anything,
+		"role1").Return(RoleWithPermissions{ID: "role1", OUID: "ou1"}, nil)
 	suite.mockStore.On("DeleteAssignmentsByRoleID", mock.Anything,
 		"role1").Return(errors.New("database error"))
 
-	err := suite.service.DeleteRole(context.Background(), "role1")
+	err := suite.service.DeleteRole(testRootContext(), "role1")
 
 	suite.NotNil(err)
 	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
 }
 
 func (suite *RoleServiceTestSuite) TestDeleteRole_StoreError() {
-	suite.mockStore.On("IsRoleExist", mock.Anything,
-		"role1").Return(true, nil)
+	suite.mockStore.On("GetRole", mock.Anything,
+		"role1").Return(RoleWithPermissions{ID: "role1", OUID: "ou1"}, nil)
 	suite.mockStore.On("DeleteAssignmentsByRoleID", mock.Anything,
 		"role1").Return(nil)
 	suite.mockStore.On("DeleteRole", mock.Anything,
 		"role1").Return(errors.New("delete error"))
 
-	err := suite.service.DeleteRole(context.Background(), "role1")
+	err := suite.service.DeleteRole(testRootContext(), "role1")
 
 	suite.NotNil(err)
 	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
@@ -1160,10 +1720,10 @@ func (suite *RoleServiceTestSuite) TestDeleteRole_DeclarativeMode_Denied() {
 	}
 	defer config.ResetServerRuntime()
 
-	suite.mockStore.On("IsRoleExist", mock.Anything, "role1").Return(true, nil)
+	suite.mockStore.On("GetRole", mock.Anything, "role1").Return(RoleWithPermissions{ID: "role1", OUID: "ou1"}, nil)
 	suite.mockStore.On("IsRoleDeclarative", mock.Anything, "role1").Return(true, nil)
 
-	err2 := suite.service.DeleteRole(context.Background(), "role1")
+	err2 := suite.service.DeleteRole(testRootContext(), "role1")
 
 	suite.NotNil(err2)
 	suite.Equal(ErrorImmutableRole.Code, err2.Code)
@@ -1186,7 +1746,7 @@ func (suite *RoleServiceTestSuite) TestValidateAssignmentIDs_UserServiceError() 
 		[]string{"user1"}).
 		Return([]providers.Entity{}, errors.New("internal error"))
 
-	result, err := suite.service.CreateRole(context.Background(), request)
+	result, err := suite.service.CreateRole(testRootContext(), request)
 
 	suite.Nil(result)
 	suite.NotNil(err)
@@ -1209,7 +1769,7 @@ func (suite *RoleServiceTestSuite) TestValidateAssignmentIDs_GroupServiceError()
 		[]string{"group1"}).
 		Return(&tidcommon.ServiceError{Code: "INTERNAL_ERROR"})
 
-	result, err := suite.service.CreateRole(context.Background(), request)
+	result, err := suite.service.CreateRole(testRootContext(), request)
 
 	suite.Nil(result)
 	suite.NotNil(err)
@@ -1393,13 +1953,13 @@ func (suite *RoleServiceTestSuite) TestGetAuthorizedPermissions() {
 				}
 				suite.mockStore.On("GetAuthorizedPermissionsByResourceServer", mock.Anything,
 					tc.userID, normalizedGroups, "",
-					tc.requestedPermissions).
+					tc.requestedPermissions, "").
 					Return(tc.mockReturn, tc.mockError).Once()
 			}
 
 			result, err := suite.service.GetAuthorizedPermissionsByResourceServer(
-				context.Background(), tc.userID, tc.groups, "",
-				tc.requestedPermissions)
+				testRootContext(), tc.userID, tc.groups, "",
+				tc.requestedPermissions, "")
 
 			if tc.expectedError != nil {
 				suite.NotNil(err)
@@ -1423,7 +1983,7 @@ func (suite *RoleServiceTestSuite) TestGetAuthorizedPermissions() {
 func (suite *RoleServiceTestSuite) TestIsRoleDeclarative_ReturnsTrue() {
 	suite.mockStore.On("IsRoleDeclarative", mock.Anything, "declarative-role").Return(true, nil)
 
-	isDeclarative, err := suite.service.IsRoleDeclarative(context.Background(), "declarative-role")
+	isDeclarative, err := suite.service.IsRoleDeclarative(testRootContext(), "declarative-role")
 
 	suite.Nil(err)
 	suite.True(isDeclarative)
@@ -1433,7 +1993,7 @@ func (suite *RoleServiceTestSuite) TestIsRoleDeclarative_ReturnsTrue() {
 func (suite *RoleServiceTestSuite) TestIsRoleDeclarative_ReturnsFalse() {
 	suite.mockStore.On("IsRoleDeclarative", mock.Anything, "mutable-role").Return(false, nil)
 
-	isDeclarative, err := suite.service.IsRoleDeclarative(context.Background(), "mutable-role")
+	isDeclarative, err := suite.service.IsRoleDeclarative(testRootContext(), "mutable-role")
 
 	suite.Nil(err)
 	suite.False(isDeclarative)
@@ -1443,7 +2003,7 @@ func (suite *RoleServiceTestSuite) TestIsRoleDeclarative_StoreReturnsError() {
 	storeErr := errors.New("store error")
 	suite.mockStore.On("IsRoleDeclarative", mock.Anything, "role-id").Return(false, storeErr)
 
-	isDeclarative, err := suite.service.IsRoleDeclarative(context.Background(), "role-id")
+	isDeclarative, err := suite.service.IsRoleDeclarative(testRootContext(), "role-id")
 
 	suite.NotNil(err)
 	suite.False(isDeclarative)
@@ -1457,7 +2017,7 @@ func (suite *RoleServiceTestSuite) TestResolveRoleOUHandle_OUHandleResolved() {
 		Return(providers.OrganizationUnit{ID: "ou-resolved"}, (*tidcommon.ServiceError)(nil)).Once()
 
 	role := &RoleWithPermissionsAndAssignments{OUHandle: "default"}
-	svcErr := suite.service.ResolveRoleOUHandle(context.Background(), role)
+	svcErr := suite.service.ResolveRoleOUHandle(testRootContext(), role)
 
 	suite.Nil(svcErr)
 	suite.Equal("ou-resolved", role.OUID)
@@ -1467,7 +2027,7 @@ func (suite *RoleServiceTestSuite) TestResolveRoleOUHandle_OUHandleResolved() {
 // and ou_handle is empty.
 func (suite *RoleServiceTestSuite) TestResolveRoleOUHandle_OUIDAlreadySet() {
 	role := &RoleWithPermissionsAndAssignments{OUID: "ou-direct"}
-	svcErr := suite.service.ResolveRoleOUHandle(context.Background(), role)
+	svcErr := suite.service.ResolveRoleOUHandle(testRootContext(), role)
 
 	suite.Nil(svcErr)
 	suite.Equal("ou-direct", role.OUID)
@@ -1478,7 +2038,7 @@ func (suite *RoleServiceTestSuite) TestResolveRoleOUHandle_OUIDAlreadySet() {
 func (suite *RoleServiceTestSuite) TestResolveRoleOUHandle_BothProvided() {
 	role := &RoleWithPermissionsAndAssignments{ID: "r1", Name: "Admin", OUID: "ou-direct", OUHandle: "default"}
 
-	svcErr := suite.service.ResolveRoleOUHandle(context.Background(), role)
+	svcErr := suite.service.ResolveRoleOUHandle(testRootContext(), role)
 
 	suite.Nil(svcErr)
 	suite.Equal("ou-direct", role.OUID)
@@ -1492,7 +2052,7 @@ func (suite *RoleServiceTestSuite) TestResolveRoleOUHandle_OUHandleNotFound() {
 		Return(providers.OrganizationUnit{}, &oupkg.ErrorOrganizationUnitNotFound).Once()
 
 	role := &RoleWithPermissionsAndAssignments{OUHandle: "missing"}
-	svcErr := suite.service.ResolveRoleOUHandle(context.Background(), role)
+	svcErr := suite.service.ResolveRoleOUHandle(testRootContext(), role)
 
 	suite.NotNil(svcErr)
 	suite.Equal(ErrorInvalidRequestFormat.Code, svcErr.Code)
@@ -1502,7 +2062,7 @@ func (suite *RoleServiceTestSuite) TestResolveRoleOUHandle_OUHandleNotFound() {
 // ou_id nor ou_handle is provided.
 func (suite *RoleServiceTestSuite) TestResolveRoleOUHandle_NeitherProvided() {
 	role := &RoleWithPermissionsAndAssignments{}
-	svcErr := suite.service.ResolveRoleOUHandle(context.Background(), role)
+	svcErr := suite.service.ResolveRoleOUHandle(testRootContext(), role)
 
 	suite.Nil(svcErr)
 	suite.Empty(role.OUID)
@@ -1514,7 +2074,7 @@ func (suite *RoleServiceTestSuite) TestResolveRoleOUHandle_NilOUService() {
 	svc := &roleService{ouService: nil}
 	role := &RoleWithPermissionsAndAssignments{OUHandle: "default"}
 
-	svcErr := svc.ResolveRoleOUHandle(context.Background(), role)
+	svcErr := svc.ResolveRoleOUHandle(testRootContext(), role)
 
 	suite.NotNil(svcErr)
 	suite.Equal(tidcommon.InternalServerError.Code, svcErr.Code)

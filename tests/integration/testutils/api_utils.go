@@ -1352,6 +1352,77 @@ func DeleteRole(roleID string) error {
 	return nil
 }
 
+// GrantResponse represents a single grant returned by POST /roles/{id}/grants.
+type GrantResponse struct {
+	ID string `json:"id"`
+}
+
+// grantListResponse represents the response body of POST /roles/{id}/grants, which
+// returns every grant created by the call (a root-targeting share can fan out to several roots).
+type grantListResponse struct {
+	Grants []GrantResponse `json:"grants"`
+}
+
+// ShareRole issues POST /roles/{id}/grants with the given request body (e.g.
+// map[string]interface{}{"rootOuIds": []string{targetOUID}}) and returns the ID of the first grant
+// created, for tests that need to unshare it again in cleanup.
+func ShareRole(roleID string, body map[string]interface{}) (string, error) {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal share request: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", TestServerURL+"/roles/"+roleID+"/grants", bytes.NewReader(payload))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := GetHTTPClient()
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to share role: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusCreated {
+		var errResp ErrorResponse
+		_ = json.Unmarshal(respBody, &errResp)
+		return "", fmt.Errorf("failed to share role, status %d: %s - %s", resp.StatusCode, errResp.Code, errResp.Message)
+	}
+
+	var grants grantListResponse
+	if err := json.Unmarshal(respBody, &grants); err != nil {
+		return "", fmt.Errorf("failed to unmarshal grants response: %w", err)
+	}
+	if len(grants.Grants) == 0 {
+		return "", fmt.Errorf("grants response contained no grants")
+	}
+	return grants.Grants[0].ID, nil
+}
+
+// UnshareRole revokes a grant via DELETE /roles/{id}/grants/{grantId}.
+func UnshareRole(roleID, grantID string) error {
+	req, err := http.NewRequest("DELETE", TestServerURL+"/roles/"+roleID+"/grants/"+grantID, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	client := GetHTTPClient()
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to unshare role: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("expected status 204 or 200, got %d. Response: %s", resp.StatusCode, string(bodyBytes))
+	}
+	return nil
+}
+
 // AssignmentListResponse represents the paginated list of assignments
 type AssignmentListResponse struct {
 	TotalResults int          `json:"totalResults"`
@@ -1368,6 +1439,37 @@ func GetRoleAssignments(roleID string) ([]Assignment, error) {
 		return nil, err
 	}
 	return resp.Assignments, nil
+}
+
+// GetRoleAssignmentsForOU fetches the assignments a specific OU has made for a role, i.e. those
+// recorded under that OU as the assigning OU. An empty ouID means the role's own owning OU.
+func GetRoleAssignmentsForOU(roleID, ouID string) ([]Assignment, error) {
+	url := fmt.Sprintf("%s/roles/%s/assignments?offset=0&limit=100", TestServerURL, roleID)
+	if ouID != "" {
+		url += "&ouId=" + ouID
+	}
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := GetHTTPClient().Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to get assignments for OU %q, status: %d", ouID, resp.StatusCode)
+	}
+
+	var assignmentsResp AssignmentListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&assignmentsResp); err != nil {
+		return nil, err
+	}
+
+	return assignmentsResp.Assignments, nil
 }
 
 // getRoleAssignments fetches all assignments for a role

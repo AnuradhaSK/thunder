@@ -30,6 +30,7 @@ import (
 	"github.com/thunder-id/thunderid/internal/ou"
 	"github.com/thunder-id/thunderid/internal/resource"
 	"github.com/thunder-id/thunderid/internal/role"
+	"github.com/thunder-id/thunderid/internal/sharing"
 	"github.com/thunder-id/thunderid/internal/system/cmodels"
 	"github.com/thunder-id/thunderid/internal/system/config"
 	"github.com/thunder-id/thunderid/internal/system/kmprovider/defaultkm"
@@ -626,7 +627,7 @@ func (f *fakeRoleService) CreateRole(
 	_ context.Context, req role.RoleCreationDetail,
 ) (*role.RoleWithPermissionsAndAssignments, *tidcommon.ServiceError) {
 	f.created = append(f.created, req)
-	return &role.RoleWithPermissionsAndAssignments{ID: "role-1", Name: req.Name}, nil
+	return &role.RoleWithPermissionsAndAssignments{ID: "role-1", Name: req.Name, OUID: req.OUID}, nil
 }
 
 func (f *fakeRoleService) GetRoleWithPermissions(
@@ -643,22 +644,72 @@ func (f *fakeRoleService) UpdateRoleWithPermissions(
 	_ context.Context, _ string, req role.RoleUpdateDetail,
 ) (*role.RoleWithPermissions, *tidcommon.ServiceError) {
 	f.updated = append(f.updated, req)
-	return &role.RoleWithPermissions{ID: "role-1", Name: req.Name}, nil
+	return &role.RoleWithPermissions{ID: "role-1", Name: req.Name, OUID: req.OUID}, nil
 }
 
 type fakeRoleAssignmentService struct {
 	assignments   []role.RoleAssignment
 	assignmentErr *tidcommon.ServiceError
+	ouIDs         []string
+	// assigneeOUs maps an assignee ID to the OU it lives in, standing in for the entity/group
+	// lookup ResolveAssignmentOUIDs performs. An assignee absent here resolves to no OU.
+	assigneeOUs map[string]string
+	resolveErr  *tidcommon.ServiceError
 }
 
 func (f *fakeRoleAssignmentService) AddAssignments(
-	_ context.Context, _ string, assignments []role.RoleAssignment,
+	_ context.Context, _, ouID string, assignments []role.RoleAssignment,
 ) *tidcommon.ServiceError {
 	if f.assignmentErr != nil {
 		return f.assignmentErr
 	}
+	f.ouIDs = append(f.ouIDs, ouID)
 	f.assignments = append(f.assignments, assignments...)
 	return nil
+}
+
+func (f *fakeRoleAssignmentService) ResolveAssignmentOUIDs(
+	_ context.Context, assignments []role.RoleAssignment,
+) ([]role.RoleAssignment, *tidcommon.ServiceError) {
+	if f.resolveErr != nil {
+		return nil, f.resolveErr
+	}
+	resolved := make([]role.RoleAssignment, len(assignments))
+	for i, a := range assignments {
+		resolved[i] = a
+		if a.OUID == "" {
+			resolved[i].OUID = f.assigneeOUs[a.ID]
+		}
+	}
+	return resolved, nil
+}
+
+type fakeSharingAdapter struct {
+	calls    []fakeSharingAdapterCall
+	shareErr *tidcommon.ServiceError
+}
+
+type fakeSharingAdapterCall struct {
+	resourceType         sharing.ResourceType
+	resourceID           string
+	owningOUID, actingOU string
+	policy               sharing.SharePolicy
+}
+
+func (f *fakeSharingAdapter) Share(
+	_ context.Context, resourceType sharing.ResourceType, resourceID, owningOUID, actingOUID string,
+	policy sharing.SharePolicy,
+) ([]sharing.Grant, *tidcommon.ServiceError) {
+	// Record before failing, so a test can distinguish "the grant was never attempted" from
+	// "the grant was attempted and rejected".
+	f.calls = append(f.calls, fakeSharingAdapterCall{
+		resourceType: resourceType, resourceID: resourceID,
+		owningOUID: owningOUID, actingOU: actingOUID, policy: policy,
+	})
+	if f.shareErr != nil {
+		return nil, f.shareErr
+	}
+	return nil, nil
 }
 
 type fakeGroupService struct {
@@ -3144,6 +3195,189 @@ func TestImportRole_OUIDWinsOverHandle(t *testing.T) {
 	assert.Equal(t, statusSuccess, resp.Results[0].Status)
 	require.Len(t, roleSvc.created, 1)
 	assert.Equal(t, "ou-explicit", roleSvc.created[0].OUID)
+}
+
+// TestImportRole_AppliesGrants verifies that a create's grants are replayed via the
+// sharing service, defaulting an omitted acting OU to the role's own owning OU.
+func TestImportRole_AppliesGrants(t *testing.T) {
+	roleSvc := &fakeRoleService{}
+	roleAssignmentSvc := &fakeRoleAssignmentService{}
+	sharingSvc := &fakeSharingAdapter{}
+	svc := newImportService(
+		nil, nil, nil, nil, nil, nil, roleSvc, roleAssignmentSvc,
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+	)
+	svc.sharingService = sharingSvc
+
+	content := strings.Join([]string{
+		"resource_type: role",
+		"id: role-new",
+		"name: Viewer",
+		"ouId: ou-owner",
+		"permissions: []",
+		"grants:",
+		"  - allChildren: true",
+		"  - initiatingOuId: ou-child",
+		"    ouIds:",
+		"      - ouId: ou-grandchild",
+		"",
+	}, "\n")
+
+	resp, err := svc.ImportResources(context.Background(), &ImportRequest{Content: content})
+
+	require.Nil(t, err)
+	require.Len(t, resp.Results, 1)
+	assert.Equal(t, statusSuccess, resp.Results[0].Status)
+	require.Len(t, sharingSvc.calls, 2)
+	assert.Equal(t, "ou-owner", sharingSvc.calls[0].actingOU)
+	assert.True(t, sharingSvc.calls[0].policy.AllChildren)
+	assert.Equal(t, "ou-child", sharingSvc.calls[1].actingOU)
+	assert.Equal(t, []string{"ou-grandchild"}, sharingSvc.calls[1].policy.OUIDs)
+}
+
+// TestImportRole_AppliesShareeOUAssignment verifies that an assignment declaring a sharee OU is
+// carried through to the assignment service on that OU rather than the role's own.
+func TestImportRole_AppliesShareeOUAssignment(t *testing.T) {
+	roleSvc := &fakeRoleService{}
+	roleAssignmentSvc := &fakeRoleAssignmentService{}
+	svc := newImportService(
+		nil, nil, nil, nil, nil, nil, roleSvc, roleAssignmentSvc,
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+	)
+	svc.sharingService = &fakeSharingAdapter{}
+
+	content := strings.Join([]string{
+		"resource_type: role",
+		"id: role-1",
+		"name: Viewer",
+		"ouId: ou-owner",
+		"permissions: []",
+		"assignments:",
+		"  - id: user1",
+		"    type: user",
+		"    ouId: ou-sharee",
+		"",
+	}, "\n")
+
+	resp, err := svc.ImportResources(context.Background(), &ImportRequest{Content: content})
+
+	require.Nil(t, err)
+	require.Len(t, resp.Results, 1)
+	assert.Equal(t, statusSuccess, resp.Results[0].Status)
+	require.Len(t, roleAssignmentSvc.assignments, 1)
+	assert.Equal(t, "ou-sharee", roleAssignmentSvc.assignments[0].OUID)
+}
+
+// TestImportRole_ResolvesAssignmentOUFromAssignee verifies that an assignment omitting ouId has it
+// filled in from the assignee's own OU before it reaches the assignment service.
+func TestImportRole_ResolvesAssignmentOUFromAssignee(t *testing.T) {
+	roleSvc := &fakeRoleService{}
+	roleAssignmentSvc := &fakeRoleAssignmentService{
+		assigneeOUs: map[string]string{"user1": "ou-where-user-lives"},
+	}
+	svc := newImportService(
+		nil, nil, nil, nil, nil, nil, roleSvc, roleAssignmentSvc,
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+	)
+	svc.sharingService = &fakeSharingAdapter{}
+
+	content := strings.Join([]string{
+		"resource_type: role",
+		"id: role-1",
+		"name: Viewer",
+		"ouId: ou-owner",
+		"permissions: []",
+		"assignments:",
+		"  - id: user1",
+		"    type: user",
+		"",
+	}, "\n")
+
+	resp, err := svc.ImportResources(context.Background(), &ImportRequest{Content: content})
+
+	require.Nil(t, err)
+	require.Len(t, resp.Results, 1)
+	assert.Equal(t, statusSuccess, resp.Results[0].Status)
+	require.Len(t, roleAssignmentSvc.assignments, 1)
+	assert.Equal(t, "ou-where-user-lives", roleAssignmentSvc.assignments[0].OUID)
+}
+
+// TestImportRole_AppliesGrantsBeforeAssignments verifies the ordering an assignment recorded under
+// a sharee OU depends on: the grant that authorizes it must already exist when it is written.
+// Covered on both the create and the upsert-update path, which sequence the two steps separately
+// (fakeRoleService reports "role-1" as existing and anything else as new).
+func TestImportRole_AppliesGrantsBeforeAssignments(t *testing.T) {
+	for _, tc := range []struct {
+		name, roleID string
+	}{
+		{"create", "role-new"},
+		{"update", "role-1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			roleSvc := &fakeRoleService{}
+			sharingSvc := &fakeSharingAdapter{shareErr: &sharing.ErrorInvalidTargetOU}
+			roleAssignmentSvc := &fakeRoleAssignmentService{}
+			svc := newImportService(
+				nil, nil, nil, nil, nil, nil, roleSvc, roleAssignmentSvc,
+				nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+			)
+			svc.sharingService = sharingSvc
+
+			content := strings.Join([]string{
+				"resource_type: role",
+				"id: " + tc.roleID,
+				"name: Viewer",
+				"ouId: ou-owner",
+				"permissions: []",
+				"grants:",
+				"  - ouIds:",
+				"      - ouId: ou-sharee",
+				"assignments:",
+				"  - id: user1",
+				"    type: user",
+				"    ouId: ou-sharee",
+				"",
+			}, "\n")
+
+			resp, err := svc.ImportResources(context.Background(), &ImportRequest{Content: content})
+
+			// The grant fails, so the import fails; the assignment it would have authorized must
+			// never have been written. Reversing the two steps leaves it written instead.
+			require.Nil(t, err)
+			require.Len(t, resp.Results, 1)
+			assert.Equal(t, statusFailed, resp.Results[0].Status)
+			require.Len(t, sharingSvc.calls, 1, "the grant must have been attempted")
+			assert.Empty(t, roleAssignmentSvc.assignments)
+		})
+	}
+}
+
+// TestImportRole_GrantError propagates a sharing service failure as an import failure.
+func TestImportRole_GrantError(t *testing.T) {
+	roleSvc := &fakeRoleService{}
+	roleAssignmentSvc := &fakeRoleAssignmentService{}
+	svc := newImportService(
+		nil, nil, nil, nil, nil, nil, roleSvc, roleAssignmentSvc,
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+	)
+	svc.sharingService = &fakeSharingAdapter{shareErr: &sharing.ErrorInvalidTargetOU}
+
+	content := strings.Join([]string{
+		"resource_type: role",
+		"id: role-new",
+		"name: Viewer",
+		"ouId: ou-owner",
+		"permissions: []",
+		"grants:",
+		"  - allChildren: true",
+		"",
+	}, "\n")
+
+	resp, err := svc.ImportResources(context.Background(), &ImportRequest{Content: content})
+
+	require.Nil(t, err)
+	require.Len(t, resp.Results, 1)
+	assert.Equal(t, statusFailed, resp.Results[0].Status)
 }
 
 // TestImportGroup_OUHandleResolved verifies that ou_handle on a group document is resolved

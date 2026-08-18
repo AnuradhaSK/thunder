@@ -159,16 +159,44 @@ func (suite *RoleFileBasedStoreTestSuite) TestGetRoleAssignmentsAndCount() {
 		},
 	})
 
-	count, err := suite.store.GetRoleAssignmentsCount(context.Background(), "role1")
+	count, err := suite.store.GetRoleAssignmentsCount(context.Background(), "role1", "")
 
 	suite.NoError(err)
 	suite.Equal(2, count)
 
-	assignments, err := suite.store.GetRoleAssignments(context.Background(), "role1", 1, 1)
+	assignments, err := suite.store.GetRoleAssignments(context.Background(), "role1", "", 1, 1)
 
 	suite.NoError(err)
 	suite.Len(assignments, 1)
 	suite.Equal("group1", assignments[0].ID)
+}
+
+func (suite *RoleFileBasedStoreTestSuite) TestGetAssigningOUIDs() {
+	suite.seedRole(RoleWithPermissionsAndAssignments{
+		ID:   "role1",
+		Name: "Admin",
+		OUID: "ou1",
+		Assignments: []RoleAssignment{
+			{ID: "user1", Type: assigneeTypeEntity},
+		},
+	})
+	suite.seedRole(RoleWithPermissionsAndAssignments{
+		ID:   "role2",
+		Name: "Viewer",
+		OUID: "ou2",
+	})
+
+	ouIDs, err := suite.store.GetAssigningOUIDs(context.Background(), "role1")
+	suite.NoError(err)
+	suite.Equal([]string{"ou1"}, ouIDs)
+
+	ouIDs, err = suite.store.GetAssigningOUIDs(context.Background(), "role2")
+	suite.NoError(err)
+	suite.Empty(ouIDs)
+
+	ouIDs, err = suite.store.GetAssigningOUIDs(context.Background(), "missing")
+	suite.NoError(err)
+	suite.Empty(ouIDs)
 }
 
 func (suite *RoleFileBasedStoreTestSuite) TestCheckRoleNameExists() {
@@ -248,7 +276,7 @@ func (suite *RoleFileBasedStoreTestSuite) TestGetAuthorizedPermissions() {
 		"user1",
 		[]string{"group1"}, "",
 
-		[]string{"perm2", "perm3"})
+		[]string{"perm2", "perm3"}, "")
 
 	suite.NoError(err)
 	suite.Equal([]string{"perm2"}, perms)
@@ -280,13 +308,13 @@ func (suite *RoleFileBasedStoreTestSuite) TestImmutability() {
 	suite.Error(err)
 
 	// Test AddAssignments returns error
-	err = suite.store.AddAssignments(context.Background(), "immutable-role", []RoleAssignment{
+	err = suite.store.AddAssignments(context.Background(), "immutable-role", "", []RoleAssignment{
 		{ID: "user1", Type: assigneeTypeEntity},
 	})
 	suite.Error(err)
 
 	// Test RemoveAssignments returns error
-	err = suite.store.RemoveAssignments(context.Background(), "immutable-role", []RoleAssignment{
+	err = suite.store.RemoveAssignments(context.Background(), "immutable-role", "", []RoleAssignment{
 		{ID: "user1", Type: assigneeTypeEntity},
 	})
 	suite.Error(err)
@@ -379,7 +407,7 @@ func (suite *RoleFileBasedStoreTestSuite) TestGetEntityRoleIDs_AlwaysEmpty() {
 	}
 	for _, tc := range cases {
 		suite.Run(tc.name, func() {
-			roleIDs, err := suite.store.GetEntityRoleIDs(context.Background(), tc.entityID, tc.groupIDs)
+			roleIDs, err := suite.store.GetEntityRoleIDs(context.Background(), tc.entityID, tc.groupIDs, "")
 			suite.NoError(err)
 			suite.Empty(roleIDs)
 			suite.NotNil(roleIDs, "must return [] not nil for safe composite union")

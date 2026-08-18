@@ -110,6 +110,14 @@ packages:
       structname: '{{.InterfaceName}}Mock'
       pkgname: role
       filename: "{{.InterfaceName}}_mock_test.go"
+
+  github.com/thunder-id/thunderid/internal/sharing:
+    config:
+      all: true
+      dir: internal/sharing
+      structname: '{{.InterfaceName}}Mock'
+      pkgname: sharing
+      filename: "{{.InterfaceName}}_mock_test.go"
   
   github.com/thunder-id/thunderid/internal/flow/core:
     config:

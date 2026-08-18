@@ -19,6 +19,7 @@ import (
 	"github.com/thunder-id/thunderid/internal/resource"
 	"github.com/thunder-id/thunderid/internal/role"
 	"github.com/thunder-id/thunderid/internal/serverconfig"
+	"github.com/thunder-id/thunderid/internal/sharing"
 	i18nmgt "github.com/thunder-id/thunderid/internal/system/i18n/mgt"
 	"github.com/thunder-id/thunderid/internal/system/middleware"
 	"github.com/thunder-id/thunderid/internal/user"
@@ -47,6 +48,7 @@ func Initialize(
 	presentationDefinitionService presentation.PresentationDefinitionServiceInterface,
 	credentialConfigurationService credential.CredentialConfigurationServiceInterface,
 	serverConfigService serverconfig.ServerConfigService,
+	sharingService sharing.ServiceInterface,
 ) ImportServiceInterface {
 	importService := newImportService(
 		applicationService,
@@ -68,6 +70,7 @@ func Initialize(
 		credentialConfigurationService,
 		serverConfigService,
 	)
+	importService.sharingService = sharingService
 	importHandler := newImportHandler(importService)
 
 	registerRoutes(mux, importHandler)

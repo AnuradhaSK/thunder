@@ -9,6 +9,7 @@ permissions:
     permissions:
       - test-resource:read
 assignments:
+  # ouId omitted, so the loader resolves it to the OU the assignee itself lives in.
   - id: decl-user-1
     type: user
   - id: decl-group-1

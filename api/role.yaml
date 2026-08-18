@@ -17,8 +17,15 @@ servers:
 
 tags:
   - name: Roles
-    description: Create roles, define their permission scopes, and assign them to users or groups.
-
+    description: |
+      Create roles, define their permissions, and assign them to users, groups, apps, or agents.
+      A role is owned by one organization unit, and `system:roles`/`system:roles:view` callers may
+      only act within their own.
+  - name: Role sharing
+    description: |
+      Share an owned role to other organization units without copying it: the role keeps one id and
+      its owner keeps sole control of name, description and permissions, while each organization
+      unit it reaches keeps its own separate assignments.
 security:
   - OAuth2: [system]
 
@@ -28,7 +35,12 @@ paths:
       tags:
         - Roles
       summary: List roles
+      description: |
+        Without `ouId`, lists every role in the deployment. With `ouId`, lists only the roles
+        owned by or shared to that organization unit, each tagged with `origin` (`owned` or
+        `shared`).
       parameters:
+        - $ref: '#/components/parameters/ouIdListingQueryParam'
         - $ref: '#/components/parameters/limitQueryParam'
         - $ref: '#/components/parameters/offsetQueryParam'
       responses:
@@ -38,26 +50,51 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RoleListResponse'
-              example:
-                totalResults: 5
-                startIndex: 1
-                count: 2
-                roles:
-                  - id: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
-                    name: "front-desk-agent"
-                    description: "Front desk agent role with booking and customer management permissions"
-                    ouId: "a839f4bd-39dc-4eaa-b5cc-210d8ecaee87"
-                    ouHandle: "default"
-                    isReadOnly: false
-                  - id: "257e528f-eb24-48b6-884d-20460e190957"
-                    name: "hotel-manager"
-                    description: "Hotel manager with full property access"
-                    ouId: "a839f4bd-39dc-4eaa-b5cc-210d8ecaee87"
-                    ouHandle: "default"
-                    isReadOnly: true
-                links:
-                  - href: "roles?offset=2&limit=2"
-                    rel: "next"
+              examples:
+                deployment-wide:
+                  summary: Without ouId (deployment-wide listing, no origin)
+                  value:
+                    totalResults: 5
+                    startIndex: 1
+                    count: 2
+                    roles:
+                      - id: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+                        name: "front-desk-agent"
+                        description: "Front desk agent role with booking and customer management permissions"
+                        ouId: "a839f4bd-39dc-4eaa-b5cc-210d8ecaee87"
+                        ouHandle: "default"
+                        isReadOnly: false
+                      - id: "257e528f-eb24-48b6-884d-20460e190957"
+                        name: "hotel-manager"
+                        description: "Hotel manager with full property access"
+                        ouId: "a839f4bd-39dc-4eaa-b5cc-210d8ecaee87"
+                        ouHandle: "default"
+                        isReadOnly: true
+                    links:
+                      - href: "roles?offset=2&limit=2"
+                        rel: "next"
+                owned-and-shared:
+                  summary: With ouId (owned + shared, with origin)
+                  value:
+                    totalResults: 2
+                    startIndex: 1
+                    count: 2
+                    roles:
+                      - id: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+                        name: "front-desk-agent"
+                        description: "Front desk agent role with booking and customer management permissions"
+                        ouId: "a839f4bd-39dc-4eaa-b5cc-210d8ecaee87"
+                        ouHandle: "default"
+                        isReadOnly: false
+                        origin: "owned"
+                      - id: "9c2e1a5c-2b1e-4f0a-8c1a-5a6b7c8d9e0f"
+                        name: "regional-manager"
+                        description: "Shared from the parent organization"
+                        ouId: "6f5e4d3c-2b1a-4c5d-8e9f-0a1b2c3d4e5f"
+                        ouHandle: "north-region"
+                        isReadOnly: false
+                        origin: "shared"
+                    links: []
         "400":
           description: Bad request
           content:
@@ -95,6 +132,22 @@ paths:
                     description:
                       key: "error.roleservice.invalid_offset_parameter_description"
                       defaultValue: "The offset parameter must be a non-negative integer"
+        "403":
+          description: |
+            Forbidden. A system:roles-scoped caller passed an `ouId` other than its own
+            organization unit.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "ROL-1023"
+                message:
+                  key: "error.roleservice.role_outside_own_ou_scope"
+                  defaultValue: "Outside the caller's organization unit scope"
+                description:
+                  key: "error.roleservice.role_outside_own_ou_scope_description"
+                  defaultValue: "The system:roles scope confines the caller to its own token-issued organization unit; the requested organization unit is outside that scope"
         "500":
           description: Internal server error
           content:
@@ -236,19 +289,36 @@ paths:
                       key: "error.roleservice.cannot_create_role_in_declarative_only_mode_description"
                       defaultValue: "Role creation is not allowed when running in declarative-only mode. Roles must be defined in declarative configuration files"
         "403":
-          description: Forbidden
+          description: |
+            Forbidden. Either the caller's organization unit does not match the requested `ouId`
+            and the caller does not hold the deployment's unrestricted permission (a role may only
+            be created for the organization unit that will own it), or the requested permissions
+            would exceed what the caller itself holds.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-              example:
-                code: "SAZ-4030"
-                message:
-                  key: "error.sysauthz.grant_not_permitted"
-                  defaultValue: "Insufficient privileges to grant these permissions"
-                description:
-                  key: "error.sysauthz.grant_not_permitted_description"
-                  defaultValue: "The operation would grant permissions that the caller does not hold"
+              examples:
+                outside-own-ou-scope:
+                  summary: The caller's own organization unit does not match the requested ouId
+                  value:
+                    code: "ROL-1023"
+                    message:
+                      key: "error.roleservice.role_outside_own_ou_scope"
+                      defaultValue: "Outside the caller's organization unit scope"
+                    description:
+                      key: "error.roleservice.role_outside_own_ou_scope_description"
+                      defaultValue: "The system:roles/system:roles:view scope confines the caller to its own token-issued organization unit; the requested organization unit is outside that scope"
+                insufficient-privileges:
+                  summary: The requested permissions exceed what the caller itself holds
+                  value:
+                    code: "SAZ-4030"
+                    message:
+                      key: "error.sysauthz.grant_not_permitted"
+                      defaultValue: "Insufficient privileges to grant these permissions"
+                    description:
+                      key: "error.sysauthz.grant_not_permitted_description"
+                      defaultValue: "The operation would grant permissions that the caller does not hold"
         "409":
           description: Conflict
           content:
@@ -327,6 +397,23 @@ paths:
                 description:
                   key: "error.roleservice.missing_role_id_description"
                   defaultValue: "Role ID is required"
+        "403":
+          description: |
+            Forbidden. A system:roles-scoped caller requested a role owned by a different
+            organization unit, and it has not been shared to the caller's own organization unit
+            either.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "ROL-1023"
+                message:
+                  key: "error.roleservice.role_outside_own_ou_scope"
+                  defaultValue: "Outside the caller's organization unit scope"
+                description:
+                  key: "error.roleservice.role_outside_own_ou_scope_description"
+                  defaultValue: "The system:roles scope confines the caller to its own token-issued organization unit; the requested organization unit is outside that scope"
         "404":
           description: Role not found
           content:
@@ -477,19 +564,36 @@ paths:
                       key: "error.roleservice.cannot_modify_declarative_role_description"
                       defaultValue: "The role is defined in declarative configuration and cannot be modified"
         "403":
-          description: Forbidden
+          description: |
+            Forbidden. Either the caller's organization unit does not own this role (and, if the
+            request moves the role, does not own the destination organization unit either) and the
+            caller does not hold the deployment's unrestricted permission, or the requested
+            permissions would exceed what the caller itself holds.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-              example:
-                code: "SAZ-4030"
-                message:
-                  key: "error.sysauthz.grant_not_permitted"
-                  defaultValue: "Insufficient privileges to grant these permissions"
-                description:
-                  key: "error.sysauthz.grant_not_permitted_description"
-                  defaultValue: "The operation would grant permissions that the caller does not hold"
+              examples:
+                core-config-owner-only:
+                  summary: The caller does not own this role (or the destination, on a move)
+                  value:
+                    code: "SHR-1007"
+                    message:
+                      key: "error.sharingservice.core_config_owner_only"
+                      defaultValue: "Core configuration can only be modified by the owning organization unit"
+                    description:
+                      key: "error.sharingservice.core_config_owner_only_description"
+                      defaultValue: "The caller's organization unit does not own this resource; only the owning organization unit, or an unrestricted caller, may create, modify, or delete its core configuration"
+                insufficient-privileges:
+                  summary: The requested permissions exceed what the caller itself holds
+                  value:
+                    code: "SAZ-4030"
+                    message:
+                      key: "error.sysauthz.grant_not_permitted"
+                      defaultValue: "Insufficient privileges to grant these permissions"
+                    description:
+                      key: "error.sysauthz.grant_not_permitted_description"
+                      defaultValue: "The operation would grant permissions that the caller does not hold"
         "404":
           description: Role not found
           content:
@@ -574,6 +678,25 @@ paths:
                     description:
                       key: "error.roleservice.cannot_modify_declarative_role_description"
                       defaultValue: "The role is defined in declarative configuration and cannot be modified"
+        "403":
+          description: |
+            Forbidden. The caller's organization unit does not own this role, and the caller does
+            not hold the deployment's unrestricted permission — a role may only be deleted by its
+            owning organization unit, regardless of any grant. Note this is `ROL-1024`, a
+            role-specific error, not the generic `SHR-1007` used by `PUT /roles/{id}`: deletion is
+            its own resource-type-meaningful violation, not a core-config edit.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "ROL-1024"
+                message:
+                  key: "error.roleservice.deletion_restricted_to_owner"
+                  defaultValue: "Role deletion not permitted"
+                description:
+                  key: "error.roleservice.deletion_restricted_to_owner_description"
+                  defaultValue: "Only the role's owning organization unit, or an unrestricted caller, may delete this role; a shared or reshared organization unit cannot delete the original role"
         "404":
           description: Role not found
           content:
@@ -618,6 +741,7 @@ paths:
             format: uuid
         - $ref: '#/components/parameters/assigneeTypeQueryParam'
         - $ref: '#/components/parameters/includeQueryParam'
+        - $ref: '#/components/parameters/ouIdActingQueryParam'
         - $ref: '#/components/parameters/limitQueryParam'
         - $ref: '#/components/parameters/offsetQueryParam'
       responses:
@@ -695,6 +819,22 @@ paths:
                     description:
                       key: "error.roleservice.invalid_offset_parameter_description"
                       defaultValue: "The offset parameter must be a non-negative integer"
+        "403":
+          description: |
+            Forbidden. A system:roles-scoped caller passed an `ouId` (or, if omitted, is acting as
+            the role's owner) other than its own organization unit.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "ROL-1023"
+                message:
+                  key: "error.roleservice.role_outside_own_ou_scope"
+                  defaultValue: "Outside the caller's organization unit scope"
+                description:
+                  key: "error.roleservice.role_outside_own_ou_scope_description"
+                  defaultValue: "The system:roles scope confines the caller to its own token-issued organization unit; the requested organization unit is outside that scope"
         "404":
           description: Role not found
           content:
@@ -737,6 +877,7 @@ paths:
           schema:
             type: string
             format: uuid
+        - $ref: '#/components/parameters/ouIdActingQueryParam'
       requestBody:
         required: true
         content:
@@ -789,20 +930,57 @@ paths:
                     description:
                       key: "error.roleservice.empty_assignments_list_description"
                       defaultValue: "At least one assignment must be provided"
+                immutable-assignment:
+                  summary: Cannot modify declarative assignment
+                  value:
+                    code: "ROL-1014"
+                    message:
+                      key: "error.roleservice.cannot_modify_declarative_assignment"
+                      defaultValue: "Cannot modify declarative assignment"
+                    description:
+                      key: "error.roleservice.cannot_modify_declarative_assignment_description"
+                      defaultValue: "The assignment is defined in declarative configuration and cannot be modified"
         "403":
-          description: Forbidden
+          description: |
+            Forbidden. Returned when ouId identifies a sharee organization unit that is not
+            allowed to write assignments for this role, when a system:roles-scoped caller names an
+            acting organization unit outside its own scope, or when the requested assignments would
+            grant permissions the caller does not itself hold.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-              example:
-                code: "SAZ-4030"
-                message:
-                  key: "error.sysauthz.grant_not_permitted"
-                  defaultValue: "Insufficient privileges to grant these permissions"
-                description:
-                  key: "error.sysauthz.grant_not_permitted_description"
-                  defaultValue: "The operation would grant permissions that the caller does not hold"
+              examples:
+                not-shared:
+                  summary: Role not shared to the organization unit identified by ouId
+                  value:
+                    code: "ROL-1019"
+                    message:
+                      key: "error.roleservice.role_not_shared_to_ou"
+                      defaultValue: "Role not shared to this organization unit"
+                    description:
+                      key: "error.roleservice.role_not_shared_to_ou_description"
+                      defaultValue: "The role has not been shared or reshared to the acting organization unit"
+                not-editable:
+                  summary: Assignments are not editable for the organization unit identified by ouId
+                  value:
+                    code: "ROL-1020"
+                    message:
+                      key: "error.roleservice.assignments_not_editable"
+                      defaultValue: "Assignments are not editable by this organization unit"
+                    description:
+                      key: "error.roleservice.assignments_not_editable_description"
+                      defaultValue: "The role's owning organization unit has not made assignments editable for the acting organization unit"
+                role-outside-own-ou-scope:
+                  summary: ouId (or, if omitted, the role's owner) is outside a system:roles-scoped caller's own organization unit
+                  value:
+                    code: "ROL-1023"
+                    message:
+                      key: "error.roleservice.role_outside_own_ou_scope"
+                      defaultValue: "Outside the caller's organization unit scope"
+                    description:
+                      key: "error.roleservice.role_outside_own_ou_scope_description"
+                      defaultValue: "The system:roles scope confines the caller to its own token-issued organization unit; the requested organization unit is outside that scope"
         "404":
           description: Role not found
           content:
@@ -845,6 +1023,7 @@ paths:
           schema:
             type: string
             format: uuid
+        - $ref: '#/components/parameters/ouIdActingQueryParam'
       requestBody:
         required: true
         content:
@@ -887,6 +1066,489 @@ paths:
                     description:
                       key: "error.roleservice.empty_assignments_list_description"
                       defaultValue: "At least one assignment must be provided"
+                immutable-assignment:
+                  summary: Cannot modify declarative assignment
+                  value:
+                    code: "ROL-1014"
+                    message:
+                      key: "error.roleservice.cannot_modify_declarative_assignment"
+                      defaultValue: "Cannot modify declarative assignment"
+                    description:
+                      key: "error.roleservice.cannot_modify_declarative_assignment_description"
+                      defaultValue: "The assignment is defined in declarative configuration and cannot be modified"
+        "403":
+          description: |
+            Forbidden. Returned when ouId identifies a sharee organization unit that is not
+            allowed to write assignments for this role, when a system:roles-scoped caller names an
+            acting organization unit outside its own scope, or when the requested assignments would
+            grant permissions the caller does not itself hold.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                not-shared:
+                  summary: Role not shared to the organization unit identified by ouId
+                  value:
+                    code: "ROL-1019"
+                    message:
+                      key: "error.roleservice.role_not_shared_to_ou"
+                      defaultValue: "Role not shared to this organization unit"
+                    description:
+                      key: "error.roleservice.role_not_shared_to_ou_description"
+                      defaultValue: "The role has not been shared or reshared to the acting organization unit"
+                not-editable:
+                  summary: Assignments are not editable for the organization unit identified by ouId
+                  value:
+                    code: "ROL-1020"
+                    message:
+                      key: "error.roleservice.assignments_not_editable"
+                      defaultValue: "Assignments are not editable by this organization unit"
+                    description:
+                      key: "error.roleservice.assignments_not_editable_description"
+                      defaultValue: "The role's owning organization unit has not made assignments editable for the acting organization unit"
+                role-outside-own-ou-scope:
+                  summary: ouId (or, if omitted, the role's owner) is outside a system:roles-scoped caller's own organization unit
+                  value:
+                    code: "ROL-1023"
+                    message:
+                      key: "error.roleservice.role_outside_own_ou_scope"
+                      defaultValue: "Outside the caller's organization unit scope"
+                    description:
+                      key: "error.roleservice.role_outside_own_ou_scope_description"
+                      defaultValue: "The system:roles scope confines the caller to its own token-issued organization unit; the requested organization unit is outside that scope"
+        "404":
+          description: Role not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "ROL-1003"
+                message:
+                  key: "error.roleservice.role_not_found"
+                  defaultValue: "Role not found"
+                description:
+                  key: "error.roleservice.role_not_found_description"
+                  defaultValue: "The role with the specified id does not exist"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "ROL-5000"
+                message:
+                  key: "error.internal_server_error"
+                  defaultValue: "Internal server error"
+                description:
+                  key: "error.internal_server_error_description"
+                  defaultValue: "An unexpected error occurred while processing the request"
+
+  /roles/{id}/grants:
+    post:
+      tags:
+        - Role sharing
+      summary: Create a grant for a role
+      description: |
+        Grants the role to other organization units, and returns the grants created.
+
+        `initiatingOuId` is the organization unit doing the granting, defaulting to the role's own
+        owning organization unit. Choose exactly one target mode:
+
+        - **Root-targeting** (`allRoots` or `rootOuIds`) reaches Root organization units, the only
+          way out of the owner's own subtree. The owning organization unit alone may use it.
+        - **Children-targeting** (`allChildren` or `ouIds`) reaches into `initiatingOuId`'s own
+          subtree. Open to the owner and to any organization unit the role is already visible to,
+          which is how a sharee passes it further down.
+
+        Each `ouIds` entry names one direct child and says, via its own `allChildren`, whether that
+        child's whole subtree comes with it. That is how a single call hands one named branch over
+        whole, where `allChildren` at the top level hands over every branch and an entry without
+        the flag reaches the named child alone.
+
+        `editableFields` limits what the targets may edit. The `ShareRequest` schema below covers
+        each field, including the exclusion lists; the examples show one call per mode.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ShareRequest'
+            examples:
+              selected-roots:
+                summary: Owner shares to specific Root organization units
+                value:
+                  rootOuIds:
+                    - "6f5e4d3c-2b1a-4c5d-8e9f-0a1b2c3d4e5f"
+              all-roots-except:
+                summary: Owner shares to all Roots except some
+                value:
+                  allRoots: true
+                  excludedRootOuIds:
+                    - "9c2e1a5c-2b1e-4f0a-8c1a-5a6b7c8d9e0f"
+              owner-single-call:
+                summary: Owner shares directly to its own children, in one call, no prior grant
+                value:
+                  allChildren: true
+              all-children-except:
+                summary: An already-visible organization unit shares to all its children except some
+                value:
+                  initiatingOuId: "6f5e4d3c-2b1a-4c5d-8e9f-0a1b2c3d4e5f"
+                  allChildren: true
+                  excludedOuIds:
+                    - "9c2e1a5c-2b1e-4f0a-8c1a-5a6b7c8d9e0f"
+              selected-immediate-children:
+                summary: Share to specific direct children only (a grandchild must share again)
+                value:
+                  initiatingOuId: "6f5e4d3c-2b1a-4c5d-8e9f-0a1b2c3d4e5f"
+                  ouIds:
+                    - ouId: "9c2e1a5c-2b1e-4f0a-8c1a-5a6b7c8d9e0f"
+              named-child-with-its-subtree:
+                summary: Share one named child together with its whole branch, in one call
+                value:
+                  initiatingOuId: "6f5e4d3c-2b1a-4c5d-8e9f-0a1b2c3d4e5f"
+                  ouIds:
+                    - ouId: "9c2e1a5c-2b1e-4f0a-8c1a-5a6b7c8d9e0f"
+                      allChildren: true
+              mixed-children:
+                summary: One child gets its whole branch, another gets only itself
+                value:
+                  initiatingOuId: "6f5e4d3c-2b1a-4c5d-8e9f-0a1b2c3d4e5f"
+                  ouIds:
+                    - ouId: "9c2e1a5c-2b1e-4f0a-8c1a-5a6b7c8d9e0f"
+                      allChildren: true
+                    - ouId: "0d1e2f3a-4b5c-6d7e-8f9a-0b1c2d3e4f5a"
+              named-child-subtree-except:
+                summary: A named child's branch, minus part of that branch
+                value:
+                  initiatingOuId: "6f5e4d3c-2b1a-4c5d-8e9f-0a1b2c3d4e5f"
+                  ouIds:
+                    - ouId: "9c2e1a5c-2b1e-4f0a-8c1a-5a6b7c8d9e0f"
+                      allChildren: true
+                  excludedOuIds:
+                    - "0d1e2f3a-4b5c-6d7e-8f9a-0b1c2d3e4f5a"
+              reshare-narrower-editability:
+                summary: A sharee reshares further, narrowing editability to a subset of its own
+                value:
+                  initiatingOuId: "6f5e4d3c-2b1a-4c5d-8e9f-0a1b2c3d4e5f"
+                  ouIds:
+                    - ouId: "9c2e1a5c-2b1e-4f0a-8c1a-5a6b7c8d9e0f"
+                  editableFields:
+                    - "assignments.group"
+      responses:
+        "201":
+          description: Grant(s) created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrantCreationResponse'
+              example:
+                grants:
+                  - id: "1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d"
+                    stage: "share"
+                    targetScope: "root"
+                    targetOuId: "6f5e4d3c-2b1a-4c5d-8e9f-0a1b2c3d4e5f"
+                    owningOuId: "a839f4bd-39dc-4eaa-b5cc-210d8ecaee87"
+                    editableFields:
+                      - "assignments"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid-request-format:
+                  summary: |
+                    Neither target-scope mode selected, both selected, or an invalid request body
+                  value:
+                    code: "SHR-1001"
+                    message:
+                      key: "error.sharingservice.invalid_request_format"
+                      defaultValue: "Invalid request format"
+                    description:
+                      key: "error.sharingservice.invalid_request_format_description"
+                      defaultValue: "The request body is malformed or contains invalid data"
+                invalid-target-ou:
+                  summary: |
+                    A rootOuIds entry is not itself a Root organization unit, or an ouIds entry is
+                    not initiatingOuId's direct child (e.g. a grandchild, or a Root)
+                  value:
+                    code: "SHR-1004"
+                    message:
+                      key: "error.sharingservice.invalid_target_ou"
+                      defaultValue: "Invalid target organization unit"
+                    description:
+                      key: "error.sharingservice.invalid_target_ou_description"
+                      defaultValue: "The target organization unit does not satisfy the sharing policy's constraints"
+                non-owner-root-targeting:
+                  summary: initiatingOuId used root-targeting mode but is not the role's own owning organization unit
+                  value:
+                    code: "SHR-1004"
+                    message:
+                      key: "error.sharingservice.invalid_target_ou"
+                      defaultValue: "Invalid target organization unit"
+                    description:
+                      key: "error.sharingservice.invalid_target_ou_description"
+                      defaultValue: "The target organization unit does not satisfy the sharing policy's constraints"
+                not-shared:
+                  summary: |
+                    initiatingOuId used children-targeting mode but is not the role's owner and has no grant
+                    making it visible
+                  value:
+                    code: "SHR-1005"
+                    message:
+                      key: "error.sharingservice.not_shared"
+                      defaultValue: "Resource not shared to this organization unit"
+                    description:
+                      key: "error.sharingservice.not_shared_description"
+                      defaultValue: "The resource has not been shared or reshared to the given organization unit"
+                field-not-templated:
+                  summary: An editableFields entry is not "assignments" or one of the assignments.* fields
+                  value:
+                    code: "SHR-1006"
+                    message:
+                      key: "error.sharingservice.field_not_templated"
+                      defaultValue: "Field is not a templated field"
+                    description:
+                      key: "error.sharingservice.field_not_templated_description"
+                      defaultValue: "The given field is not declared as a templated field for this resource type"
+                editability-cannot-be-expanded:
+                  summary: |
+                    A reshare's editableFields names a field initiatingOuId cannot itself currently edit
+                  value:
+                    code: "SHR-1008"
+                    message:
+                      key: "error.sharingservice.editability_cannot_be_expanded"
+                      defaultValue: "Editability cannot be expanded on reshare"
+                    description:
+                      key: "error.sharingservice.editability_cannot_be_expanded_description"
+                      defaultValue: "A reshare may only narrow which templated fields are editable relative to what the acting organization unit itself currently holds, never widen it"
+        "404":
+          description: Role not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "ROL-1003"
+                message:
+                  key: "error.roleservice.role_not_found"
+                  defaultValue: "Role not found"
+                description:
+                  key: "error.roleservice.role_not_found_description"
+                  defaultValue: "The role with the specified id does not exist"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "ROL-5000"
+                message:
+                  key: "error.internal_server_error"
+                  defaultValue: "Internal server error"
+                description:
+                  key: "error.internal_server_error_description"
+                  defaultValue: "An unexpected error occurred while processing the request"
+    get:
+      tags:
+        - Role sharing
+      summary: List grants for a role
+      description: |
+        Returns the role's grants, one page at a time.
+
+        Each grant's `stage` says who issued it, not which target mode was used: `share` for the
+        role's own owning organization unit, `reshare` for a sharee passing it further down its own
+        subtree.
+
+        Grants declared in a role's declarative YAML (`grants:`) are held in memory rather than
+        stored, and merged with the stored ones here, so both appear in this list. A declared grant
+        cannot be revoked through the API: it belongs to the file that declares it.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/limitQueryParam'
+        - $ref: '#/components/parameters/offsetQueryParam'
+      responses:
+        "200":
+          description: Paginated list of grants
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrantListResponse'
+              example:
+                totalResults: 5
+                startIndex: 1
+                count: 2
+                grants:
+                  - id: "1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d"
+                    stage: "share"
+                    targetScope: "root"
+                    targetOuId: "6f5e4d3c-2b1a-4c5d-8e9f-0a1b2c3d4e5f"
+                    owningOuId: "a839f4bd-39dc-4eaa-b5cc-210d8ecaee87"
+                    editableFields:
+                      - "assignments"
+                  - id: "2b3c4d5e-6f7a-8b9c-0d1e-2f3a4b5c6d7e"
+                    stage: "reshare"
+                    targetScope: "all_children"
+                    targetOuId: "6f5e4d3c-2b1a-4c5d-8e9f-0a1b2c3d4e5f"
+                    owningOuId: "a839f4bd-39dc-4eaa-b5cc-210d8ecaee87"
+                    excludedOuIds:
+                      - "9c2e1a5c-2b1e-4f0a-8c1a-5a6b7c8d9e0f"
+                    editableFields:
+                      - "assignments.group"
+                links:
+                  - href: "roles/3fa85f64-5717-4562-b3fc-2c963f66afa6/grants?offset=2&limit=2"
+                    rel: "next"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "ROL-1008"
+                message: "Invalid request"
+                description: "Invalid limit parameter"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "ROL-5000"
+                message:
+                  key: "error.internal_server_error"
+                  defaultValue: "Internal server error"
+                description:
+                  key: "error.internal_server_error_description"
+                  defaultValue: "An unexpected error occurred while processing the request"
+
+  /roles/{id}/grants/{grantId}:
+    delete:
+      tags:
+        - Role sharing
+      summary: Revoke a grant
+      description: |
+        Revokes the grant, along with any reshare grants derived from it. Every organization unit
+        that loses access has its assignments for the role deleted, so no stale permissions remain.
+
+        Revoking an `allRoots` grant stops it governing future reshares and assignments; it does
+        not go back and purge assignments Root organization units already made.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: path
+          name: grantId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Grant revoked
+        "400":
+          description: |
+            Bad request. The grant is declared in a role's declarative YAML, so it belongs to that
+            file and can only be changed there. Nothing is revoked, and no `OnUnshare` hook fires.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "SHR-1010"
+                message:
+                  key: "error.sharingservice.grant_declarative"
+                  defaultValue: "Grant cannot be modified"
+                description:
+                  key: "error.sharingservice.grant_declarative_description"
+                  defaultValue: "The grant is defined in a declarative resource file and can only be changed there"
+        "404":
+          description: Grant not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "SHR-1003"
+                message:
+                  key: "error.sharingservice.grant_not_found"
+                  defaultValue: "Grant not found"
+                description:
+                  key: "error.sharingservice.grant_not_found_description"
+                  defaultValue: "The grant with the specified id does not exist"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "ROL-5000"
+                message:
+                  key: "error.internal_server_error"
+                  defaultValue: "Internal server error"
+                description:
+                  key: "error.internal_server_error_description"
+                  defaultValue: "An unexpected error occurred while processing the request"
+
+  /roles/{id}/editable-fields:
+    get:
+      tags:
+        - Role sharing
+      summary: Get templated fields editable by an organization unit
+      description: |
+        Returns the templated fields (`assignments` and/or the `assignments.*` types) currently
+        editable by `ouId` for this role: every declared field when `ouId` is the role's own owning
+        organization unit, or whichever fields the grant that makes the role visible to `ouId`
+        allows, for a sharee. A grant fixes this set when it is created; see
+        `ShareRequest.editableFields`.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: ouId
+          required: false
+          description: |
+            The organization unit to resolve editability for. Optional; defaults to the role's own
+            owning organization unit when omitted.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Editable fields
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EditableFieldsResponse'
+              example:
+                fields:
+                  - "assignments.group"
         "403":
           description: Forbidden
           content:
@@ -894,13 +1556,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
               example:
-                code: "SAZ-4030"
+                code: "ROL-1023"
                 message:
-                  key: "error.sysauthz.grant_not_permitted"
-                  defaultValue: "Insufficient privileges to grant these permissions"
+                  key: "error.roleservice.role_outside_own_ou_scope"
+                  defaultValue: "Outside the caller's organization unit scope"
                 description:
-                  key: "error.sysauthz.grant_not_permitted_description"
-                  defaultValue: "The operation would grant permissions that the caller does not hold"
+                  key: "error.roleservice.role_outside_own_ou_scope_description"
+                  defaultValue: "The system:roles scope confines the caller to its own token-issued organization unit; the requested organization unit is outside that scope"
         "404":
           description: Role not found
           content:
@@ -940,10 +1602,22 @@ components:
           tokenUrl: https://localhost:8090/oauth2/token
           scopes:
             system: Access to system management APIs
+            system:roles: |
+              Full access to the Role Management API, confined to the token's own organization
+              unit.
+            system:roles:view: |
+              Read-only access to the Role Management API, confined to the token's own
+              organization unit.
         clientCredentials:
           tokenUrl: https://localhost:8090/oauth2/token
           scopes:
             system: Access to system management APIs
+            system:roles: |
+              Full access to the Role Management API, confined to the token's own organization
+              unit.
+            system:roles:view: |
+              Read-only access to the Role Management API, confined to the token's own
+              organization unit.
 
   parameters:
     limitQueryParam:
@@ -990,7 +1664,33 @@ components:
       description: |
         Optional parameter to include additional information.
         - `display` - Include display names for users and groups. For users, the display value is resolved from the schema-configured display attribute (`systemAttributes.display`). Falls back to the user ID if no display attribute is configured, the configured attribute path does not exist in the user's data, or the attribute value is empty. For groups, the group name is used.
-
+    ouIdListingQueryParam:
+      in: query
+      name: ouId
+      required: false
+      schema:
+        type: string
+        format: uuid
+      description: |
+        Organization unit to list roles for. When present, the response includes both roles
+        owned by this organization unit and roles shared to it, each tagged with `origin`. When
+        absent, the deployment-wide listing is returned (no `origin` tag).
+    ouIdActingQueryParam:
+      in: query
+      name: ouId
+      required: false
+      schema:
+        type: string
+        format: uuid
+      description: |
+        The organization unit to act as when reading or writing the role's `assignments`. Empty
+        (the default) means the role's owning organization unit. This preserves prior behavior
+        for every caller that doesn't participate in sharing. A non-empty value identifies a
+        sharee organization unit acting on its own assignments: for writes (add/remove), the role
+        must currently be shared to it, and, for every distinct assignee type present in the
+        request, the matching `assignments.*` field must be editable for it; otherwise the whole
+        request is rejected. For reads, an organization
+        unit with no assignments of its own simply sees an empty list.
   schemas:
     Assignment:
       type: object
@@ -1071,6 +1771,13 @@ components:
           type: boolean
           readOnly: true
           description: "Indicates if the role is defined in declarative configuration and cannot be modified"
+        origin:
+          type: string
+          readOnly: true
+          enum:
+            - owned
+            - shared
+          description: "Present only when listing roles with the ouId query parameter: whether the organization unit owns this role or the role was shared to it."
 
     Role:
       type: object
@@ -1224,6 +1931,196 @@ components:
         rel:
           type: string
           example: "next"
+
+    ShareTarget:
+      type: object
+      required: [ouId]
+      description: |
+        One organization unit to share to, and whether its own subtree comes with it. The named
+        organization unit must be a direct child of `initiatingOuId` either way; `allChildren` only
+        decides how far below that child the grant reaches, which is never more than the child
+        could have granted for itself.
+      properties:
+        ouId:
+          type: string
+          format: uuid
+          description: The organization unit being shared to. Must be initiatingOuId's direct child.
+        allChildren:
+          type: boolean
+          description: |
+            Additionally share to every organization unit in this one's own subtree, at any depth,
+            including ones created later. Omit to share to the named organization unit alone,
+            leaving it to decide whether the role travels any further down. Produces the
+            `ou_subtree` target scope rather than `ou`.
+
+    ShareRequest:
+      type: object
+      description: |
+        Exactly one of two target-scope modes must be selected: root-targeting (`allRoots` or
+        `rootOuIds`) or children-targeting (`allChildren` or `ouIds`).
+      properties:
+        initiatingOuId:
+          type: string
+          format: uuid
+          description: |
+            The organization unit performing this share. Defaults to the role's own owning
+            organization unit. Root-targeting requires it to be that owning organization unit;
+            children-targeting accepts any organization unit the role is currently visible to,
+            including the owner itself. Named distinctly from the `ouIds` targets below, which are
+            the organization units being shared *to*.
+        allRoots:
+          type: boolean
+          description: Share to every current and future Root organization unit. Root-targeting mode.
+        rootOuIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: Share to these specific Root organization units. Root-targeting mode.
+        excludedRootOuIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: |
+            Carves these Root organization units, and their entire subtrees, out of an `allRoots`
+            share (e.g. "share to all Roots except this one"). Each must itself be a Root
+            organization unit. Ignored unless `allRoots` is true.
+        allChildren:
+          type: boolean
+          description: |
+            Share to every organization unit in initiatingOuId's subtree, including ones created
+            afterward, any depth, in one grant. Children-targeting mode.
+        ouIds:
+          type: array
+          items:
+            $ref: '#/components/schemas/ShareTarget'
+          description: |
+            Share to these specific organization units, each of which must be initiatingOuId's
+            direct child; reaching a grandchild selectively requires that child to issue its own
+            children-targeting call in turn. Each entry decides for itself whether that child's own
+            subtree comes with it. Ignored when `allChildren` is true. Children-targeting mode.
+        excludedOuIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: |
+            Carves these organization units, and their entire subtrees, out of an `allChildren`
+            share (e.g. "share to all children except these"), or out of any `ouIds` entry whose
+            own subtree contains them. Each must be initiatingOuId itself or within its subtree.
+            Ignored when neither applies. An exclusion outside a given entry's subtree is inert
+            for that entry rather than an error, so one list can accompany several entries.
+        editableFields:
+          type: array
+          items:
+            type: string
+            enum:
+              - "assignments"
+              - "assignments.user"
+              - "assignments.group"
+              - "assignments.app"
+              - "assignments.agent"
+          description: |
+            Templated fields made editable through this grant, fixed at creation: to change them,
+            revoke the grant and share again. Omit for "everything": every field when `initiatingOuId`
+            is the role's own owning organization unit, or exactly `initiatingOuId`'s own current
+            editable set when `initiatingOuId` is a sharee resharing. A reshare may only narrow this
+            set, never widen it (`SHR-1008` if it tries to).
+
+    Grant:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        stage:
+          type: string
+          enum:
+            - share
+            - reshare
+          description: |
+            Who issued this grant, not which target-scope mode it used: `share` for a grant issued
+            by the role's own owning organization unit (whether root-targeting or children-targeting
+            mode), `reshare` for a grant issued by a previously-visible sharee organization unit
+            distributing further within its own subtree.
+        targetScope:
+          type: string
+          enum:
+            - all_roots
+            - root
+            - all_children
+            - ou
+            - ou_subtree
+          description: |
+            The breadth of organization units this grant targets. `ou` is one named organization
+            unit alone; `ou_subtree` is one named organization unit together with its whole
+            subtree, at any depth (from an `ouIds` entry with `allChildren` set); `all_children` is
+            every organization unit beneath the one that issued the grant.
+        targetOuId:
+          type: string
+          format: uuid
+        owningOuId:
+          type: string
+          format: uuid
+          description: The organization unit that owns the shared role.
+        excludedOuIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: |
+            Organization units (and their subtrees) carved out of this grant. Only ever non-empty
+            for the target scopes that carry a subtree with them: `all_roots`, `all_children` and
+            `ou_subtree`. A plain `ou` grant reaches one organization unit and no further, so there
+            is nothing under it to carve out.
+        editableFields:
+          type: array
+          items:
+            type: string
+          description: The templated fields made editable through this grant (see ShareRequest.editableFields).
+
+    GrantCreationResponse:
+      type: object
+      properties:
+        grants:
+          type: array
+          items:
+            $ref: '#/components/schemas/Grant'
+          description: |
+            Every grant the request created. A single root-targeting share can fan out to more than
+            one grant, so this is a creation result rather than a page of an existing list.
+
+    GrantListResponse:
+      type: object
+      properties:
+        totalResults:
+          type: integer
+          description: Total number of grants recorded for the role.
+        startIndex:
+          type: integer
+          description: 1-based index of the first grant in this page.
+        count:
+          type: integer
+          description: Number of grants in this page.
+        grants:
+          type: array
+          items:
+            $ref: '#/components/schemas/Grant'
+        links:
+          type: array
+          items:
+            $ref: '#/components/schemas/Link'
+
+    EditableFieldsResponse:
+      type: object
+      required: [fields]
+      properties:
+        fields:
+          type: array
+          items:
+            type: string
+          description: The templated fields currently editable by the requested organization unit.
 
     Error:
       type: object

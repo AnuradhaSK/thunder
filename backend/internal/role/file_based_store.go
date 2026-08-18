@@ -205,16 +205,18 @@ func (f *fileBasedStore) IsRoleExist(ctx context.Context, id string) (bool, erro
 // GetRoleAssignments returns role assignments from the file-based store.
 func (f *fileBasedStore) GetRoleAssignments(
 	ctx context.Context,
-	id string,
+	id, ouID string,
 	limit, offset int,
 ) ([]RoleAssignment, error) {
-	return f.GetRoleAssignmentsByType(ctx, id, limit, offset, "")
+	return f.GetRoleAssignmentsByType(ctx, id, ouID, limit, offset, "")
 }
 
-// GetRoleAssignmentsByType returns assignments for a role filtered by assignee type.
+// GetRoleAssignmentsByType returns assignments made by ouID for a role, filtered by assignee
+// type. Declarative roles are not shareable, so a non-empty ouID that does not match the role's
+// own declared OU returns no assignments — the role's only real "OU" is its owner.
 func (f *fileBasedStore) GetRoleAssignmentsByType(
 	ctx context.Context,
-	id string,
+	id, ouID string,
 	limit, offset int,
 	assigneeType string,
 ) ([]RoleAssignment, error) {
@@ -241,6 +243,10 @@ func (f *fileBasedStore) GetRoleAssignmentsByType(
 		return nil, err
 	}
 
+	if ouID != "" && ouID != roleData.OUID {
+		return []RoleAssignment{}, nil
+	}
+
 	assignments := filterAssignmentsByType(roleData.Assignments, assigneeType)
 	start := offset
 	if start >= len(assignments) {
@@ -254,14 +260,37 @@ func (f *fileBasedStore) GetRoleAssignmentsByType(
 	return assignments[start:end], nil
 }
 
-// GetRoleAssignmentsCount returns the assignment count for a role in the file-based store.
-func (f *fileBasedStore) GetRoleAssignmentsCount(ctx context.Context, id string) (int, error) {
-	return f.GetRoleAssignmentsCountByType(ctx, id, "")
+// GetAssigningOUIDs returns the role's own owning OU when it has declared assignments, since a
+// declarative role's only real assignments are the ones it declares for itself.
+func (f *fileBasedStore) GetAssigningOUIDs(_ context.Context, id string) ([]string, error) {
+	data, err := f.GenericFileBasedStore.Get(id)
+	if err != nil {
+		if isEntityNotFoundError(err) {
+			return []string{}, nil
+		}
+		return nil, err
+	}
+
+	roleData, err := roleFromDeclarativeData(id, data)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(roleData.Assignments) == 0 {
+		return []string{}, nil
+	}
+	return []string{roleData.OUID}, nil
 }
 
-// GetRoleAssignmentsCountByType returns the assignment count for a role filtered by type.
+// GetRoleAssignmentsCount returns the assignment count for a role in the file-based store.
+func (f *fileBasedStore) GetRoleAssignmentsCount(ctx context.Context, id, ouID string) (int, error) {
+	return f.GetRoleAssignmentsCountByType(ctx, id, ouID, "")
+}
+
+// GetRoleAssignmentsCountByType returns the assignment count made by ouID for a role, filtered
+// by type. See GetRoleAssignmentsByType for the ouID-scoping rationale.
 func (f *fileBasedStore) GetRoleAssignmentsCountByType(
-	ctx context.Context, id string, assigneeType string,
+	ctx context.Context, id, ouID string, assigneeType string,
 ) (int, error) {
 	data, err := f.GenericFileBasedStore.Get(id)
 	if err != nil {
@@ -277,6 +306,10 @@ func (f *fileBasedStore) GetRoleAssignmentsCountByType(
 	if err != nil {
 		// Propagate parsing errors
 		return 0, err
+	}
+
+	if ouID != "" && ouID != roleData.OUID {
+		return 0, nil
 	}
 
 	return len(filterAssignmentsByType(roleData.Assignments, assigneeType)), nil
@@ -331,13 +364,19 @@ func (f *fileBasedStore) DeleteRolePermission(
 	return 0, nil
 }
 
+// DeleteAssignmentsByOUID is a no-op for the file-based store: declarative roles are not
+// shareable and hold no mutable runtime assignments to clean up.
+func (f *fileBasedStore) DeleteAssignmentsByOUID(_ context.Context, _, _ string) error {
+	return nil
+}
+
 // AddAssignments is not supported in file-based store.
-func (f *fileBasedStore) AddAssignments(ctx context.Context, id string, assignments []RoleAssignment) error {
+func (f *fileBasedStore) AddAssignments(ctx context.Context, id, ouID string, assignments []RoleAssignment) error {
 	return errors.New("AddAssignments is not supported in file-based store")
 }
 
 // RemoveAssignments is not supported in file-based store.
-func (f *fileBasedStore) RemoveAssignments(ctx context.Context, id string, assignments []RoleAssignment) error {
+func (f *fileBasedStore) RemoveAssignments(ctx context.Context, id, ouID string, assignments []RoleAssignment) error {
 	return errors.New("RemoveAssignments is not supported in file-based store")
 }
 
@@ -440,13 +479,15 @@ func (f *fileBasedStore) GetAllPermissionsForAssignees(
 }
 
 // GetAuthorizedPermissionsByResourceServer returns permissions from roles assigned to the entity or groups in
-// the file store, scoped to a resource server when provided.
+// the file store, scoped to a resource server when provided. Declarative roles are not shareable,
+// so a non-empty ouID that does not match a role's own declared OU excludes that role.
 func (f *fileBasedStore) GetAuthorizedPermissionsByResourceServer(
 	ctx context.Context,
 	entityID string,
 	groupIDs []string,
 	resourceServerID string,
 	requestPermissions []string,
+	ouID string,
 ) ([]string, error) {
 	if len(requestPermissions) == 0 {
 		return []string{}, nil
@@ -478,6 +519,9 @@ func (f *fileBasedStore) GetAuthorizedPermissionsByResourceServer(
 			log.GetLogger().Warn(ctx, "Skipping malformed role in GetAuthorizedPermissions",
 				log.String("roleID", item.ID.ID),
 				log.Error(err))
+			continue
+		}
+		if ouID != "" && ouID != roleData.OUID {
 			continue
 		}
 		if !matchesAssignee(roleData.Assignments, entityID, groupSet) {
@@ -545,7 +589,7 @@ func (f *fileBasedStore) GetUserRoles(
 // independent record of API-added assignments. Returning an empty slice keeps the composite
 // merge correct (callers union the result with the DB store's output).
 func (f *fileBasedStore) GetEntityRoleIDs(
-	ctx context.Context, entityID string, groupIDs []string,
+	ctx context.Context, entityID string, groupIDs []string, ouID string,
 ) ([]string, error) {
 	return []string{}, nil
 }

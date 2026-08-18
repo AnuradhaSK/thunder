@@ -408,6 +408,16 @@ type RoleConfig struct {
 	Store string `yaml:"store" json:"store"`
 }
 
+// ResourceSharingConfig holds settings for the generic sharing framework (internal/sharing),
+// applicable to every resource type onboarded onto it, not just Role.
+type ResourceSharingConfig struct {
+	// AllowChildOUCrossTreeSharing controls whether a non-root organization unit may use
+	// root-targeting to share a resource directly to a Root outside its own tree, rather than only
+	// its own tree's Root (the standard push-to-own-root-then-reshare pattern). A Root organization
+	// unit is never subject to this restriction. Defaults to false (restricted) when unset.
+	AllowChildOUCrossTreeSharing bool `yaml:"allow_child_ou_cross_tree_sharing" json:"allow_child_ou_cross_tree_sharing"` //nolint:lll
+}
+
 // ThemeConfig holds the theme service configuration.
 type ThemeConfig struct {
 	// Store defines the storage mode for themes.
@@ -654,6 +664,7 @@ type Config struct {
 	AgentMgtProvider     AgentMgtProviderConfig            `yaml:"agent_mgt_provider"        json:"agent_mgt_provider"`
 	Group                GroupConfig                       `yaml:"group"                 json:"group"`
 	Role                 RoleConfig                        `yaml:"role"                  json:"role"`
+	ResourceSharing      ResourceSharingConfig             `yaml:"resource_sharing"      json:"resource_sharing"`
 	Theme                ThemeConfig                       `yaml:"theme"                 json:"theme"`
 	Layout               LayoutConfig                      `yaml:"layout"                json:"layout"`
 	Translation          TranslationConfig                 `yaml:"translation"           json:"translation"`

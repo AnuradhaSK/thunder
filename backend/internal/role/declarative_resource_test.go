@@ -10,8 +10,11 @@ import (
 	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
+	"gopkg.in/yaml.v3"
 
+	"github.com/thunder-id/thunderid/internal/sharing"
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
 	"github.com/thunder-id/thunderid/internal/system/log"
@@ -22,6 +25,7 @@ type RoleExporterTestSuite struct {
 	suite.Suite
 	mockService           *RoleServiceInterfaceMock
 	mockAssignmentService *RoleAssignmentServiceInterfaceMock
+	sharingService        *fakeSharingService
 	exporter              declarativeresource.ResourceExporter
 	ctx                   context.Context
 }
@@ -33,7 +37,8 @@ func TestRoleExporterTestSuite(t *testing.T) {
 func (suite *RoleExporterTestSuite) SetupTest() {
 	suite.mockService = NewRoleServiceInterfaceMock(suite.T())
 	suite.mockAssignmentService = NewRoleAssignmentServiceInterfaceMock(suite.T())
-	suite.exporter = newRoleExporter(suite.mockService, suite.mockAssignmentService)
+	suite.sharingService = &fakeSharingService{}
+	suite.exporter = newRoleExporter(suite.mockService, suite.mockAssignmentService, suite.sharingService)
 	suite.ctx = context.Background()
 }
 
@@ -192,7 +197,7 @@ func (suite *RoleExporterTestSuite) TestGetResourceByID_Success() {
 		roleWithPerms, nil,
 	)
 	suite.mockAssignmentService.On(
-		"GetRoleAssignments", suite.ctx, "role1", serverconst.MaxPageSize, 0, false,
+		"GetRoleAssignments", suite.ctx, "role1", "ou1", serverconst.MaxPageSize, 0, false,
 	).Return(&AssignmentList{
 		Assignments: []RoleAssignmentWithDisplay{
 			{ID: "user1", Type: assigneeTypeEntity},
@@ -201,11 +206,17 @@ func (suite *RoleExporterTestSuite) TestGetResourceByID_Success() {
 		TotalResults: 2,
 	}, nil)
 	suite.mockAssignmentService.On(
-		"GetRoleAssignments", suite.ctx, "role1", serverconst.MaxPageSize, 2, false,
+		"GetRoleAssignments", suite.ctx, "role1", "ou1", serverconst.MaxPageSize, 2, false,
 	).Return(&AssignmentList{
 		Assignments:  []RoleAssignmentWithDisplay{},
 		TotalResults: 2,
 	}, nil)
+	suite.mockAssignmentService.On("GetAssigningOUIDs", suite.ctx, "role1").Return([]string{"ou1"}, nil)
+	suite.sharingService.exportGrantsFunc = func(
+		_ context.Context, _ sharing.ResourceType, _ string,
+	) ([]sharing.ReplayableGrant, *tidcommon.ServiceError) {
+		return nil, nil
+	}
 
 	resource, name, err := suite.exporter.GetResourceByID(suite.ctx, "role1")
 
@@ -216,7 +227,51 @@ func (suite *RoleExporterTestSuite) TestGetResourceByID_Success() {
 	role, ok := resource.(*roleDeclarativeResource)
 	assert.True(suite.T(), ok)
 	assert.Equal(suite.T(), "role1", role.ID)
-	assert.Len(suite.T(), role.Assignments, 2)
+	assert.Equal(suite.T(), []RoleAssignment{
+		{ID: "user1", Type: assigneeTypeEntity, OUID: "ou1"},
+		{ID: "group1", Type: AssigneeTypeGroup, OUID: "ou1"},
+	}, role.Assignments)
+	assert.Empty(suite.T(), role.Grants)
+}
+
+// Test GetResourceByID - includes a sharee OU's assignments and a grant
+func (suite *RoleExporterTestSuite) TestGetResourceByID_IncludesShareeOUAssignmentsAndGrants() {
+	roleWithPerms := &RoleWithPermissions{
+		ID:   "role1",
+		Name: "Admin",
+		OUID: "ou1",
+	}
+
+	suite.mockService.On("GetRoleWithPermissions", suite.ctx, "role1").Return(roleWithPerms, nil)
+	suite.mockAssignmentService.On(
+		"GetRoleAssignments", suite.ctx, "role1", "ou1", serverconst.MaxPageSize, 0, false,
+	).Return(&AssignmentList{Assignments: []RoleAssignmentWithDisplay{}, TotalResults: 0}, nil)
+	suite.mockAssignmentService.On("GetAssigningOUIDs", suite.ctx, "role1").Return([]string{"ou1", "ou2"}, nil)
+	suite.mockAssignmentService.On(
+		"GetRoleAssignments", suite.ctx, "role1", "ou2", serverconst.MaxPageSize, 0, false,
+	).Return(&AssignmentList{
+		Assignments:  []RoleAssignmentWithDisplay{{ID: "user2", Type: assigneeTypeEntity}},
+		TotalResults: 1,
+	}, nil)
+	suite.mockAssignmentService.On(
+		"GetRoleAssignments", suite.ctx, "role1", "ou2", serverconst.MaxPageSize, 1, false,
+	).Return(&AssignmentList{Assignments: []RoleAssignmentWithDisplay{}, TotalResults: 1}, nil)
+	suite.sharingService.exportGrantsFunc = func(
+		_ context.Context, _ sharing.ResourceType, _ string,
+	) ([]sharing.ReplayableGrant, *tidcommon.ServiceError) {
+		return []sharing.ReplayableGrant{
+			{ActingOUID: "ou1", Policy: sharing.SharePolicy{OUIDs: []string{"ou2"}}},
+		}, nil
+	}
+
+	resource, _, err := suite.exporter.GetResourceByID(suite.ctx, "role1")
+
+	suite.Nil(err)
+	role, ok := resource.(*roleDeclarativeResource)
+	suite.Require().True(ok)
+	// The sharee OU's assignment is exported in the one flat list, stamped with the OU that made it.
+	suite.Equal([]RoleAssignment{{ID: "user2", Type: assigneeTypeEntity, OUID: "ou2"}}, role.Assignments)
+	suite.Equal([]ShareRequest{{InitiatingOUID: "ou1", OUIDs: []ShareTarget{{OUID: "ou2"}}}}, role.Grants)
 }
 
 // Test GetResourceByID - error on GetRoleWithPermissions
@@ -440,6 +495,99 @@ func (suite *RoleExporterTestSuite) TestToResourcePermissions() {
 	assert.Contains(suite.T(), result.Permissions, "write")
 }
 
+// Test that roleDeclarativeResource's grants and per-assignment ouId YAML tags round-trip.
+func (suite *RoleExporterTestSuite) TestRoleDeclarativeResource_ParsesGrantsAndAssignmentOUIDs() {
+	yamlData := []byte(`
+id: role1
+name: Admin
+ouId: ou1
+permissions: []
+grants:
+  - initiatingOuId: ou1
+    allChildren: true
+    excludedOuIds: [ou1-a]
+    editableFields: [assignments.group]
+assignments:
+  - id: user1
+    type: user
+  - id: user2
+    type: user
+    ouId: ou2
+`)
+
+	var resource roleDeclarativeResource
+	err := yaml.Unmarshal(yamlData, &resource)
+	suite.NoError(err)
+
+	suite.Equal([]ShareRequest{
+		{
+			InitiatingOUID: "ou1",
+			AllChildren:    true,
+			ExcludedOUIDs:  []string{"ou1-a"},
+			EditableFields: []string{"assignments.group"},
+		},
+	}, resource.Grants)
+	// An omitted ouId stays empty at parse time; it is resolved to the assignee's own OU later.
+	suite.Equal([]RoleAssignment{
+		{ID: "user1", Type: "user"},
+		{ID: "user2", Type: "user", OUID: "ou2"},
+	}, resource.Assignments)
+}
+
+// Test applyPendingShares - applies grants in declared order, defaulting an empty acting OU to owner.
+func (suite *RoleExporterTestSuite) TestApplyPendingShares_Success() {
+	var sharedCalls []string
+	fake := &fakeSharingService{
+		shareDeclarativeFunc: func(
+			_ context.Context, resourceType sharing.ResourceType, resourceID, owningOUID, actingOUID string,
+			_ sharing.SharePolicy,
+		) ([]sharing.Grant, *tidcommon.ServiceError) {
+			suite.Equal(roleSharingResourceType, resourceType)
+			suite.Equal("role1", resourceID)
+			suite.Equal("ou1", owningOUID)
+			sharedCalls = append(sharedCalls, actingOUID)
+			return nil, nil
+		},
+	}
+
+	pending := []pendingShare{
+		{
+			role: &RoleWithPermissionsAndAssignments{ID: "role1", OUID: "ou1"},
+			grants: []ShareRequest{
+				{AllChildren: true},
+				{InitiatingOUID: "ou1-a", OUIDs: []ShareTarget{{OUID: "ou1-a-x"}}},
+			},
+		},
+	}
+
+	err := applyPendingShares(pending, fake)
+
+	suite.NoError(err)
+	suite.Equal([]string{"ou1", "ou1-a"}, sharedCalls)
+}
+
+// Test applyPendingShares - propagates a Share() failure.
+func (suite *RoleExporterTestSuite) TestApplyPendingShares_ShareError() {
+	fake := &fakeSharingService{
+		shareDeclarativeFunc: func(
+			_ context.Context, _ sharing.ResourceType, _, _, _ string, _ sharing.SharePolicy,
+		) ([]sharing.Grant, *tidcommon.ServiceError) {
+			return nil, &sharing.ErrorInvalidTargetOU
+		},
+	}
+	pending := []pendingShare{
+		{
+			role:   &RoleWithPermissionsAndAssignments{ID: "role1", OUID: "ou1"},
+			grants: []ShareRequest{{AllChildren: true}},
+		},
+	}
+
+	err := applyPendingShares(pending, fake)
+
+	suite.Error(err)
+	suite.Contains(err.Error(), "role1")
+}
+
 // Test parseToRoleWrapper
 func (suite *RoleExporterTestSuite) TestParseToRoleWrapper() {
 	yamlData := []byte(`
@@ -456,4 +604,51 @@ ouId: ou1
 	role, ok := result.(*RoleWithPermissionsAndAssignments)
 	assert.True(suite.T(), ok)
 	assert.Equal(suite.T(), "role1", role.ID)
+}
+
+// Test resolveLoadedAssignmentOUIDs - a declarative assignment without an ouId is stamped with the
+// assignee's own OU, an explicit one is preserved, and an assignee whose OU cannot be resolved falls
+// back to the role's own OU rather than being left blank.
+func (suite *RoleExporterTestSuite) TestResolveLoadedAssignmentOUIDs() {
+	loaded := []*RoleWithPermissionsAndAssignments{
+		{
+			ID:   "role1",
+			OUID: "ou-role",
+			Assignments: []RoleAssignment{
+				{ID: "user1", Type: assigneeTypeEntity},
+				{ID: "user2", Type: assigneeTypeEntity, OUID: "ou-explicit"},
+				{ID: "ghost", Type: assigneeTypeEntity},
+			},
+		},
+	}
+
+	suite.mockAssignmentService.On("ResolveAssignmentOUIDs", mock.Anything, loaded[0].Assignments).
+		Return([]RoleAssignment{
+			{ID: "user1", Type: assigneeTypeEntity, OUID: "ou-user1"},
+			{ID: "user2", Type: assigneeTypeEntity, OUID: "ou-explicit"},
+			{ID: "ghost", Type: assigneeTypeEntity},
+		}, nil)
+
+	err := resolveLoadedAssignmentOUIDs(loaded, suite.mockAssignmentService)
+
+	suite.NoError(err)
+	suite.Equal([]RoleAssignment{
+		{ID: "user1", Type: assigneeTypeEntity, OUID: "ou-user1"},
+		{ID: "user2", Type: assigneeTypeEntity, OUID: "ou-explicit"},
+		{ID: "ghost", Type: assigneeTypeEntity, OUID: "ou-role"},
+	}, loaded[0].Assignments)
+}
+
+// Test resolveLoadedAssignmentOUIDs - propagates a resolution failure.
+func (suite *RoleExporterTestSuite) TestResolveLoadedAssignmentOUIDs_Error() {
+	loaded := []*RoleWithPermissionsAndAssignments{
+		{ID: "role1", OUID: "ou-role", Assignments: []RoleAssignment{{ID: "user1", Type: assigneeTypeEntity}}},
+	}
+	suite.mockAssignmentService.On("ResolveAssignmentOUIDs", mock.Anything, mock.Anything).
+		Return(nil, &tidcommon.InternalServerError)
+
+	err := resolveLoadedAssignmentOUIDs(loaded, suite.mockAssignmentService)
+
+	suite.Error(err)
+	suite.Contains(err.Error(), "role1")
 }

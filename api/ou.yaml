@@ -700,10 +700,21 @@ paths:
                     name: "OU Admin"
                     description: "Administers this organization unit"
                     isReadOnly: false
+                    ouId: "afc77cfd-620b-4cf0-a31c-7377b0ea8902"
+                    origin: "owned"
                   - id: "f1a2b3c4-5d6e-4f7a-8b9c-0d1e2f3a4b5c"
                     name: "Viewer"
                     description: "Read-only access to this organization unit"
                     isReadOnly: true
+                    ouId: "afc77cfd-620b-4cf0-a31c-7377b0ea8902"
+                    origin: "owned"
+                  - id: "a2b3c4d5-6e7f-4890-9a1b-2c3d4e5f6a7b"
+                    name: "Regional Manager"
+                    description: "Shared to this organization unit from another one"
+                    isReadOnly: false
+                    ouId: "9b3f1c2d-8e4a-4b5c-8d9e-0f1a2b3c4d5e"
+                    ouHandle: "regional-hq"
+                    origin: "shared"
                 links:
                   - href: "organization-units/afc77cfd-620b-4cf0-a31c-7377b0ea8902/roles?offset=2&limit=2"
                     rel: "next"
@@ -1295,10 +1306,21 @@ paths:
                     name: "OU Admin"
                     description: "Administers this organization unit"
                     isReadOnly: false
+                    ouId: "afc77cfd-620b-4cf0-a31c-7377b0ea8902"
+                    origin: "owned"
                   - id: "f1a2b3c4-5d6e-4f7a-8b9c-0d1e2f3a4b5c"
                     name: "Viewer"
                     description: "Read-only access to this organization unit"
                     isReadOnly: true
+                    ouId: "afc77cfd-620b-4cf0-a31c-7377b0ea8902"
+                    origin: "owned"
+                  - id: "a2b3c4d5-6e7f-4890-9a1b-2c3d4e5f6a7b"
+                    name: "Regional Manager"
+                    description: "Shared to this organization unit from another one"
+                    isReadOnly: false
+                    ouId: "9b3f1c2d-8e4a-4b5c-8d9e-0f1a2b3c4d5e"
+                    ouHandle: "regional-hq"
+                    origin: "shared"
                 links:
                   - href: "organization-units/tree/engineering/frontend/roles?offset=2&limit=2"
                     rel: "next"
@@ -1555,7 +1577,7 @@ components:
 
     Role:
       type: object
-      required: [id, name]
+      required: [id, name, origin]
       properties:
         id:
           type: string
@@ -1567,6 +1589,22 @@ components:
         isReadOnly:
           type: boolean
           description: "Whether the role is declarative (read-only) or mutable."
+        ouId:
+          type: string
+          format: uuid
+          description: >
+            The role's owning organization unit. Always present; differs from the organization
+            unit in the request path exactly when origin is "shared".
+        ouHandle:
+          type: string
+          description: "Handle of the role's owning organization unit, when resolvable."
+        origin:
+          type: string
+          enum: [owned, shared]
+          description: >
+            Whether the role is owned by the organization unit in the request path, or was shared
+            (directly or via reshare) to it. See the role sharing framework documentation.
+          example: "owned"
 
     Link:
       type: object

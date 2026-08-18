@@ -16,6 +16,7 @@ import (
 	"github.com/thunder-id/thunderid/internal/group"
 	oupkg "github.com/thunder-id/thunderid/internal/ou"
 	resourcepkg "github.com/thunder-id/thunderid/internal/resource"
+	"github.com/thunder-id/thunderid/internal/sharing"
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	"github.com/thunder-id/thunderid/internal/system/log"
 	"github.com/thunder-id/thunderid/internal/system/resourcedependency"
@@ -29,6 +30,15 @@ const loggerComponentName = "RoleMgtService"
 // RoleServiceInterface defines the interface for the role service.
 type RoleServiceInterface interface {
 	GetRoleList(ctx context.Context, limit, offset int) (*RoleList, *tidcommon.ServiceError)
+	// GetRolesForOU lists the roles ouID owns plus those shared to it, each tagged with its origin.
+	// Enforces requireOwnOUScope: the caller's own OU must match ouID (or hold root/runtime access).
+	GetRolesForOU(ctx context.Context, ouID string, limit, offset int) (*RoleListForOU, *tidcommon.ServiceError)
+	// ListRolesForOU is GetRolesForOU's underlying primitive without the OU-scope authorization
+	// check, for callers that authorize the request through a different permission model (e.g.
+	// organization-unit management endpoints, gated by a coarse OU-management permission rather
+	// than the system:roles per-OU scope). Callers must perform their own appropriate
+	// authorization before calling this.
+	ListRolesForOU(ctx context.Context, ouID string, limit, offset int) (*RoleListForOU, *tidcommon.ServiceError)
 	CreateRole(ctx context.Context, role RoleCreationDetail) (
 		*RoleWithPermissionsAndAssignments, *tidcommon.ServiceError)
 	GetRoleWithPermissions(ctx context.Context, id string) (*RoleWithPermissions, *tidcommon.ServiceError)
@@ -36,8 +46,12 @@ type RoleServiceInterface interface {
 		*RoleWithPermissions, *tidcommon.ServiceError)
 	DeleteRole(ctx context.Context, id string) *tidcommon.ServiceError
 	IsRoleDeclarative(ctx context.Context, id string) (bool, *tidcommon.ServiceError)
+	// GetAuthorizedPermissionsByResourceServer resolves authorized permissions. ouID, when
+	// non-empty, scopes the check to assignments made in that OU; empty preserves the prior,
+	// deployment-wide (unscoped) behavior.
 	GetAuthorizedPermissionsByResourceServer(
 		ctx context.Context, entityID string, groups []string, resourceServerID string, requestedPermissions []string,
+		ouID string,
 	) ([]string, *tidcommon.ServiceError)
 	// GetAllPermissions returns every permission the entity and/or groups hold, keyed by resource
 	// server. Unlike GetAuthorizedPermissionsByResourceServer it enumerates rather than checks.
@@ -60,6 +74,7 @@ type roleService struct {
 	groupService    group.GroupServiceInterface
 	ouService       oupkg.OrganizationUnitServiceInterface
 	resourceService resourcepkg.ResourceServiceInterface
+	sharingService  sharing.ServiceInterface
 	transactioner   providers.Transactioner
 	authzService    sysauthz.SystemAuthorizationServiceInterface
 }
@@ -71,6 +86,7 @@ func newRoleService(
 	groupService group.GroupServiceInterface,
 	ouService oupkg.OrganizationUnitServiceInterface,
 	resourceService resourcepkg.ResourceServiceInterface,
+	sharingService sharing.ServiceInterface,
 	transactioner providers.Transactioner,
 	authzService sysauthz.SystemAuthorizationServiceInterface,
 ) RoleServiceInterface {
@@ -80,9 +96,129 @@ func newRoleService(
 		groupService:    groupService,
 		ouService:       ouService,
 		resourceService: resourceService,
+		sharingService:  sharingService,
 		transactioner:   transactioner,
 		authzService:    authzService,
 	}
+}
+
+// GetRolesForOU retrieves the roles visible to ouID: those it owns plus those shared (directly
+// or via reshare) to it, each tagged with its origin. Core config (name, permissions) always
+// reflects the owning OU (Role.OUID/OUHandle), per the sharing model's resolution rules. Enforces
+// requireOwnOUScope before delegating to ListRolesForOU.
+func (rs *roleService) GetRolesForOU(
+	ctx context.Context, ouID string, limit, offset int,
+) (*RoleListForOU, *tidcommon.ServiceError) {
+	if err := validatePaginationParams(limit, offset); err != nil {
+		return nil, err
+	}
+	if ouID == "" {
+		return nil, &ErrorMissingOUIDParam
+	}
+	if svcErr := requireOwnOUScope(ctx, ouID); svcErr != nil {
+		return nil, svcErr
+	}
+
+	return rs.ListRolesForOU(ctx, ouID, limit, offset)
+}
+
+// ListRolesForOU is GetRolesForOU's underlying primitive without the OU-scope authorization check
+// — see the interface doc comment for who may call this directly.
+func (rs *roleService) ListRolesForOU(
+	ctx context.Context, ouID string, limit, offset int,
+) (*RoleListForOU, *tidcommon.ServiceError) {
+	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, loggerComponentName))
+
+	if err := validatePaginationParams(limit, offset); err != nil {
+		return nil, err
+	}
+	if ouID == "" {
+		return nil, &ErrorMissingOUIDParam
+	}
+
+	ownedCount, err := rs.roleStore.GetRoleListCountByOUID(ctx, ouID)
+	if err != nil {
+		logger.Error(ctx, "Failed to get owned role count", log.String("ouID", ouID), log.Error(err))
+		return nil, &tidcommon.InternalServerError
+	}
+	owned, err := rs.roleStore.GetRoleListByOUID(ctx, ouID, min(ownedCount, serverconst.MaxCompositeStoreRecords), 0)
+	if err != nil {
+		logger.Error(ctx, "Failed to list owned roles", log.String("ouID", ouID), log.Error(err))
+		return nil, &tidcommon.InternalServerError
+	}
+
+	sharedIDs, svcErr := rs.sharingService.ListSharedResourceIDs(ctx, roleSharingResourceType, ouID)
+	if svcErr != nil {
+		return nil, svcErr
+	}
+
+	combined := make([]RoleForOU, 0, len(owned)+len(sharedIDs))
+	for _, r := range owned {
+		combined = append(combined, RoleForOU{Role: r, Origin: RoleOriginOwned})
+	}
+	for _, id := range sharedIDs {
+		if len(combined) >= serverconst.MaxCompositeStoreRecords {
+			return nil, &ResultLimitExceededInCompositeMode
+		}
+		sharedRole, err := rs.roleStore.GetRole(ctx, id)
+		if err != nil {
+			if errors.Is(err, ErrRoleNotFound) {
+				// Stale grant pointing at a deleted role; skip rather than fail the whole list.
+				continue
+			}
+			logger.Error(ctx, "Failed to load shared role", log.String("roleID", id), log.Error(err))
+			return nil, &tidcommon.InternalServerError
+		}
+		combined = append(combined, RoleForOU{
+			Role: Role{
+				ID:          sharedRole.ID,
+				Name:        sharedRole.Name,
+				Description: sharedRole.Description,
+				OUID:        sharedRole.OUID,
+			},
+			Origin: RoleOriginShared,
+		})
+	}
+
+	if len(combined) > 0 {
+		seen := make(map[string]struct{}, len(combined))
+		owningOUIDs := make([]string, 0, len(combined))
+		for _, r := range combined {
+			if r.OUID != "" {
+				if _, exists := seen[r.OUID]; !exists {
+					owningOUIDs = append(owningOUIDs, r.OUID)
+					seen[r.OUID] = struct{}{}
+				}
+			}
+		}
+		ouHandles, svcErr := rs.ouService.GetOrganizationUnitHandlesByIDs(ctx, owningOUIDs)
+		if svcErr != nil {
+			logger.Warn(ctx, "Failed to resolve OU handles for roles, skipping", log.Any("error", svcErr))
+		} else {
+			for i := range combined {
+				combined[i].OUHandle = ouHandles[combined[i].OUID]
+			}
+		}
+	}
+
+	total := len(combined)
+	start := offset
+	if start > total {
+		start = total
+	}
+	end := start + limit
+	if end > total {
+		end = total
+	}
+	page := combined[start:end]
+
+	return &RoleListForOU{
+		TotalResults: total,
+		Roles:        page,
+		StartIndex:   offset + 1,
+		Count:        len(page),
+		Links:        utils.BuildPaginationLinks("/roles", limit, offset, total, "ouId="+ouID),
+	}, nil
 }
 
 // GetRoleList retrieves a list of roles.
@@ -160,10 +296,23 @@ func (rs *roleService) CreateRole(
 		return nil, err
 	}
 
+	// The OU a new role is created to be owned by may only be claimed by that same OU, unless
+	// unrestricted — checked before any store/OU-service access so an unauthorized caller cannot
+	// use this endpoint to probe which OU IDs exist. Uses requireOwnOUScope (ROL-1023), not
+	// sharing.RequireOwnership (SHR-1007): there is no existing resource yet whose core config is
+	// being protected — this is the same OU-reach question the read/list/assignment paths ask,
+	// just asked before a role exists rather than about one that already does.
+	if svcErr := requireOwnOUScope(ctx, role.OUID); svcErr != nil {
+		return nil, svcErr
+	}
+
 	responseAssignments := role.Assignments
 
-	// Validate organization unit exists using OU service
-	ou, svcErr := rs.ouService.GetOrganizationUnit(ctx, role.OUID)
+	// Validate organization unit exists using OU service. The caller's authority over role.OUID
+	// was already established above via requireOwnOUScope, which uses a different permission model
+	// (own-OU/root) than the OU package's own system:ou/system:ou:view check — wrap with a runtime
+	// context so this lookup isn't re-authorized against that unrelated, stricter permission.
+	ou, svcErr := rs.ouService.GetOrganizationUnit(security.WithRuntimeContext(ctx), role.OUID)
 	if svcErr != nil {
 		if svcErr.Code == oupkg.ErrorOrganizationUnitNotFound.Code {
 			logger.Debug(ctx, "Organization unit not found", log.String("ouID", role.OUID))
@@ -273,7 +422,24 @@ func (rs *roleService) GetRoleWithPermissions(ctx context.Context, id string) (
 		return nil, &tidcommon.InternalServerError
 	}
 
-	ou, svcErr := rs.ouService.GetOrganizationUnit(ctx, role.OUID)
+	if svcErr := requireOwnOUScope(ctx, role.OUID); svcErr != nil {
+		// Outside the caller's own OU scope; still viewable if shared to the caller's own OU
+		// (mirrors GetRolesForOU's owned+shared view — a system:roles-only caller sees its own
+		// roles plus whatever has genuinely been shared to it, never an unrelated OU's roles).
+		shared, shareErr := rs.sharingService.IsShared(ctx, roleSharingResourceType, id, security.GetOUID(ctx))
+		if shareErr != nil {
+			logger.Error(ctx, "Failed to check role sharing", log.String("id", id), log.Any("error", shareErr))
+			return nil, &tidcommon.InternalServerError
+		}
+		if !shared {
+			return nil, svcErr
+		}
+	}
+
+	// A caller viewing this role via the shared-fallback above may hold only system:roles, not the
+	// OU package's own system:ou/system:ou:view — wrap with a runtime context so resolving the
+	// owning OU's handle isn't re-authorized against that unrelated permission.
+	ou, svcErr := rs.ouService.GetOrganizationUnit(security.WithRuntimeContext(ctx), role.OUID)
 	if svcErr != nil {
 		logger.Warn(ctx, "Failed to resolve OU handle for role, skipping",
 			log.String("id", id), log.Any("error", svcErr))
@@ -312,14 +478,14 @@ func (rs *roleService) UpdateRoleWithPermissions(
 		return nil, svcErr
 	}
 
-	exists, err := rs.roleStore.IsRoleExist(ctx, id)
+	existingRole, err := rs.roleStore.GetRole(ctx, id)
 	if err != nil {
+		if errors.Is(err, ErrRoleNotFound) {
+			logger.Debug(ctx, "Role not found", log.String("id", id))
+			return nil, &ErrorRoleNotFound
+		}
 		logger.Error(ctx, "Failed to check role existence", log.String("id", id), log.Error(err))
 		return nil, &tidcommon.InternalServerError
-	}
-	if !exists {
-		logger.Debug(ctx, "Role not found", log.String("id", id))
-		return nil, &ErrorRoleNotFound
 	}
 
 	// Check if role is declarative - cannot modify declarative roles
@@ -328,8 +494,24 @@ func (rs *roleService) UpdateRoleWithPermissions(
 		return nil, &ErrorImmutableRole
 	}
 
-	// Validate organization unit exists using OU service
-	ou, svcErr := rs.ouService.GetOrganizationUnit(ctx, role.OUID)
+	// Core config may only ever be modified by the OU that owns the role. If this request also
+	// moves the role to a different OU, the destination must be owned by the caller too — you may
+	// not move a role you own into an OU you don't (or vice versa) — unless the caller is
+	// unrestricted.
+	if svcErr := rs.sharingService.RequireOwnership(
+		ctx, roleSharingResourceType, existingRole.OUID); svcErr != nil {
+		return nil, svcErr
+	}
+	if role.OUID != existingRole.OUID {
+		if svcErr := rs.sharingService.RequireOwnership(ctx, roleSharingResourceType, role.OUID); svcErr != nil {
+			return nil, svcErr
+		}
+	}
+
+	// Validate organization unit exists using OU service. As in CreateRole, ownership was already
+	// established above via RequireOwnership, so this lookup is wrapped with a runtime context to
+	// avoid being re-authorized against the OU package's own, unrelated permission model.
+	ou, svcErr := rs.ouService.GetOrganizationUnit(security.WithRuntimeContext(ctx), role.OUID)
 	if svcErr != nil {
 		if svcErr.Code == oupkg.ErrorOrganizationUnitNotFound.Code {
 			logger.Debug(ctx, "Organization unit not found", log.String("ouID", role.OUID))
@@ -381,20 +563,28 @@ func (rs *roleService) DeleteRole(ctx context.Context, id string) *tidcommon.Ser
 		return &ErrorMissingRoleID
 	}
 
-	exists, err := rs.roleStore.IsRoleExist(ctx, id)
+	existingRole, err := rs.roleStore.GetRole(ctx, id)
 	if err != nil {
+		if errors.Is(err, ErrRoleNotFound) {
+			logger.Debug(ctx, "Role not found", log.String("id", id))
+			return nil
+		}
 		logger.Error(ctx, "Failed to check role existence", log.String("id", id), log.Error(err))
 		return &tidcommon.InternalServerError
-	}
-	if !exists {
-		logger.Debug(ctx, "Role not found", log.String("id", id))
-		return nil
 	}
 
 	// Check if role is declarative - cannot delete declarative roles
 	if rs.isRoleDeclarative(ctx, id) {
 		logger.Debug(ctx, "Cannot delete declarative role", log.String("id", id))
 		return &ErrorImmutableRole
+	}
+
+	// A role may only ever be deleted by the OU that owns it, or an unrestricted caller.
+	// RequireOwnershipForDeletion (not RequireOwnership) returns a role-specific error
+	// (ROL-1024) rather than the generic core-config-edit one, since deletion isn't an edit.
+	if svcErr := rs.sharingService.RequireOwnershipForDeletion(
+		ctx, roleSharingResourceType, existingRole.OUID); svcErr != nil {
+		return svcErr
 	}
 
 	// Delete all assignments for the role before deleting the role itself (cascade delete).
@@ -416,9 +606,12 @@ func (rs *roleService) DeleteRole(ctx context.Context, id string) *tidcommon.Ser
 }
 
 // GetAuthorizedPermissionsByResourceServer checks which requested permissions are authorized for the entity
-// based on roles, scoped to a resource server when provided.
+// based on roles, scoped to a resource server when provided. ouID, when non-empty, scopes the
+// check to assignments made in that OU (owner or sharee); when empty, the check is deployment-wide
+// (unscoped), preserving prior behavior for callers that have not adopted OU-scoped authorization.
 func (rs *roleService) GetAuthorizedPermissionsByResourceServer(
 	ctx context.Context, entityID string, groups []string, resourceServerID string, requestedPermissions []string,
+	ouID string,
 ) ([]string, *tidcommon.ServiceError) {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, loggerComponentName))
 	logger.Debug(ctx, "Authorizing permissions",
@@ -443,7 +636,7 @@ func (rs *roleService) GetAuthorizedPermissionsByResourceServer(
 
 	// Get authorized permissions from store
 	authorizedPermissions, err := rs.roleStore.GetAuthorizedPermissionsByResourceServer(
-		ctx, entityID, groups, resourceServerID, requestedPermissions)
+		ctx, entityID, groups, resourceServerID, requestedPermissions, ouID)
 	if err != nil {
 		logger.Error(ctx, "Failed to get authorized permissions",
 			log.MaskedString(log.LoggerKeyUserID, entityID),

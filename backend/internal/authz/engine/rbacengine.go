@@ -24,6 +24,7 @@ type rbacEngine struct {
 type evaluationGroup struct {
 	subject          Subject
 	resourceServerID string
+	ouID             string
 	permissions      []string
 	indexes          []int
 }
@@ -64,7 +65,7 @@ func (e *rbacEngine) EvaluateAccessBatch(
 	evaluations := make([]AccessEvaluationResponse, len(request.Evaluations))
 	for _, group := range groupEvaluations(request.Evaluations) {
 		authorizedPerms, svcErr := e.roleService.GetAuthorizedPermissionsByResourceServer(
-			ctx, group.subject.ID, group.subject.GroupIDs, group.resourceServerID, group.permissions)
+			ctx, group.subject.ID, group.subject.GroupIDs, group.resourceServerID, group.permissions, group.ouID)
 		if svcErr != nil {
 			return nil, fmt.Errorf("role service error: %s", svcErr.Error)
 		}
@@ -79,15 +80,18 @@ func (e *rbacEngine) EvaluateAccessBatch(
 	return &AccessEvaluationsResponse{Evaluations: evaluations}, nil
 }
 
-// groupEvaluations groups access evaluations by subject and collects unique permissions.
+// groupEvaluations groups access evaluations by subject, resource server, and OU, and collects
+// unique permissions. OUID is part of the grouping key so requests scoped to different OUs are
+// never merged into a single role-service call.
 func groupEvaluations(evaluations []AccessEvaluationRequest) []evaluationGroup {
 	groups := make([]evaluationGroup, 0, len(evaluations))
 	for index, evaluation := range evaluations {
-		groupIndex := findEvaluationGroup(groups, evaluation.Subject, evaluation.ResourceServer.ID)
+		groupIndex := findEvaluationGroup(groups, evaluation.Subject, evaluation.ResourceServer.ID, evaluation.OUID)
 		if groupIndex == -1 {
 			groups = append(groups, evaluationGroup{
 				subject:          evaluation.Subject,
 				resourceServerID: evaluation.ResourceServer.ID,
+				ouID:             evaluation.OUID,
 			})
 			groupIndex = len(groups) - 1
 		}
@@ -101,13 +105,14 @@ func groupEvaluations(evaluations []AccessEvaluationRequest) []evaluationGroup {
 	return groups
 }
 
-// findEvaluationGroup returns the index of the group matching the subject.
-func findEvaluationGroup(groups []evaluationGroup, subject Subject, resourceServerID string) int {
+// findEvaluationGroup returns the index of the group matching the subject, resource server, and OU.
+func findEvaluationGroup(groups []evaluationGroup, subject Subject, resourceServerID, ouID string) int {
 	for i, group := range groups {
 		if group.subject.Type == subject.Type &&
 			group.subject.ID == subject.ID &&
 			slices.Equal(group.subject.GroupIDs, subject.GroupIDs) &&
-			group.resourceServerID == resourceServerID {
+			group.resourceServerID == resourceServerID &&
+			group.ouID == ouID {
 			return i
 		}
 	}

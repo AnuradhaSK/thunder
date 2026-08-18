@@ -146,6 +146,13 @@ type SystemPermissions struct {
 	UserTypeView  string
 	AgentType     string
 	AgentTypeView string
+	// Roles grants full access to the Role Management API; RolesView grants read-only access
+	// (list/get/assignments/grants/editable-fields). Either way, a caller without the root
+	// permission is confined to the OU its own token was issued for (see internal/role's use of
+	// sharing.RequireOwnership and the per-caller-OU checks on read/list/assignment paths). A
+	// caller holding the root permission remains unrestricted, as with every other resource type.
+	Roles     string
+	RolesView string
 }
 
 // sysPerms holds the active system permissions, initialized by InitSystemPermissions.
@@ -179,6 +186,8 @@ func InitSystemPermissions(handle string) {
 		UserTypeView:  buildPermission(handle, "system", "usertype", "view"),
 		AgentType:     buildPermission(handle, "system", "agenttype"),
 		AgentTypeView: buildPermission(handle, "system", "agenttype", "view"),
+		Roles:         buildPermission(handle, "system", "roles"),
+		RolesView:     buildPermission(handle, "system", "roles", "view"),
 	}
 	sysPerms = p
 
@@ -269,6 +278,15 @@ func InitSystemPermissions(handle string) {
 		{"GET /agent-types/**", p.AgentTypeView},
 		{"PUT /agent-types/**", p.AgentType},
 		{"DELETE /agent-types/**", p.AgentType},
+
+		// Role APIs — view/manage split, same pattern as every other resource above; internal/role
+		// itself confines a caller without the root permission to its own OU on every path.
+		{"GET /roles", p.RolesView},
+		{"POST /roles", p.Roles},
+		{"GET /roles/**", p.RolesView},
+		{"PUT /roles/**", p.Roles},
+		{"POST /roles/**", p.Roles},
+		{"DELETE /roles/**", p.Roles},
 
 		// Import APIs.
 		{"POST /import", p.Root},

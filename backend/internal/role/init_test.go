@@ -225,7 +225,7 @@ func (suite *LoadDeclarativeResourcesTestSuite) TestLoadDeclarativeResourcesWith
 	genericStore := declarativeresource.NewGenericFileBasedStoreForTest(entity.KeyTypeRole)
 	fileStore := &fileBasedStore{GenericFileBasedStore: genericStore}
 
-	err := loadDeclarativeResources(fileStore, nil, nil)
+	err := loadDeclarativeResources(fileStore, nil, nil, nil, nil)
 
 	// Should not error even if no resources are found (empty directory)
 	suite.NoError(err)
@@ -237,7 +237,7 @@ func (suite *LoadDeclarativeResourcesTestSuite) TestLoadDeclarativeResourcesWith
 	fileStore := &fileBasedStore{GenericFileBasedStore: genericStore}
 
 	// Should handle nil dbStore gracefully (no duplicate checking against DB)
-	err := loadDeclarativeResources(fileStore, nil, nil)
+	err := loadDeclarativeResources(fileStore, nil, nil, nil, nil)
 
 	suite.NoError(err)
 }
@@ -251,7 +251,7 @@ func (suite *LoadDeclarativeResourcesTestSuite) TestLoadDeclarativeResourcesWith
 	mockDbStore := newRoleStoreInterfaceMock(suite.T())
 	// Don't setup any expectations since no resources are loaded by default
 
-	err := loadDeclarativeResources(fileStore, mockDbStore, nil)
+	err := loadDeclarativeResources(fileStore, mockDbStore, nil, nil, nil)
 
 	suite.NoError(err)
 }
@@ -296,7 +296,7 @@ func (suite *LoadDeclarativeResourcesTestSuite) TestLoadDeclarativeResourcesIDEx
 	suite.NoError(err)
 
 	// Load should correctly extract the ID
-	err = loadDeclarativeResources(fileStore, nil, nil)
+	err = loadDeclarativeResources(fileStore, nil, nil, nil, nil)
 
 	suite.NoError(err)
 	// Verify the role is still in the store with correct ID
@@ -642,7 +642,7 @@ func (suite *InitTestSuite) TestInitialize_DBClientError() {
 	}()
 
 	mux := http.NewServeMux()
-	_, _, _, _, err := Initialize(mux, nil, nil, nil, nil, nil, nil)
+	_, _, _, _, err := Initialize(mux, nil, nil, nil, nil, nil, nil, &fakeSharingService{}, nil)
 
 	suite.Error(err)
 	suite.Equal("mock db client error", err.Error())
@@ -666,7 +666,7 @@ func (suite *InitTestSuite) TestInitialize_TransactionerError() {
 	}()
 
 	mux := http.NewServeMux()
-	_, _, _, _, err := Initialize(mux, nil, nil, nil, nil, nil, nil)
+	_, _, _, _, err := Initialize(mux, nil, nil, nil, nil, nil, nil, &fakeSharingService{}, nil)
 
 	suite.Error(err)
 	suite.Equal("mock transactioner error", err.Error())
@@ -697,7 +697,7 @@ func (suite *InitTestSuite) TestInitialize_Success() {
 	}()
 
 	mux := http.NewServeMux()
-	svc, _, _, exporter, err := Initialize(mux, nil, nil, nil, nil, nil, nil)
+	svc, _, _, exporter, err := Initialize(mux, nil, nil, nil, nil, nil, nil, &fakeSharingService{}, nil)
 
 	suite.NoError(err)
 	suite.NotNil(svc)
@@ -733,7 +733,7 @@ func (suite *InitTestSuite) TestInitialize_StoreInitError() {
 	}()
 
 	mux := http.NewServeMux()
-	svc, _, _, exporter, err := Initialize(mux, nil, nil, nil, nil, nil, nil)
+	svc, _, _, exporter, err := Initialize(mux, nil, nil, nil, nil, nil, nil, &fakeSharingService{}, nil)
 
 	suite.Error(err)
 	if err != nil {

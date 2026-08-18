@@ -48,6 +48,10 @@ type AccessEvaluationRequest struct {
 	ResourceServer ResourceServer
 	Permission     Permission
 	Context        map[string]interface{}
+	// OUID scopes the check to permissions granted by role assignments made in that
+	// organization unit (owner or sharee). Empty preserves the prior, deployment-wide
+	// (unscoped) behavior for callers that have not adopted OU-scoped authorization.
+	OUID string
 }
 
 // AccessEvaluationResponse represents a single fine-grained access evaluation response.

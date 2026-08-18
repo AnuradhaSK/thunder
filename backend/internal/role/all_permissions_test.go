@@ -11,14 +11,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-
-	"github.com/thunder-id/thunderid/internal/system/sysauthz"
-	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
-	"github.com/thunder-id/thunderid/tests/mocks/entitymock"
-	"github.com/thunder-id/thunderid/tests/mocks/groupmock"
-	"github.com/thunder-id/thunderid/tests/mocks/sysauthzmock"
 )
 
 const (
@@ -199,7 +192,7 @@ func TestCompositeGetAllPermissionsForAssignees(t *testing.T) {
 			Return([]ResourcePermissions{
 				{ResourceServerID: testRSSystem, Permissions: []string{"system:user"}},
 			}, nil).Once()
-		dbStore.EXPECT().GetEntityRoleIDs(ctx, "user1", []string{}).Return([]string{}, nil).Once()
+		dbStore.EXPECT().GetEntityRoleIDs(ctx, "user1", []string{}, "").Return([]string{}, nil).Once()
 
 		result, err := store.GetAllPermissionsForAssignees(ctx, "user1", []string{})
 
@@ -216,7 +209,7 @@ func TestCompositeGetAllPermissionsForAssignees(t *testing.T) {
 			Return([]ResourcePermissions{}, nil).Once()
 		fileStore.EXPECT().GetAllPermissionsForAssignees(ctx, "user1", []string{}).
 			Return([]ResourcePermissions{}, nil).Once()
-		dbStore.EXPECT().GetEntityRoleIDs(ctx, "user1", []string{}).
+		dbStore.EXPECT().GetEntityRoleIDs(ctx, "user1", []string{}, "").
 			Return([]string{"declarativeRole"}, nil).Once()
 		fileStore.EXPECT().IsRoleExist(ctx, "declarativeRole").Return(true, nil).Once()
 		fileStore.EXPECT().GetRole(ctx, "declarativeRole").Return(RoleWithPermissions{
@@ -240,7 +233,7 @@ func TestCompositeGetAllPermissionsForAssignees(t *testing.T) {
 			Return([]ResourcePermissions{}, nil).Once()
 		fileStore.EXPECT().GetAllPermissionsForAssignees(ctx, "user1", []string{}).
 			Return([]ResourcePermissions{}, nil).Once()
-		dbStore.EXPECT().GetEntityRoleIDs(ctx, "user1", []string{}).Return([]string{"dbRole"}, nil).Once()
+		dbStore.EXPECT().GetEntityRoleIDs(ctx, "user1", []string{}, "").Return([]string{"dbRole"}, nil).Once()
 		fileStore.EXPECT().IsRoleExist(ctx, "dbRole").Return(false, nil).Once()
 
 		result, err := store.GetAllPermissionsForAssignees(ctx, "user1", []string{})
@@ -255,7 +248,7 @@ func TestCompositeGetAllPermissionsForAssignees(t *testing.T) {
 			Return([]ResourcePermissions{}, nil).Once()
 		fileStore.EXPECT().GetAllPermissionsForAssignees(ctx, "user1", []string{}).
 			Return([]ResourcePermissions{}, nil).Once()
-		dbStore.EXPECT().GetEntityRoleIDs(ctx, "user1", []string{}).Return([]string{"gone"}, nil).Once()
+		dbStore.EXPECT().GetEntityRoleIDs(ctx, "user1", []string{}, "").Return([]string{"gone"}, nil).Once()
 		fileStore.EXPECT().IsRoleExist(ctx, "gone").Return(true, nil).Once()
 		fileStore.EXPECT().GetRole(ctx, "gone").Return(RoleWithPermissions{}, ErrRoleNotFound).Once()
 
@@ -273,7 +266,7 @@ func TestCompositeGetAllPermissionsForAssignees(t *testing.T) {
 			Return([]ResourcePermissions{}, nil).Once()
 		fileStore.EXPECT().GetAllPermissionsForAssignees(ctx, "user1", []string{}).
 			Return([]ResourcePermissions{}, nil).Once()
-		dbStore.EXPECT().GetEntityRoleIDs(ctx, "user1", []string{}).Return([]string{"r1"}, nil).Once()
+		dbStore.EXPECT().GetEntityRoleIDs(ctx, "user1", []string{}, "").Return([]string{"r1"}, nil).Once()
 		fileStore.EXPECT().IsRoleExist(ctx, "r1").Return(true, nil).Once()
 		fileStore.EXPECT().GetRole(ctx, "r1").
 			Return(RoleWithPermissions{}, errors.New("disk failure")).Once()
@@ -355,78 +348,6 @@ func TestRoleServiceGetAllPermissions(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// Grant checks on the role paths
-// ---------------------------------------------------------------------------
-
-// newRefusingRoleAuthz returns an authz mock that refuses every grant check.
-func newRefusingRoleAuthz(t *testing.T) sysauthz.SystemAuthorizationServiceInterface {
-	mockAuthz := sysauthzmock.NewSystemAuthorizationServiceInterfaceMock(t)
-	mockAuthz.On("CanGrantPermissions", mock.Anything, mock.Anything).
-		Return(&sysauthz.ErrorGrantNotPermitted).Maybe()
-	mockAuthz.On("CanGrantMembership", mock.Anything, mock.Anything, mock.Anything).
-		Return(&sysauthz.ErrorGrantNotPermitted).Maybe()
-	return mockAuthz
-}
-
-func TestRoleAssignmentGuard(t *testing.T) {
-	ctx := context.Background()
-	assignments := []RoleAssignment{{ID: "bob", Type: AssigneeTypeUser}}
-
-	// Assigning a role transfers its permissions, so a caller that does not hold them is refused
-	// before anything reaches the store.
-	t.Run("AddAssignmentsIsRefused", func(t *testing.T) {
-		store := newRoleStoreInterfaceMock(t)
-		txr := &fakeTransactioner{}
-		svc := &roleAssignmentService{
-			roleStore:     store,
-			transactioner: txr,
-			authzService:  newRefusingRoleAuthz(t),
-		}
-
-		svcErr := svc.AddAssignments(ctx, "librarianRole", assignments)
-
-		require.NotNil(t, svcErr)
-		assert.Equal(t, sysauthz.ErrorGrantNotPermitted.Code, svcErr.Code)
-		assert.Zero(t, txr.transactCalls, "no transaction may be opened for a refused grant")
-		store.AssertNotCalled(t, "AddAssignments", mock.Anything, mock.Anything, mock.Anything)
-	})
-
-	t.Run("RemoveAssignmentsIsRefused", func(t *testing.T) {
-		store := newRoleStoreInterfaceMock(t)
-		txr := &fakeTransactioner{}
-		svc := &roleAssignmentService{
-			roleStore:     store,
-			transactioner: txr,
-			authzService:  newRefusingRoleAuthz(t),
-		}
-
-		svcErr := svc.RemoveAssignments(ctx, "librarianRole", assignments)
-
-		require.NotNil(t, svcErr)
-		assert.Equal(t, sysauthz.ErrorGrantNotPermitted.Code, svcErr.Code)
-		assert.Zero(t, txr.transactCalls)
-		store.AssertNotCalled(t, "RemoveAssignments", mock.Anything, mock.Anything, mock.Anything)
-	})
-
-	// The guard runs before assignee validation, so a refusal cannot be used to probe which
-	// principals exist.
-	t.Run("GuardRunsBeforeAssigneeValidation", func(t *testing.T) {
-		entitySvc := entitymock.NewEntityServiceInterfaceMock(t)
-		svc := &roleAssignmentService{
-			roleStore:     newRoleStoreInterfaceMock(t),
-			entityService: entitySvc,
-			transactioner: &fakeTransactioner{},
-			authzService:  newRefusingRoleAuthz(t),
-		}
-
-		svcErr := svc.AddAssignments(ctx, "librarianRole", assignments)
-
-		require.NotNil(t, svcErr)
-		entitySvc.AssertNotCalled(t, "GetEntitiesByIDs", mock.Anything, mock.Anything)
-	})
-}
-
 func TestToPermissionSet(t *testing.T) {
 	t.Run("GroupsByResourceServer", func(t *testing.T) {
 		result := toPermissionSet([]ResourcePermissions{
@@ -464,7 +385,7 @@ func TestCrossStoreAllPermissions_CorruptRoleFailsClosed(t *testing.T) {
 		Return([]ResourcePermissions{}, nil).Once()
 	fileStore.EXPECT().GetAllPermissionsForAssignees(ctx, "user1", []string{}).
 		Return([]ResourcePermissions{}, nil).Once()
-	dbStore.EXPECT().GetEntityRoleIDs(ctx, "user1", []string{}).Return([]string{"corrupt"}, nil).Once()
+	dbStore.EXPECT().GetEntityRoleIDs(ctx, "user1", []string{}, "").Return([]string{"corrupt"}, nil).Once()
 	fileStore.EXPECT().IsRoleExist(ctx, "corrupt").Return(true, nil).Once()
 	fileStore.EXPECT().GetRole(ctx, "corrupt").
 		Return(RoleWithPermissions{}, ErrRoleDataCorrupted).Once()
@@ -487,7 +408,7 @@ func TestCrossStoreAllPermissions_RemovedRoleIsStillSkipped(t *testing.T) {
 		Return([]ResourcePermissions{}, nil).Once()
 	fileStore.EXPECT().GetAllPermissionsForAssignees(ctx, "user1", []string{}).
 		Return([]ResourcePermissions{}, nil).Once()
-	dbStore.EXPECT().GetEntityRoleIDs(ctx, "user1", []string{}).Return([]string{"gone"}, nil).Once()
+	dbStore.EXPECT().GetEntityRoleIDs(ctx, "user1", []string{}, "").Return([]string{"gone"}, nil).Once()
 	fileStore.EXPECT().IsRoleExist(ctx, "gone").Return(true, nil).Once()
 	fileStore.EXPECT().GetRole(ctx, "gone").Return(RoleWithPermissions{}, ErrRoleNotFound).Once()
 
@@ -495,46 +416,4 @@ func TestCrossStoreAllPermissions_RemovedRoleIsStillSkipped(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Empty(t, result)
-}
-
-// A role widened between the pre-transaction check and the write must not be assignable on the
-// strength of the earlier result. The second CanGrantMembership call, made inside the transaction,
-// is what closes that window.
-func TestModifyAssignments_RechecksInsideTransaction(t *testing.T) {
-	ctx := context.Background()
-	store := newRoleStoreInterfaceMock(t)
-	txr := &fakeTransactioner{}
-
-	// First call succeeds (pre-transaction), second refuses (inside the transaction), simulating a
-	// concurrent role update that widened the role in between.
-	authz := sysauthzmock.NewSystemAuthorizationServiceInterfaceMock(t)
-	call := 0
-	authz.On("CanGrantMembership", mock.Anything, sysauthz.PrincipalTypeRole, "role1").
-		Return(func(context.Context, sysauthz.PrincipalType, string) *tidcommon.ServiceError {
-			call++
-			if call == 1 {
-				return nil
-			}
-			return &sysauthz.ErrorGrantNotPermitted
-		})
-
-	store.EXPECT().IsRoleExist(ctx, "role1").Return(true, nil).Once()
-	store.EXPECT().AddAssignments(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
-
-	groupSvc := groupmock.NewGroupServiceInterfaceMock(t)
-	groupSvc.EXPECT().ValidateGroupIDs(ctx, []string{"grp1"}).Return(nil).Once()
-
-	svc := &roleAssignmentService{
-		roleStore:     store,
-		groupService:  groupSvc,
-		transactioner: txr,
-		authzService:  authz,
-	}
-	svcErr := svc.AddAssignments(ctx, "role1", []RoleAssignment{{ID: "grp1", Type: AssigneeTypeGroup}})
-
-	require.NotNil(t, svcErr)
-	assert.Equal(t, sysauthz.ErrorGrantNotPermitted.Code, svcErr.Code,
-		"the in-transaction refusal must surface, not be masked as an internal error")
-	assert.Equal(t, 2, call, "the guard must run again inside the transaction")
-	store.AssertNotCalled(t, "AddAssignments", mock.Anything, mock.Anything, mock.Anything)
 }

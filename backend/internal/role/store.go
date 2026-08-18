@@ -27,22 +27,32 @@ type roleStoreInterface interface {
 	CreateRole(ctx context.Context, id string, role RoleCreationDetail) error
 	GetRole(ctx context.Context, id string) (RoleWithPermissions, error)
 	IsRoleExist(ctx context.Context, id string) (bool, error)
-	GetRoleAssignments(ctx context.Context, id string, limit, offset int) ([]RoleAssignment, error)
-	GetRoleAssignmentsByType(ctx context.Context, id string,
+	// GetRoleAssignments and its siblings below are scoped to the assignments made by ouID — the
+	// role's own OU for its own assignments, or a sharee OU's ID when the role has been shared to
+	// it. This is what makes authorization checks OU-scoped: see ASSIGNING_OU_ID on ROLE_ASSIGNMENT.
+	GetRoleAssignments(ctx context.Context, id, ouID string, limit, offset int) ([]RoleAssignment, error)
+	GetRoleAssignmentsByType(ctx context.Context, id, ouID string,
 		limit, offset int, assigneeType string) ([]RoleAssignment, error)
-	GetRoleAssignmentsCount(ctx context.Context, id string) (int, error)
-	GetRoleAssignmentsCountByType(ctx context.Context, id string, assigneeType string) (int, error)
+	GetRoleAssignmentsCount(ctx context.Context, id, ouID string) (int, error)
+	GetRoleAssignmentsCountByType(ctx context.Context, id, ouID string, assigneeType string) (int, error)
 	UpdateRole(ctx context.Context, id string, role RoleUpdateDetail) error
 	DeleteRole(ctx context.Context, id string) error
 	DeleteAssignmentsByRoleID(ctx context.Context, id string) error
 	DeleteAssignmentsByAssignee(ctx context.Context, assigneeType, assigneeID string) (int64, error)
-	AddAssignments(ctx context.Context, id string, assignments []RoleAssignment) error
-	RemoveAssignments(ctx context.Context, id string, assignments []RoleAssignment) error
+	// DeleteAssignmentsByOUID removes every assignment a given OU has made for a role. Used to
+	// clean up a sharee OU's assignments when its share/reshare grant for the role is revoked.
+	DeleteAssignmentsByOUID(ctx context.Context, id, ouID string) error
+	AddAssignments(ctx context.Context, id, ouID string, assignments []RoleAssignment) error
+	RemoveAssignments(ctx context.Context, id, ouID string, assignments []RoleAssignment) error
 	CheckRoleNameExists(ctx context.Context, ouID, name string) (bool, error)
 	CheckRoleNameExistsExcludingID(ctx context.Context, ouID, name, excludeRoleID string) (bool, error)
+	// GetAuthorizedPermissionsByResourceServer resolves authorized permissions for the entity/groups.
+	// ouID, when non-empty, scopes the result to assignments made in that OU (see ASSIGNING_OU_ID on
+	// ROLE_ASSIGNMENT); when empty, the check is deployment-wide (unscoped), preserving prior
+	// behavior for callers that have not adopted OU-scoped authorization.
 	GetAuthorizedPermissionsByResourceServer(
 		ctx context.Context, entityID string, groupIDs []string, resourceServerID string,
-		requestedPermissions []string) ([]string, error)
+		requestedPermissions []string, ouID string) ([]string, error)
 	// GetAllPermissionsForAssignees returns every permission the entity and/or groups hold through
 	// their assigned roles, grouped by resource server. It takes no filters: it enumerates.
 	GetAllPermissionsForAssignees(
@@ -57,9 +67,15 @@ type roleStoreInterface interface {
 	// group membership. Unlike GetUserRoles this does not require the role to exist in the
 	// underlying store; it returns raw assignee->role bindings. Used by the composite store
 	// to resolve permissions for declarative roles whose definitions live in the file store
-	// while their assignments live in the DB.
-	GetEntityRoleIDs(ctx context.Context, entityID string, groupIDs []string) ([]string, error)
+	// while their assignments live in the DB. ouID has the same optional-scoping semantics as
+	// GetAuthorizedPermissionsByResourceServer.
+	GetEntityRoleIDs(ctx context.Context, entityID string, groupIDs []string, ouID string) ([]string, error)
 	IsRoleDeclarative(ctx context.Context, roleID string) (bool, error)
+	// GetAssigningOUIDs returns every distinct OU that has made at least one assignment for the
+	// role, i.e. the role's own owning OU plus any sharee OU that has used the role's assignment
+	// templated field. Used to discover which per-OU assignment sets to include when exporting a
+	// role for declarative round-tripping.
+	GetAssigningOUIDs(ctx context.Context, id string) ([]string, error)
 }
 
 // roleStore is the default implementation of roleStoreInterface.
@@ -190,7 +206,7 @@ func (s *roleStore) CreateRole(ctx context.Context, id string, role RoleCreation
 		return err
 	}
 
-	if err := addAssignmentsToRole(ctx, dbClient, id, role.Assignments, s.scope(ctx)); err != nil {
+	if err := addAssignmentsToRole(ctx, dbClient, id, role.OUID, role.Assignments, s.scope(ctx)); err != nil {
 		return err
 	}
 
@@ -252,14 +268,16 @@ func (s *roleStore) IsRoleExist(ctx context.Context, id string) (bool, error) {
 	return parseBoolFromCount(results)
 }
 
-// GetRoleAssignments retrieves assignments for a role with pagination.
-func (s *roleStore) GetRoleAssignments(ctx context.Context, id string, limit, offset int) ([]RoleAssignment, error) {
+// GetRoleAssignments retrieves assignments made by ouID for a role, with pagination.
+func (s *roleStore) GetRoleAssignments(
+	ctx context.Context, id, ouID string, limit, offset int,
+) ([]RoleAssignment, error) {
 	dbClient, err := s.getConfigDBClient()
 	if err != nil {
 		return nil, err
 	}
 
-	results, err := dbClient.QueryContext(ctx, queryGetRoleAssignments, id, limit, offset, s.scope(ctx))
+	results, err := dbClient.QueryContext(ctx, queryGetRoleAssignments, id, limit, offset, s.scope(ctx), ouID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get role assignments: %w", err)
 	}
@@ -267,9 +285,10 @@ func (s *roleStore) GetRoleAssignments(ctx context.Context, id string, limit, of
 	return parseAssignmentResults(results)
 }
 
-// GetRoleAssignmentsByType retrieves assignments for a role filtered by assignee type with pagination.
+// GetRoleAssignmentsByType retrieves assignments made by ouID for a role, filtered by assignee
+// type, with pagination.
 func (s *roleStore) GetRoleAssignmentsByType(
-	ctx context.Context, id string, limit, offset int, assigneeType string,
+	ctx context.Context, id, ouID string, limit, offset int, assigneeType string,
 ) ([]RoleAssignment, error) {
 	dbClient, err := s.getConfigDBClient()
 	if err != nil {
@@ -277,12 +296,36 @@ func (s *roleStore) GetRoleAssignmentsByType(
 	}
 
 	results, err := dbClient.QueryContext(
-		ctx, queryGetRoleAssignmentsByType, id, limit, offset, s.scope(ctx), assigneeType)
+		ctx, queryGetRoleAssignmentsByType, id, limit, offset, s.scope(ctx), assigneeType, ouID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get role assignments: %w", err)
 	}
 
 	return parseAssignmentResults(results)
+}
+
+// GetAssigningOUIDs returns every distinct OU that has made at least one assignment for the role.
+func (s *roleStore) GetAssigningOUIDs(ctx context.Context, id string) ([]string, error) {
+	dbClient, err := s.getConfigDBClient()
+	if err != nil {
+		return nil, err
+	}
+
+	results, err := dbClient.QueryContext(ctx, queryGetAssigningOUIDs, id, s.scope(ctx))
+	if err != nil {
+		return nil, fmt.Errorf("failed to get assigning OU IDs: %w", err)
+	}
+
+	ouIDs := make([]string, 0, len(results))
+	for _, row := range results {
+		ouID, err := parseStringField(row, "assigning_ou_id")
+		if err != nil {
+			return nil, err
+		}
+		ouIDs = append(ouIDs, ouID)
+	}
+
+	return ouIDs, nil
 }
 
 // parseAssignmentResults parses database query results into role assignments.
@@ -306,14 +349,14 @@ func parseAssignmentResults(results []map[string]interface{}) ([]RoleAssignment,
 	return assignments, nil
 }
 
-// GetRoleAssignmentsCount retrieves the total count of assignments for a role.
-func (s *roleStore) GetRoleAssignmentsCount(ctx context.Context, id string) (int, error) {
+// GetRoleAssignmentsCount retrieves the total count of assignments made by ouID for a role.
+func (s *roleStore) GetRoleAssignmentsCount(ctx context.Context, id, ouID string) (int, error) {
 	dbClient, err := s.getConfigDBClient()
 	if err != nil {
 		return 0, err
 	}
 
-	countResults, err := dbClient.QueryContext(ctx, queryGetRoleAssignmentsCount, id, s.scope(ctx))
+	countResults, err := dbClient.QueryContext(ctx, queryGetRoleAssignmentsCount, id, s.scope(ctx), ouID)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get role assignments count: %w", err)
 	}
@@ -321,15 +364,18 @@ func (s *roleStore) GetRoleAssignmentsCount(ctx context.Context, id string) (int
 	return parseCountResult(countResults)
 }
 
-// GetRoleAssignmentsCountByType retrieves the total count of assignments for a role filtered by type.
-func (s *roleStore) GetRoleAssignmentsCountByType(ctx context.Context, id string, assigneeType string) (int, error) {
+// GetRoleAssignmentsCountByType retrieves the total count of assignments made by ouID for a role,
+// filtered by assignee type.
+func (s *roleStore) GetRoleAssignmentsCountByType(ctx context.Context, id, ouID string, assigneeType string) (
+	int, error,
+) {
 	dbClient, err := s.getConfigDBClient()
 	if err != nil {
 		return 0, err
 	}
 
 	countResults, err := dbClient.QueryContext(
-		ctx, queryGetRoleAssignmentsCountByType, id, s.scope(ctx), assigneeType)
+		ctx, queryGetRoleAssignmentsCountByType, id, s.scope(ctx), assigneeType, ouID)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get role assignments count: %w", err)
 	}
@@ -388,7 +434,7 @@ func (s *roleStore) DeleteRole(ctx context.Context, id string) error {
 	return nil
 }
 
-// DeleteAssignmentsByRoleID deletes all assignments for a role. Used for cascade delete.
+// DeleteAssignmentsByRoleID deletes all assignments for a role across every OU. Used for cascade delete.
 func (s *roleStore) DeleteAssignmentsByRoleID(ctx context.Context, id string) error {
 	dbClient, err := s.getConfigDBClient()
 	if err != nil {
@@ -398,6 +444,21 @@ func (s *roleStore) DeleteAssignmentsByRoleID(ctx context.Context, id string) er
 	_, err = dbClient.ExecuteContext(ctx, queryDeleteAllRoleAssignments, id, s.scope(ctx))
 	if err != nil {
 		return fmt.Errorf("failed to delete assignments for role: %w", err)
+	}
+	return nil
+}
+
+// DeleteAssignmentsByOUID deletes every assignment ouID has made for a role. Used to clean up a
+// sharee OU's assignments when its share/reshare grant for the role is revoked.
+func (s *roleStore) DeleteAssignmentsByOUID(ctx context.Context, id, ouID string) error {
+	dbClient, err := s.getConfigDBClient()
+	if err != nil {
+		return err
+	}
+
+	_, err = dbClient.ExecuteContext(ctx, queryDeleteRoleAssignmentsByOUID, id, ouID, s.scope(ctx))
+	if err != nil {
+		return fmt.Errorf("failed to delete assignments for OU: %w", err)
 	}
 	return nil
 }
@@ -464,26 +525,31 @@ func (s *roleStore) DeleteRolePermission(
 	return rowsAffected, nil
 }
 
-// AddAssignments adds assignments to a role.
-func (s *roleStore) AddAssignments(ctx context.Context, id string, assignments []RoleAssignment) error {
+// AddAssignments adds assignments made by ouID to a role.
+func (s *roleStore) AddAssignments(ctx context.Context, id, ouID string, assignments []RoleAssignment) error {
 	dbClient, err := s.getConfigDBClient()
 	if err != nil {
 		return err
 	}
 
-	return addAssignmentsToRole(ctx, dbClient, id, assignments, s.scope(ctx))
+	return addAssignmentsToRole(ctx, dbClient, id, ouID, assignments, s.scope(ctx))
 }
 
-// RemoveAssignments removes assignments from a role.
-func (s *roleStore) RemoveAssignments(ctx context.Context, id string, assignments []RoleAssignment) error {
+// RemoveAssignments removes assignments from a role, each matched against its own OUID when it
+// declares one and against ouID otherwise.
+func (s *roleStore) RemoveAssignments(ctx context.Context, id, ouID string, assignments []RoleAssignment) error {
 	dbClient, err := s.getConfigDBClient()
 	if err != nil {
 		return err
 	}
 
 	for _, assignment := range assignments {
+		assigningOUID := assignment.OUID
+		if assigningOUID == "" {
+			assigningOUID = ouID
+		}
 		_, err := dbClient.ExecuteContext(
-			ctx, queryDeleteRoleAssignmentsByIDs, id, assignment.Type, assignment.ID, s.scope(ctx))
+			ctx, queryDeleteRoleAssignmentsByIDs, id, assignment.Type, assignment.ID, s.scope(ctx), assigningOUID)
 		if err != nil {
 			return fmt.Errorf("failed to remove assignment from role: %w", err)
 		}
@@ -569,17 +635,22 @@ func addPermissionsToRole(
 	return nil
 }
 
-// addAssignmentsToRole adds a list of assignments to a role.
+// addAssignmentsToRole adds a list of assignments to a role, each recorded under its own OUID when
+// it declares one and under ouID otherwise.
 func addAssignmentsToRole(
 	ctx context.Context,
 	dbClient provider.DBClientInterface,
-	id string,
+	id, ouID string,
 	assignments []RoleAssignment,
 	deploymentID string,
 ) error {
 	for _, assignment := range assignments {
+		assigningOUID := assignment.OUID
+		if assigningOUID == "" {
+			assigningOUID = ouID
+		}
 		_, err := dbClient.ExecuteContext(
-			ctx, queryCreateRoleAssignment, id, assignment.Type, assignment.ID, deploymentID)
+			ctx, queryCreateRoleAssignment, id, assigningOUID, assignment.Type, assignment.ID, deploymentID)
 		if err != nil {
 			return fmt.Errorf("failed to add assignment to role: %w", err)
 		}
@@ -641,8 +712,6 @@ func (s *roleStore) CheckRoleNameExistsExcludingID(
 	return parseBoolFromCount(results)
 }
 
-// GetAuthorizedPermissionsByResourceServer retrieves the permissions that an entity is authorized for based on
-// their direct role assignments and group memberships, scoped to a resource server when provided.
 // GetAllPermissionsForAssignees returns every permission granted to the entity and/or groups by
 // their assigned database-backed roles, grouped by resource server.
 func (s *roleStore) GetAllPermissionsForAssignees(
@@ -684,12 +753,16 @@ func (s *roleStore) GetAllPermissionsForAssignees(
 	return resourcePermissionsFromMap(byResourceServer), nil
 }
 
+// GetAuthorizedPermissionsByResourceServer retrieves the permissions that an entity is authorized for based on
+// their direct role assignments and group memberships, scoped to a resource server when provided.
+// ouID has the optional-scoping semantics documented on roleStoreInterface.
 func (s *roleStore) GetAuthorizedPermissionsByResourceServer(
 	ctx context.Context,
 	entityID string,
 	groupIDs []string,
 	resourceServerID string,
 	requestedPermissions []string,
+	ouID string,
 ) ([]string, error) {
 	dbClient, err := s.getConfigDBClient()
 	if err != nil {
@@ -703,7 +776,7 @@ func (s *roleStore) GetAuthorizedPermissionsByResourceServer(
 
 	// Build dynamic query based on provided parameters
 	query, args := buildAuthorizedPermissionsQuery(
-		entityID, groupIDs, resourceServerID, requestedPermissions, s.scope(ctx))
+		entityID, groupIDs, resourceServerID, requestedPermissions, ouID, s.scope(ctx))
 
 	results, err := dbClient.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -756,7 +829,7 @@ func (s *roleStore) GetUserRoles(
 // composite store) use this to resolve permissions for declarative roles whose permission
 // rows are absent from the DB.
 func (s *roleStore) GetEntityRoleIDs(
-	ctx context.Context, entityID string, groupIDs []string,
+	ctx context.Context, entityID string, groupIDs []string, ouID string,
 ) ([]string, error) {
 	if groupIDs == nil {
 		groupIDs = []string{}
@@ -771,7 +844,7 @@ func (s *roleStore) GetEntityRoleIDs(
 		return nil, err
 	}
 
-	query, args := buildEntityRoleIDsQuery(entityID, groupIDs, s.scope(ctx))
+	query, args := buildEntityRoleIDsQuery(entityID, groupIDs, ouID, s.scope(ctx))
 
 	results, err := dbClient.QueryContext(ctx, query, args...)
 	if err != nil {

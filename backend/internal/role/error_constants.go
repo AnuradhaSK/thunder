@@ -224,6 +224,83 @@ var (
 			DefaultValue: "The total number of records exceeds the maximum limit in composite mode",
 		},
 	}
+	// ErrorRoleNotSharedToOU is returned when an OU other than the role's owner attempts to write
+	// assignments for a role that has not been shared (directly or via reshare) to that OU.
+	ErrorRoleNotSharedToOU = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "ROL-1019",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.roleservice.role_not_shared_to_ou",
+			DefaultValue: "Role not shared to this organization unit",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key:          "error.roleservice.role_not_shared_to_ou_description",
+			DefaultValue: "The role has not been shared or reshared to the acting organization unit",
+		},
+	}
+	// ErrorMissingOUIDParam is returned when a required ouId query parameter is missing.
+	ErrorMissingOUIDParam = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "ROL-1021",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.roleservice.missing_ou_id_param",
+			DefaultValue: "Invalid request format",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key:          "error.roleservice.missing_ou_id_param_description",
+			DefaultValue: "The ouId query parameter is required",
+		},
+	}
+	// ErrorAssignmentsNotEditable is returned when a sharee OU attempts to write assignments for a
+	// role whose owning OU has not made the assignments field editable for that OU.
+	ErrorAssignmentsNotEditable = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "ROL-1020",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.roleservice.assignments_not_editable",
+			DefaultValue: "Assignments are not editable by this organization unit",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key: "error.roleservice.assignments_not_editable_description",
+			DefaultValue: "The role's owning organization unit has not made assignments editable " +
+				"for the acting organization unit",
+		},
+	}
+	// ErrorRoleOutsideOwnOUScope is returned when a caller holding only the system:roles or
+	// system:roles:view scope (not the root permission) attempts to read, list, or act as an
+	// organization unit other than its own token-issued organization unit.
+	ErrorRoleOutsideOwnOUScope = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "ROL-1023",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.roleservice.role_outside_own_ou_scope",
+			DefaultValue: "Outside the caller's organization unit scope",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key: "error.roleservice.role_outside_own_ou_scope_description",
+			DefaultValue: "The system:roles/system:roles:view scope confines the caller to its own " +
+				"token-issued organization unit; the requested organization unit is outside that scope",
+		},
+	}
+	// ErrorRoleDeletionRestrictedToOwner is returned when a caller whose own organization unit
+	// does not own a role (and who holds no root permission) attempts to delete it — including a
+	// caller the role has been shared or reshared to, since a sharee never gains delete rights
+	// over the original resource. Deliberately a role-specific error, not the generic
+	// sharing.ErrorCoreConfigOwnerOnly: deletion is a distinct, resource-type-meaningful operation
+	// ("this role cannot be deleted by this organization unit"), not a core-config edit.
+	ErrorRoleDeletionRestrictedToOwner = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "ROL-1024",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.roleservice.deletion_restricted_to_owner",
+			DefaultValue: "Role deletion not permitted",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key: "error.roleservice.deletion_restricted_to_owner_description",
+			DefaultValue: "Only the role's owning organization unit, or an unrestricted caller, may " +
+				"delete this role; a shared or reshared organization unit cannot delete the original role",
+		},
+	}
 )
 
 // Internal error constants for role management operations.

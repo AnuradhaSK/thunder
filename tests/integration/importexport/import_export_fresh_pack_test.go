@@ -1402,10 +1402,11 @@ func (s *GroupRoleResourceImportExportSuite) importResources(reqBody importReque
 }
 
 func (s *GroupRoleResourceImportExportSuite) exportGroups(groupIDs []string) (string, error) {
-	reqBody := groupRoleExportRequest{
-		Groups: groupIDs,
-	}
+	return s.exportResources(groupRoleExportRequest{Groups: groupIDs})
+}
 
+// exportResources issues POST /export with an arbitrary export request and returns the YAML body.
+func (s *GroupRoleResourceImportExportSuite) exportResources(reqBody groupRoleExportRequest) (string, error) {
 	payload, err := json.Marshal(reqBody)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal export request: %w", err)
@@ -1514,4 +1515,109 @@ func (s *GroupRoleResourceImportExportSuite) getResourcesForServer(serverID, par
 	}
 
 	return listResp.Resources, nil
+}
+
+// TestImportRoleResolvesAssignmentOUFromAssignee proves the declarative contract that an
+// assignment's ouId is optional and defaults to the OU the assignee itself lives in: a group in a
+// child OU, assigned with no ouId to a role owned by the parent, is recorded under the child OU.
+// The role is shared to the child first, since an assignment under a sharee OU is only legal once
+// that OU holds a grant with assignments editable.
+func (s *GroupRoleResourceImportExportSuite) TestImportRoleResolvesAssignmentOUFromAssignee() {
+	childOUID, err := testutils.CreateOrganizationUnit(testutils.OrganizationUnit{
+		Handle:      "grr-ie-child-" + s.handleSuffix,
+		Name:        "GRR Import Export Child OU " + s.handleSuffix,
+		Description: "Child OU for assignment-OU resolution test",
+		Parent:      &s.ouID,
+	})
+	s.Require().NoError(err)
+	defer testutils.DeleteOrganizationUnit(childOUID)
+
+	groupID, err := testutils.CreateGroup(testutils.Group{
+		Name: "Child OU Group " + s.handleSuffix,
+		OUID: childOUID,
+	})
+	s.Require().NoError(err)
+	defer testutils.DeleteGroup(groupID)
+
+	roleID, err := testutils.CreateRole(testutils.Role{
+		Name: "Assignee OU Role " + s.handleSuffix,
+		OUID: s.ouID,
+	})
+	s.Require().NoError(err)
+	defer testutils.DeleteRole(roleID)
+
+	grantID, err := testutils.ShareRole(roleID, map[string]interface{}{
+		"ouIds":          []map[string]interface{}{{"ouId": childOUID}},
+		"editableFields": []string{"assignments.group"},
+	})
+	s.Require().NoError(err)
+	defer testutils.UnshareRole(roleID, grantID)
+
+	yamlContent := fmt.Sprintf(`resource_type: role
+id: %s
+name: Assignee OU Role %s
+ouId: %s
+permissions: []
+assignments:
+  - id: %s
+    type: group
+`, roleID, s.handleSuffix, s.ouID, groupID)
+
+	resp, err := s.importResources(importRequest{
+		Content: yamlContent,
+		Options: importOptions{Upsert: true, ContinueOnError: false, Target: "runtime"},
+	})
+	s.Require().NoError(err)
+	s.Require().NotNil(resp)
+	s.Require().Equal(0, resp.Summary.Failed, "import failed: %+v", resp.Results)
+
+	// Recorded under the group's own OU...
+	childAssignments, err := testutils.GetRoleAssignmentsForOU(roleID, childOUID)
+	s.Require().NoError(err)
+	s.Assert().True(hasAssignment(childAssignments, groupID, "group"),
+		"expected group %s to be assigned under its own OU %s", groupID, childOUID)
+
+	// ...and not under the role's owning OU, which is what the old behavior would have done.
+	ownerAssignments, err := testutils.GetRoleAssignmentsForOU(roleID, s.ouID)
+	s.Require().NoError(err)
+	s.Assert().False(hasAssignment(ownerAssignments, groupID, "group"),
+		"group %s must not be recorded under the role's own OU %s", groupID, s.ouID)
+}
+
+// TestExportRoleIncludesAssignmentOUIDs proves the export side of the same contract: every exported
+// assignment carries the ouId it was recorded under, including a sharee OU's, in one flat list.
+func (s *GroupRoleResourceImportExportSuite) TestExportRoleIncludesAssignmentOUIDs() {
+	groupID, err := testutils.CreateGroup(testutils.Group{
+		Name: "Export Assignment OU Group " + s.handleSuffix,
+		OUID: s.ouID,
+	})
+	s.Require().NoError(err)
+	defer testutils.DeleteGroup(groupID)
+
+	roleID, err := testutils.CreateRole(testutils.Role{
+		Name:        "Export Assignment OU Role " + s.handleSuffix,
+		OUID:        s.ouID,
+		Assignments: []testutils.Assignment{{ID: groupID, Type: "group"}},
+	})
+	s.Require().NoError(err)
+	defer testutils.DeleteRole(roleID)
+
+	yamlContent, err := s.exportResources(groupRoleExportRequest{Roles: []string{roleID}})
+	s.Require().NoError(err)
+	s.Require().NotEmpty(yamlContent)
+
+	s.Assert().Contains(yamlContent, "assignments:")
+	s.Assert().Contains(yamlContent, "id: "+groupID)
+	s.Assert().Contains(yamlContent, "ouId: "+s.ouID)
+	s.Assert().NotContains(yamlContent, "sharedAssignments:")
+}
+
+// hasAssignment reports whether assignments contains an entry with the given ID and type.
+func hasAssignment(assignments []testutils.Assignment, id, assigneeType string) bool {
+	for _, a := range assignments {
+		if a.ID == id && a.Type == assigneeType {
+			return true
+		}
+	}
+	return false
 }

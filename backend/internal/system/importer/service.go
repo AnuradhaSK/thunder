@@ -24,6 +24,7 @@ import (
 	ncommon "github.com/thunder-id/thunderid/internal/notification/common"
 	"github.com/thunder-id/thunderid/internal/resource"
 	"github.com/thunder-id/thunderid/internal/role"
+	"github.com/thunder-id/thunderid/internal/sharing"
 	"github.com/thunder-id/thunderid/internal/system/log"
 	"github.com/thunder-id/thunderid/internal/vc/credential"
 	"github.com/thunder-id/thunderid/internal/vc/presentation"
@@ -116,7 +117,19 @@ type roleAdapter interface {
 }
 
 type roleAssignmentAdapter interface {
-	AddAssignments(ctx context.Context, id string, assignments []role.RoleAssignment) *tidcommon.ServiceError
+	AddAssignments(ctx context.Context, id, ouID string, assignments []role.RoleAssignment) *tidcommon.ServiceError
+	ResolveAssignmentOUIDs(
+		ctx context.Context, assignments []role.RoleAssignment) ([]role.RoleAssignment, *tidcommon.ServiceError)
+}
+
+// sharingAdapter narrows sharing.ServiceInterface to the one method importRole needs, so
+// declaratively-declared grants replay through the same eligibility checks a live
+// POST /roles/{id}/grants call goes through.
+type sharingAdapter interface {
+	Share(
+		ctx context.Context, resourceType sharing.ResourceType, resourceID, owningOUID, actingOUID string,
+		policy sharing.SharePolicy,
+	) ([]sharing.Grant, *tidcommon.ServiceError)
 }
 
 type groupAdapter interface {
@@ -233,6 +246,9 @@ type importService struct {
 	presentationDefinitionService  presentationDefinitionAdapter
 	credentialConfigurationService credentialConfigurationAdapter
 	serverConfigService            serverConfigAdapter
+	// sharingService is set by Initialize after construction (not a constructor parameter, to
+	// avoid touching every positional newImportService call site in tests). Only importRole uses it.
+	sharingService sharingAdapter
 }
 
 func newImportService(
@@ -254,7 +270,7 @@ func newImportService(
 	presentationDefinitionService presentationDefinitionAdapter,
 	credentialConfigurationService credentialConfigurationAdapter,
 	serverConfigService serverConfigAdapter,
-) ImportServiceInterface {
+) *importService {
 	return &importService{
 		applicationService:             applicationService,
 		idpService:                     idpService,

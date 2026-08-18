@@ -12,6 +12,8 @@ import (
 	"github.com/thunder-id/thunderid/internal/group"
 	oupkg "github.com/thunder-id/thunderid/internal/ou"
 	resourcepkg "github.com/thunder-id/thunderid/internal/resource"
+	"github.com/thunder-id/thunderid/internal/sharing"
+	"github.com/thunder-id/thunderid/internal/system/cache"
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
 	"github.com/thunder-id/thunderid/internal/system/middleware"
@@ -22,11 +24,13 @@ import (
 // Initialize initializes the role service and registers its routes.
 func Initialize(
 	mux *http.ServeMux,
+	cacheManager cache.CacheManagerInterface,
 	entityService entity.EntityServiceInterface,
 	groupService group.GroupServiceInterface,
 	ouService oupkg.OrganizationUnitServiceInterface,
 	resourceService resourcepkg.ResourceServiceInterface,
 	entityTypeService entitytype.EntityTypeServiceInterface,
+	sharingService sharing.ServiceInterface,
 	authzService sysauthz.SystemAuthorizationServiceInterface,
 ) (
 	RoleServiceInterface, RoleAssignmentServiceInterface, oupkg.OURoleResolver,
@@ -37,27 +41,37 @@ func Initialize(
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
+	if cacheManager != nil {
+		roleByIDCache := cache.GetCache[*RoleWithPermissions](cacheManager, "RoleByIDCache")
+		roleStore = newCacheBackedRoleStore(roleStore, roleByIDCache)
+	}
 
 	// Step 2: Create service with store
 	roleService := newRoleService(
-		roleStore, entityService, groupService, ouService, resourceService,
+		roleStore, entityService, groupService, ouService, resourceService, sharingService,
 		transactioner, authzService,
+	)
+
+	assignmentService := newRoleAssignmentService(
+		roleStore, entityService, groupService, entityTypeService, sharingService, transactioner,
 	)
 
 	// Step 3: Load declarative resources into store (if applicable)
 	if fileStore != nil {
-		if err := loadDeclarativeResources(fileStore, dbStore, roleService); err != nil {
+		if err := loadDeclarativeResources(
+			fileStore, dbStore, roleService, sharingService, assignmentService); err != nil {
 			return nil, nil, nil, nil, err
 		}
 	}
 
-	assignmentService := newRoleAssignmentService(
-		roleStore, entityService, groupService, entityTypeService, transactioner, authzService,
-	)
-	roleHandler := newRoleHandler(roleService, assignmentService)
+	roleHandler := newRoleHandler(roleService, assignmentService, sharingService)
 	registerRoutes(mux, roleHandler)
-	exporter := newRoleExporter(roleService, assignmentService)
-	ouRoleResolver := newOURoleResolver(roleStore)
+	exporter := newRoleExporter(roleService, assignmentService, sharingService)
+	ouRoleResolver := newOURoleResolver(roleService)
+
+	// Onboard role onto the generic sharing/templated-config framework.
+	sharingService.RegisterResourceType(newRoleResourceTypeDeclaration(roleStore))
+
 	return roleService, assignmentService, ouRoleResolver, exporter, nil
 }
 
@@ -140,7 +154,7 @@ func registerRoutes(mux *http.ServeMux, roleHandler *roleHandler) {
 		AllowCredentials: true,
 		MaxAge:           600,
 	}
-	// Special handling for /roles/{id} and /roles/{id}/assignments
+	// Special handling for /roles/{id}, /roles/{id}/assignments, and /roles/{id}/editable-fields
 	mux.HandleFunc(middleware.WithCORS("GET /roles/",
 		func(w http.ResponseWriter, r *http.Request) {
 			path := strings.TrimPrefix(r.URL.Path, "/roles/")
@@ -151,6 +165,8 @@ func registerRoutes(mux *http.ServeMux, roleHandler *roleHandler) {
 				roleHandler.HandleRoleGetRequest(w, r)
 			} else if len(segments) == 2 && segments[1] == "assignments" {
 				roleHandler.HandleRoleAssignmentsGetRequest(w, r)
+			} else if len(segments) == 2 && segments[1] == "editable-fields" {
+				roleHandler.HandleRoleEditableFieldsGetRequest(w, r)
 			} else {
 				http.NotFound(w, r)
 			}
@@ -169,6 +185,10 @@ func registerRoutes(mux *http.ServeMux, roleHandler *roleHandler) {
 	mux.HandleFunc(middleware.WithCORS("OPTIONS /roles/{id}/assignments", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}, opts4))
+	mux.HandleFunc(middleware.WithCORS("OPTIONS /roles/{id}/editable-fields",
+		func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		}, opts4))
 
 	opts3 := middleware.CORSOptions{
 		AllowedMethods:   []string{"POST"},
@@ -188,4 +208,28 @@ func registerRoutes(mux *http.ServeMux, roleHandler *roleHandler) {
 		func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
 		}, opts3))
+
+	// Sharing is a fully-RESTful sub-resource collection: POST creates a grant (either
+	// root-targeting or children-targeting, per the request body), GET lists every grant recorded
+	// for the role, DELETE revokes one.
+	opts6 := middleware.CORSOptions{
+		AllowedMethods:   []string{"GET", "POST", "DELETE"},
+		AllowedHeaders:   middleware.DefaultAllowedHeaders,
+		AllowCredentials: true,
+		MaxAge:           600,
+	}
+	mux.HandleFunc(middleware.WithCORS(
+		"GET /roles/{id}/grants", roleHandler.HandleRoleGrantsGetRequest, opts6))
+	mux.HandleFunc(middleware.WithCORS(
+		"POST /roles/{id}/grants", roleHandler.HandleRoleGrantsPostRequest, opts6))
+	mux.HandleFunc(middleware.WithCORS(
+		"DELETE /roles/{id}/grants/{grantId}", roleHandler.HandleRoleUnshareRequest, opts6))
+	mux.HandleFunc(middleware.WithCORS("OPTIONS /roles/{id}/grants",
+		func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		}, opts6))
+	mux.HandleFunc(middleware.WithCORS("OPTIONS /roles/{id}/grants/{grantId}",
+		func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		}, opts6))
 }

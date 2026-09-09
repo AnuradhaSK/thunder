@@ -22,13 +22,117 @@ servers:
 
 tags:
   - name: Resource Servers
-    description: Register and manage resource servers that define OAuth2 permission scopes.
+    description: |
+      Register and manage resource servers that define OAuth2 permission scopes.
+
+      **API access scopes.** Three OAuth scopes grant access to this API: `system`
+      (unrestricted, may act on any resource server, resource, or action in any organization
+      unit), `system:resource-servers` (full access: list, read, create, update, delete, and
+      manage grants), and `system:resource-servers:view` (read-only: list, read, and read
+      grants). Each of the latter two is confined to the token's own organization unit, the
+      organization unit its issuing client application belongs to, the same view/manage split the
+      Role Management API and the OU/user/group/user-type/agent-type APIs use. A resource server
+      is owned by a single organization unit (the `ouId` on the resource server); a resource or an
+      action has no `ouId` of its own and is always owned by its resource server's.
+
+      Holding either of those two scopes, a caller is subject to these organization-unit rules:
+      - **Create is owner-only.** `POST /resource-servers` requires the requested `ouId` to be the
+        caller's own organization unit; `POST /resource-servers/{id}/resources` and the
+        `POST .../actions` variants require the parent resource server's `ouId` to be it. A caller
+        naming any other organization unit is rejected with `RES-1024`. A grant does not
+        widen this: an organization unit a resource server was merely shared to may not create
+        resources or actions under it.
+      - **Single-entity reads and share-grant operations also accept shared entities.**
+        `GET /resource-servers/{id}`, `GET .../resources/{id}`, `GET .../actions/{id}`, and every
+        operation on the four `.../grants` route groups (`POST`, `GET`, and `DELETE`) accept
+        an entity that is either owned by the caller's own organization unit or currently visible
+        to it through a grant, and reject anything else with `RES-1024`. This is what lets a
+        sharee read what was shared to it, and reshare it onward into its own subtree.
+      - **Update and delete are owner-only, enforced by the sharing framework.** `PUT` and
+        `DELETE` on a resource server, a resource, or an action all change core (non-templated)
+        configuration, so they are gated by the sharing framework's own ownership check rather
+        than the organization-unit reach check above, and reject a non-owner with `SHR-1007`.
+        Visibility through a grant never confers this. `PUT /resource-servers/{id}` checks
+        the existing record's `ouId` and, when the request moves the resource server to a
+        different organization unit, the destination `ouId` too, so both must be the caller's own.
+
+      **`GET /resource-servers` is organization-unit confined.** A caller holding
+      `system:resource-servers` or `system:resource-servers:view` but not `system` receives the
+      resource servers its own organization unit owns plus those shared to it, never the
+      deployment-wide listing, matching how Role's `GET /roles` reroutes such a caller to its own
+      organization unit's owned-plus-shared listing. `totalResults` reflects that filtered set. A
+      caller holding `system` still receives every resource server in the deployment.
+
+      **Known limitation: the nested list endpoints are not organization-unit filtered.**
+      `GET /resource-servers/{id}/resources` and the `GET .../actions` list endpoints apply the
+      scope tier only, so a caller that can see a resource server at all can enumerate every
+      resource and action beneath it. In practice a caller reaches these paths only for a resource
+      server it owns or one shared to it, and the compound permission check decides independently
+      which of those resources and actions are usable, so this exposes catalog metadata rather
+      than access. These endpoints are expected to gain the same owned-plus-shared treatment
+      later.
   - name: Resources
     description: Manage hierarchical resources within a resource server.
   - name: Actions
     description: Define actions on resources; actions map directly to OAuth2 scopes used in permission grants.
   - name: Permissions
     description: Preview and retrieve derived permissions based on the resource handle hierarchy.
+  - name: Resource sharing
+    description: |
+      Resource servers, resources, and actions can be shared to other organization units (OUs),
+      reusing the same generic sharing framework that powers Role sharing. See
+ for the
+      full design.
+
+      **Three sharing-framework resource types, one per tree level.** A resource server, a
+      resource, and an action are each shared independently through their own
+      `.../grants` sub-resource, so a specific action can be withheld while a sibling
+      action, or the resource it belongs to, stays shared. Owning an entity's resource server
+      is what makes it usable by a role at all: a role may only be granted a permission whose
+      resource server, and whose specific resource/action, are both visible, owned or shared, to
+      the role's own organization unit.
+
+      **Cascade share.** Sharing a resource server, or a non-leaf resource, fans out to every
+      resource/action currently beneath it in a single call: `POST .../grants` creates one
+      grant for the node itself and one for each of its current descendants, all with the same
+      target-scope policy. `excludedNodeIds`, a field with no equivalent on Role's `ShareRequest`,
+      names specific descendant resource/action ids to leave out of that cascade (e.g. share a
+      `Bookings` resource but withhold its `create` action). Excluding a non-leaf descendant only
+      skips that descendant's own grant; its own children are still enumerated separately and
+      are shared unless they are also named in `excludedNodeIds`.
+
+      **Auto-inherit on creation.** Creating a new resource or action under an already-shared
+      parent (a resource server, or a resource) replays every grant currently recorded for that
+      parent onto the new child automatically, so it becomes visible to the same organization
+      units immediately, with no separate share call.
+
+      **Cascade unshare.** Revoking a cascade share's top-level grant
+      (`DELETE .../grants/{grantId}`) also revokes every descendant grant created alongside
+      it by that same call, including ones later reshared or auto-inherited on top, as long as
+      they still target the identical organization unit selection as the grant being revoked.
+
+      **The deployment root permission is a bypass, not a grant.** The literal deployment
+      root permission is always treated as visible to every organization unit, unconditionally; it
+      is never itself the subject of a share or unshare call.
+
+      Each of the four route groups below (`/resource-servers/{id}/grants`,
+      `/resource-servers/{rsId}/resources/{id}/grants`,
+      `/resource-servers/{rsId}/actions/{id}/grants`, and
+      `/resource-servers/{rsId}/resources/{resourceId}/actions/{id}/grants`) exposes the
+      same `POST`/`GET`/`DELETE` shape as Role's own `/roles/{id}/grants`: `POST` creates a
+      grant (cascading, by default, for a resource server or a non-leaf resource), `GET` lists only
+      that node's own grants, not its descendants' grants, and `DELETE` revokes a grant by id.
+      There are no separate `/share` or `/reshare` action endpoints, and, unlike Role, no
+      `editableFields`: resource servers, resources, and actions declare no templated fields, so
+      there is no per-OU editable state a grant needs to scope down.
+
+      **Who may call these.** `POST` and `DELETE` on any of these route groups require the
+      `system:resource-servers` scope (or `system`), and `GET` requires
+      `system:resource-servers:view` (or either of the other two, which cover it). Beyond the
+      scope, all three also require the node being acted on to be owned by, or currently shared
+      to, the caller's own organization unit, rejecting anything else with `RES-1024`. That is
+      what makes a reshare by a sharee the same call, with the same check, as the owner's own
+      original share. See "API access scopes" in the "Resource Servers" section above.
 
 security:
   - OAuth2: [system]
@@ -2225,6 +2329,919 @@ paths:
                   key: "error.internal_server_error_description"
                   defaultValue: "An unexpected error occurred while processing the request"
 
+  /resource-servers/{id}/grants:
+    post:
+      tags:
+        - Resource sharing
+      summary: Create a grant for a resource server
+      description: |
+        Shares the resource server to other organization unit(s), cascading by default to every
+        resource and action currently beneath it. `ouId` selects the organization unit performing
+        this share; it defaults to the resource server's own owning organization unit when
+        omitted. See the "Resource sharing" tag description above for the two target-scope modes
+        (root-targeting vs. children-targeting) and `excludedNodeIds`. Returns every grant created
+        across the whole cascade, not just the top node.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Resource server ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ShareRequest'
+            examples:
+              selected-roots:
+                summary: Owner shares the resource server, and everything beneath it, to specific Root OUs
+                value:
+                  rootOuIds:
+                    - "6f5e4d3c-2b1a-4c5d-8e9f-0a1b2c3d4e5f"
+              cascade-with-exclusion:
+                summary: Share the whole tree except specific descendants
+                value:
+                  rootOuIds:
+                    - "6f5e4d3c-2b1a-4c5d-8e9f-0a1b2c3d4e5f"
+                  excludedNodeIds:
+                    - "9c2e1a5c-2b1e-4f0a-8c1a-5a6b7c8d9e0f"
+      responses:
+        "201":
+          description: Share grant(s) created, one per node in the cascade
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrantListResponse'
+              example:
+                grants:
+                  - id: "1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d"
+                    nodeType: "resource_server"
+                    nodeId: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+                    stage: "share"
+                    targetScope: "root"
+                    targetOuId: "6f5e4d3c-2b1a-4c5d-8e9f-0a1b2c3d4e5f"
+                    owningOuId: "a839f4bd-39dc-4eaa-b5cc-210d8ecaee87"
+                  - id: "2b3c4d5e-6f7a-8b9c-0d1e-2f3a4b5c6d7e"
+                    nodeType: "resource"
+                    nodeId: "ad7e4h1h-8f9c-4e93-c565-5e3ddf98hi6f"
+                    stage: "share"
+                    targetScope: "root"
+                    targetOuId: "6f5e4d3c-2b1a-4c5d-8e9f-0a1b2c3d4e5f"
+                    owningOuId: "a839f4bd-39dc-4eaa-b5cc-210d8ecaee87"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid-request-format:
+                  summary: Neither target-scope mode selected, both selected, or an invalid request body
+                  value:
+                    code: "SHR-1001"
+                    message:
+                      key: "error.sharingservice.invalid_request_format"
+                      defaultValue: "Invalid request format"
+                    description:
+                      key: "error.sharingservice.invalid_request_format_description"
+                      defaultValue: "The request body is malformed or contains invalid data"
+                invalid-target-ou:
+                  summary: A rootOuIds entry is not itself a Root OU, or an ouIds entry is not ouId's direct child
+                  value:
+                    code: "SHR-1004"
+                    message:
+                      key: "error.sharingservice.invalid_target_ou"
+                      defaultValue: "Invalid target organization unit"
+                    description:
+                      key: "error.sharingservice.invalid_target_ou_description"
+                      defaultValue: "The target organization unit does not satisfy the sharing policy's constraints"
+                not-shared:
+                  summary: ouId used children-targeting mode but has no grant making it visible
+                  value:
+                    code: "SHR-1005"
+                    message:
+                      key: "error.sharingservice.not_shared"
+                      defaultValue: "Resource not shared to this organization unit"
+                    description:
+                      key: "error.sharingservice.not_shared_description"
+                      defaultValue: "The resource has not been shared or reshared to the given organization unit"
+        "404":
+          description: Resource server not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "RES-1003"
+                message:
+                  key: "error.resourceservice.resource_server_not_found"
+                  defaultValue: "Resource server not found"
+                description:
+                  key: "error.resourceservice.resource_server_not_found_description"
+                  defaultValue: "The resource server with the specified id does not exist"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "SSE-5000"
+                message:
+                  key: "error.internal_server_error"
+                  defaultValue: "Internal server error"
+                description:
+                  key: "error.internal_server_error_description"
+                  defaultValue: "An unexpected error occurred while processing the request"
+    get:
+      tags:
+        - Resource sharing
+      summary: List grants for a resource server
+      description: |
+        Returns only the resource server's own recorded grants, not the grants of any resource or
+        action a cascade share also created beneath it; see each descendant's own
+        `GET .../grants` for those.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Resource server ID
+      responses:
+        "200":
+          description: List of grants
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrantListResponse'
+        "404":
+          description: Resource server not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "RES-1003"
+                message:
+                  key: "error.resourceservice.resource_server_not_found"
+                  defaultValue: "Resource server not found"
+                description:
+                  key: "error.resourceservice.resource_server_not_found_description"
+                  defaultValue: "The resource server with the specified id does not exist"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "SSE-5000"
+                message:
+                  key: "error.internal_server_error"
+                  defaultValue: "Internal server error"
+                description:
+                  key: "error.internal_server_error_description"
+                  defaultValue: "An unexpected error occurred while processing the request"
+
+  /resource-servers/{id}/grants/{grantId}:
+    delete:
+      tags:
+        - Resource sharing
+      summary: Revoke a resource server share or reshare grant
+      description: |
+        Revokes the grant and, for a cascade share, every descendant grant created alongside it
+        (or later reshared/auto-inherited on top of it) that still targets the identical
+        organization unit selection. See the "Resource sharing" tag description above.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Resource server ID
+        - in: path
+          name: grantId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Grant revoked
+        "404":
+          description: Share grant not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "SHR-1003"
+                message:
+                  key: "error.sharingservice.grant_not_found"
+                  defaultValue: "Share grant not found"
+                description:
+                  key: "error.sharingservice.grant_not_found_description"
+                  defaultValue: "The grant with the specified id does not exist"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "SSE-5000"
+                message:
+                  key: "error.internal_server_error"
+                  defaultValue: "Internal server error"
+                description:
+                  key: "error.internal_server_error_description"
+                  defaultValue: "An unexpected error occurred while processing the request"
+
+  /resource-servers/{rsId}/resources/{id}/grants:
+    post:
+      tags:
+        - Resource sharing
+      summary: Create a grant for a resource
+      description: |
+        Shares the resource to other organization unit(s). When the resource is not a leaf, this
+        cascades to every sub-resource and action currently beneath it, exactly like sharing a
+        resource server, except scoped to this resource's own subtree instead of the whole server.
+        Sharing a resource does not by itself make its resource server visible; the resource
+        server must also be shared (or owned) for any permission beneath this resource to actually
+        be usable in a role. See the "Resource sharing" tag description above.
+      parameters:
+        - in: path
+          name: rsId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Resource server ID
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Resource ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ShareRequest'
+            examples:
+              cascade-with-exclusion:
+                summary: Share a resource but withhold one specific descendant action
+                value:
+                  rootOuIds:
+                    - "6f5e4d3c-2b1a-4c5d-8e9f-0a1b2c3d4e5f"
+                  excludedNodeIds:
+                    - "9c2e1a5c-2b1e-4f0a-8c1a-5a6b7c8d9e0f"
+      responses:
+        "201":
+          description: Share grant(s) created, one per node in the cascade
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrantListResponse'
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid-request-format:
+                  summary: Neither target-scope mode selected, both selected, or an invalid request body
+                  value:
+                    code: "SHR-1001"
+                    message:
+                      key: "error.sharingservice.invalid_request_format"
+                      defaultValue: "Invalid request format"
+                    description:
+                      key: "error.sharingservice.invalid_request_format_description"
+                      defaultValue: "The request body is malformed or contains invalid data"
+                invalid-target-ou:
+                  summary: A rootOuIds entry is not itself a Root OU, or an ouIds entry is not ouId's direct child
+                  value:
+                    code: "SHR-1004"
+                    message:
+                      key: "error.sharingservice.invalid_target_ou"
+                      defaultValue: "Invalid target organization unit"
+                    description:
+                      key: "error.sharingservice.invalid_target_ou_description"
+                      defaultValue: "The target organization unit does not satisfy the sharing policy's constraints"
+                not-shared:
+                  summary: ouId used children-targeting mode but has no grant making it visible
+                  value:
+                    code: "SHR-1005"
+                    message:
+                      key: "error.sharingservice.not_shared"
+                      defaultValue: "Resource not shared to this organization unit"
+                    description:
+                      key: "error.sharingservice.not_shared_description"
+                      defaultValue: "The resource has not been shared or reshared to the given organization unit"
+        "404":
+          description: Resource server or resource not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "RES-1008"
+                message:
+                  key: "error.resourceservice.resource_not_found"
+                  defaultValue: "Resource not found"
+                description:
+                  key: "error.resourceservice.resource_not_found_description"
+                  defaultValue: "The resource with the specified id does not exist"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "SSE-5000"
+                message:
+                  key: "error.internal_server_error"
+                  defaultValue: "Internal server error"
+                description:
+                  key: "error.internal_server_error_description"
+                  defaultValue: "An unexpected error occurred while processing the request"
+    get:
+      tags:
+        - Resource sharing
+      summary: List grants for a resource
+      description: |
+        Returns only this resource's own recorded grants, not the grants of any sub-resource or
+        action a cascade share also created beneath it.
+      parameters:
+        - in: path
+          name: rsId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Resource server ID
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Resource ID
+      responses:
+        "200":
+          description: List of grants
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrantListResponse'
+        "404":
+          description: Resource server or resource not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "RES-1008"
+                message:
+                  key: "error.resourceservice.resource_not_found"
+                  defaultValue: "Resource not found"
+                description:
+                  key: "error.resourceservice.resource_not_found_description"
+                  defaultValue: "The resource with the specified id does not exist"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "SSE-5000"
+                message:
+                  key: "error.internal_server_error"
+                  defaultValue: "Internal server error"
+                description:
+                  key: "error.internal_server_error_description"
+                  defaultValue: "An unexpected error occurred while processing the request"
+
+  /resource-servers/{rsId}/resources/{id}/grants/{grantId}:
+    delete:
+      tags:
+        - Resource sharing
+      summary: Revoke a resource share or reshare grant
+      description: |
+        Revokes the grant and, for a cascade share, every descendant grant created alongside it
+        (or later reshared/auto-inherited on top of it) that still targets the identical
+        organization unit selection.
+      parameters:
+        - in: path
+          name: rsId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Resource server ID
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Resource ID
+        - in: path
+          name: grantId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Grant revoked
+        "404":
+          description: Share grant not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "SHR-1003"
+                message:
+                  key: "error.sharingservice.grant_not_found"
+                  defaultValue: "Share grant not found"
+                description:
+                  key: "error.sharingservice.grant_not_found_description"
+                  defaultValue: "The grant with the specified id does not exist"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "SSE-5000"
+                message:
+                  key: "error.internal_server_error"
+                  defaultValue: "Internal server error"
+                description:
+                  key: "error.internal_server_error_description"
+                  defaultValue: "An unexpected error occurred while processing the request"
+
+  /resource-servers/{rsId}/actions/{id}/grants:
+    post:
+      tags:
+        - Resource sharing
+      summary: Create a grant for a resource-server-level action
+      description: |
+        Shares a resource-server-level action to other organization unit(s). Actions are leaves,
+        so there is no cascade; `excludedNodeIds` is ignored. Sharing an action does not by itself
+        make its resource server visible; the resource server must also be shared (or owned) for
+        this action's permission to actually be usable in a role.
+      parameters:
+        - in: path
+          name: rsId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Resource server ID
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Action ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ShareRequest'
+            examples:
+              selected-roots:
+                summary: Share to specific Root OUs
+                value:
+                  rootOuIds:
+                    - "6f5e4d3c-2b1a-4c5d-8e9f-0a1b2c3d4e5f"
+      responses:
+        "201":
+          description: Share grant created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrantListResponse'
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid-request-format:
+                  summary: Neither target-scope mode selected, both selected, or an invalid request body
+                  value:
+                    code: "SHR-1001"
+                    message:
+                      key: "error.sharingservice.invalid_request_format"
+                      defaultValue: "Invalid request format"
+                    description:
+                      key: "error.sharingservice.invalid_request_format_description"
+                      defaultValue: "The request body is malformed or contains invalid data"
+                invalid-target-ou:
+                  summary: A rootOuIds entry is not itself a Root OU, or an ouIds entry is not ouId's direct child
+                  value:
+                    code: "SHR-1004"
+                    message:
+                      key: "error.sharingservice.invalid_target_ou"
+                      defaultValue: "Invalid target organization unit"
+                    description:
+                      key: "error.sharingservice.invalid_target_ou_description"
+                      defaultValue: "The target organization unit does not satisfy the sharing policy's constraints"
+        "404":
+          description: Resource server or action not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "RES-1009"
+                message:
+                  key: "error.resourceservice.action_not_found"
+                  defaultValue: "Action not found"
+                description:
+                  key: "error.resourceservice.action_not_found_description"
+                  defaultValue: "The action with the specified id does not exist"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "SSE-5000"
+                message:
+                  key: "error.internal_server_error"
+                  defaultValue: "Internal server error"
+                description:
+                  key: "error.internal_server_error_description"
+                  defaultValue: "An unexpected error occurred while processing the request"
+    get:
+      tags:
+        - Resource sharing
+      summary: List grants for a resource-server-level action
+      parameters:
+        - in: path
+          name: rsId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Resource server ID
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Action ID
+      responses:
+        "200":
+          description: List of grants
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrantListResponse'
+        "404":
+          description: Resource server or action not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "RES-1009"
+                message:
+                  key: "error.resourceservice.action_not_found"
+                  defaultValue: "Action not found"
+                description:
+                  key: "error.resourceservice.action_not_found_description"
+                  defaultValue: "The action with the specified id does not exist"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "SSE-5000"
+                message:
+                  key: "error.internal_server_error"
+                  defaultValue: "Internal server error"
+                description:
+                  key: "error.internal_server_error_description"
+                  defaultValue: "An unexpected error occurred while processing the request"
+
+  /resource-servers/{rsId}/actions/{id}/grants/{grantId}:
+    delete:
+      tags:
+        - Resource sharing
+      summary: Revoke a resource-server-level action's grant
+      parameters:
+        - in: path
+          name: rsId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Resource server ID
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Action ID
+        - in: path
+          name: grantId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Grant revoked
+        "404":
+          description: Share grant not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "SHR-1003"
+                message:
+                  key: "error.sharingservice.grant_not_found"
+                  defaultValue: "Share grant not found"
+                description:
+                  key: "error.sharingservice.grant_not_found_description"
+                  defaultValue: "The grant with the specified id does not exist"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "SSE-5000"
+                message:
+                  key: "error.internal_server_error"
+                  defaultValue: "Internal server error"
+                description:
+                  key: "error.internal_server_error_description"
+                  defaultValue: "An unexpected error occurred while processing the request"
+
+  /resource-servers/{rsId}/resources/{resourceId}/actions/{id}/grants:
+    post:
+      tags:
+        - Resource sharing
+      summary: Create a grant for a resource-nested action
+      description: |
+        Shares an action nested under a resource to other organization unit(s). Actions are
+        leaves, so there is no cascade; `excludedNodeIds` is ignored. This is the granularity the
+        feature is built around: withholding this one grant while its parent resource, and any
+        sibling action, stay shared leaves this specific action unusable in a role for this
+        organization unit, even though the rest of the resource works normally.
+      parameters:
+        - in: path
+          name: rsId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Resource server ID
+        - in: path
+          name: resourceId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Resource ID
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Action ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ShareRequest'
+            examples:
+              selected-roots:
+                summary: Share to specific Root OUs
+                value:
+                  rootOuIds:
+                    - "6f5e4d3c-2b1a-4c5d-8e9f-0a1b2c3d4e5f"
+      responses:
+        "201":
+          description: Share grant created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrantListResponse'
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid-request-format:
+                  summary: Neither target-scope mode selected, both selected, or an invalid request body
+                  value:
+                    code: "SHR-1001"
+                    message:
+                      key: "error.sharingservice.invalid_request_format"
+                      defaultValue: "Invalid request format"
+                    description:
+                      key: "error.sharingservice.invalid_request_format_description"
+                      defaultValue: "The request body is malformed or contains invalid data"
+                invalid-target-ou:
+                  summary: A rootOuIds entry is not itself a Root OU, or an ouIds entry is not ouId's direct child
+                  value:
+                    code: "SHR-1004"
+                    message:
+                      key: "error.sharingservice.invalid_target_ou"
+                      defaultValue: "Invalid target organization unit"
+                    description:
+                      key: "error.sharingservice.invalid_target_ou_description"
+                      defaultValue: "The target organization unit does not satisfy the sharing policy's constraints"
+        "404":
+          description: Resource server, resource, or action not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "RES-1009"
+                message:
+                  key: "error.resourceservice.action_not_found"
+                  defaultValue: "Action not found"
+                description:
+                  key: "error.resourceservice.action_not_found_description"
+                  defaultValue: "The action with the specified id does not exist"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "SSE-5000"
+                message:
+                  key: "error.internal_server_error"
+                  defaultValue: "Internal server error"
+                description:
+                  key: "error.internal_server_error_description"
+                  defaultValue: "An unexpected error occurred while processing the request"
+    get:
+      tags:
+        - Resource sharing
+      summary: List grants for a resource-nested action
+      parameters:
+        - in: path
+          name: rsId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Resource server ID
+        - in: path
+          name: resourceId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Resource ID
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Action ID
+      responses:
+        "200":
+          description: List of grants
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrantListResponse'
+        "404":
+          description: Resource server, resource, or action not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "RES-1009"
+                message:
+                  key: "error.resourceservice.action_not_found"
+                  defaultValue: "Action not found"
+                description:
+                  key: "error.resourceservice.action_not_found_description"
+                  defaultValue: "The action with the specified id does not exist"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "SSE-5000"
+                message:
+                  key: "error.internal_server_error"
+                  defaultValue: "Internal server error"
+                description:
+                  key: "error.internal_server_error_description"
+                  defaultValue: "An unexpected error occurred while processing the request"
+
+  /resource-servers/{rsId}/resources/{resourceId}/actions/{id}/grants/{grantId}:
+    delete:
+      tags:
+        - Resource sharing
+      summary: Revoke a resource-nested action's grant
+      parameters:
+        - in: path
+          name: rsId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Resource server ID
+        - in: path
+          name: resourceId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Resource ID
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Action ID
+        - in: path
+          name: grantId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Grant revoked
+        "404":
+          description: Share grant not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "SHR-1003"
+                message:
+                  key: "error.sharingservice.grant_not_found"
+                  defaultValue: "Share grant not found"
+                description:
+                  key: "error.sharingservice.grant_not_found_description"
+                  defaultValue: "The grant with the specified id does not exist"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "SSE-5000"
+                message:
+                  key: "error.internal_server_error"
+                  defaultValue: "Internal server error"
+                description:
+                  key: "error.internal_server_error_description"
+                  defaultValue: "An unexpected error occurred while processing the request"
+
 components:
   securitySchemes:
     OAuth2:
@@ -2235,10 +3252,22 @@ components:
           tokenUrl: https://localhost:8090/oauth2/token
           scopes:
             system: Access to system management APIs
+            system:resource-servers: |
+              Full access to the Resource Server Management API, confined to the token's own
+              organization unit (see the "Resource Servers" tag description)
+            system:resource-servers:view: |
+              Read-only access to the Resource Server Management API, confined to the token's own
+              organization unit (see the "Resource Servers" tag description)
         clientCredentials:
           tokenUrl: https://localhost:8090/oauth2/token
           scopes:
             system: Access to system management APIs
+            system:resource-servers: |
+              Full access to the Resource Server Management API, confined to the token's own
+              organization unit (see the "Resource Servers" tag description)
+            system:resource-servers:view: |
+              Read-only access to the Resource Server Management API, confined to the token's own
+              organization unit (see the "Resource Servers" tag description)
 
   parameters:
     limitQueryParam:
@@ -2527,6 +3556,135 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Link'
+
+    ShareRequest:
+      type: object
+      description: |
+        Exactly one of two target-scope modes must be selected: root-targeting (`allRoots` or
+        `rootOuIds`) or children-targeting (`allChildren` or `ouIds`). See the "Resource sharing"
+        tag description for the full semantics; they are identical to Role's own `ShareRequest`
+        except for `excludedNodeIds`, which Role's does not have.
+      properties:
+        ouId:
+          type: string
+          format: uuid
+          description: |
+            The organization unit performing this share. Optional; defaults to the node's own
+            owning organization unit (its resource server's `ouId`) when omitted. Root-targeting
+            mode is only valid when this is the node's own owning organization unit.
+            Children-targeting mode is valid for any organization unit currently visible for the
+            node.
+        allRoots:
+          type: boolean
+          description: Share to every current and future Root organization unit. Root-targeting mode.
+        rootOuIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: Share to these specific Root organization units. Root-targeting mode.
+        excludedRootOuIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: |
+            Carves these Root organization units, and their entire subtrees, out of an `allRoots`
+            share. Ignored unless `allRoots` is true.
+        allChildren:
+          type: boolean
+          description: |
+            Share to every organization unit in ouId's subtree, including ones created afterward,
+            any depth, in one grant. Children-targeting mode.
+        ouIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: |
+            Share to these specific organization units. Each must be ouId's direct child.
+            Ignored when `allChildren` is true. Children-targeting mode.
+        excludedOuIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: |
+            Carves these organization units, and their entire subtrees, out of an `allChildren`
+            share. Ignored unless `allChildren` is true.
+        excludedNodeIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: |
+            Resource/action ids to leave out of the cascade this request otherwise performs when
+            sharing a resource server or a non-leaf resource (see the "Resource sharing" tag
+            description's cascade share/exclusion explanation). Ignored on a leaf action's own
+            share request, which has no descendants to cascade to. Excluding a non-leaf
+            descendant only skips that descendant's own grant; its own children are still
+            enumerated and shared unless they are also listed here.
+
+    Grant:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        nodeType:
+          type: string
+          enum:
+            - resource_server
+            - resource
+            - action
+          description: |
+            Which of the three sharing-framework resource types this grant covers. A single
+            cascade share can create grants across several different node types in one call.
+        nodeId:
+          type: string
+          format: uuid
+          description: ID of the resource server, resource, or action this specific grant covers.
+        stage:
+          type: string
+          enum:
+            - share
+            - reshare
+          description: |
+            Who issued this grant, not which target-scope mode it used: `share` for a grant
+            issued by the node's own owning organization unit, `reshare` for a grant issued by a
+            previously-visible sharee organization unit distributing further within its own
+            subtree.
+        targetScope:
+          type: string
+          enum:
+            - all_roots
+            - root
+            - all_children
+            - ou
+          description: The breadth of organization units this grant targets.
+        targetOuId:
+          type: string
+          format: uuid
+        owningOuId:
+          type: string
+          format: uuid
+          description: The organization unit that owns the shared node's resource server.
+        excludedOuIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: |
+            Organization units (and their subtrees) carved out of this grant. Only ever non-empty
+            for the `all_roots`/`all_children` target scopes.
+
+    GrantListResponse:
+      type: object
+      properties:
+        grants:
+          type: array
+          items:
+            $ref: '#/components/schemas/Grant'
 
     Link:
       type: object

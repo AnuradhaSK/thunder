@@ -2234,6 +2234,39 @@ func (suite *RoleStoreTestSuite) TestDeleteRolePermission() {
 	})
 }
 
+func (suite *RoleStoreTestSuite) TestDeleteRolePermissionForOU() {
+	suite.Run("success returns rows affected", func() {
+		suite.mockDBProvider.On("GetConfigDBClient").Return(suite.mockDBClient, nil).Once()
+		suite.mockDBClient.On("ExecuteContext", mock.Anything, queryDeleteRolePermissionByValueForOU,
+			"rs1", "read", testDeploymentID, "ou1", testDeploymentID).Return(int64(2), nil).Once()
+
+		deleted, err := suite.store.DeleteRolePermissionForOU(context.Background(), "ou1", "rs1", "read")
+
+		suite.NoError(err)
+		suite.Equal(int64(2), deleted)
+	})
+
+	suite.Run("db client error is propagated", func() {
+		suite.mockDBProvider.On("GetConfigDBClient").Return(nil, errors.New("client error")).Once()
+
+		deleted, err := suite.store.DeleteRolePermissionForOU(context.Background(), "ou1", "rs1", "read")
+
+		suite.Error(err)
+		suite.Equal(int64(0), deleted)
+	})
+
+	suite.Run("db error is propagated", func() {
+		suite.mockDBProvider.On("GetConfigDBClient").Return(suite.mockDBClient, nil).Once()
+		suite.mockDBClient.On("ExecuteContext", mock.Anything, queryDeleteRolePermissionByValueForOU,
+			"rs1", "read", testDeploymentID, "ou1", testDeploymentID).Return(int64(0), errors.New("db error")).Once()
+
+		deleted, err := suite.store.DeleteRolePermissionForOU(context.Background(), "ou1", "rs1", "read")
+
+		suite.Error(err)
+		suite.Equal(int64(0), deleted)
+	})
+}
+
 // loadRuntimeForScope loads a server runtime naming the deployment these tests assert on. The store
 // resolves its deployment from the runtime rather than holding one, and other suites in this package
 // reset the runtime, so it is loaded per test rather than once for the package.

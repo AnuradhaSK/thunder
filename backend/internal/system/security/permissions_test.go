@@ -436,6 +436,54 @@ func TestGetRequiredPermissionForAPI(t *testing.T) {
 			name:   "PATCH /users unmapped method falls back to system",
 			method: http.MethodPatch, path: "/users", wantPerm: p.Root,
 		},
+
+		// ---- Resource Management APIs: view/manage split ----
+		{
+			name:   "GET /resource-servers requires view",
+			method: http.MethodGet, path: "/resource-servers", wantPerm: p.ResourceServersView,
+		},
+		{
+			name:   "POST /resource-servers requires manage",
+			method: http.MethodPost, path: "/resource-servers", wantPerm: p.ResourceServers,
+		},
+		{
+			name:   "GET a single resource server requires view",
+			method: http.MethodGet, path: "/resource-servers/rs-1", wantPerm: p.ResourceServersView,
+		},
+		{
+			name:   "GET nested resources requires view",
+			method: http.MethodGet, path: "/resource-servers/rs-1/resources", wantPerm: p.ResourceServersView,
+		},
+		{
+			name:     "GET nested actions requires view",
+			method:   http.MethodGet,
+			path:     "/resource-servers/rs-1/resources/res-1/actions/act-1",
+			wantPerm: p.ResourceServersView,
+		},
+		{
+			name:   "GET grants requires view",
+			method: http.MethodGet, path: "/resource-servers/rs-1/grants", wantPerm: p.ResourceServersView,
+		},
+		{
+			name:   "POST grants requires manage",
+			method: http.MethodPost, path: "/resource-servers/rs-1/grants", wantPerm: p.ResourceServers,
+		},
+		{
+			name:   "PUT a resource server requires manage",
+			method: http.MethodPut, path: "/resource-servers/rs-1", wantPerm: p.ResourceServers,
+		},
+		{
+			name:     "DELETE a nested action requires manage",
+			method:   http.MethodDelete,
+			path:     "/resource-servers/rs-1/resources/res-1/actions/act-1",
+			wantPerm: p.ResourceServers,
+		},
+		{
+			name:     "DELETE a grant requires manage",
+			method:   http.MethodDelete,
+			path:     "/resource-servers/rs-1/grants/grant-1",
+			wantPerm: p.ResourceServers,
+		},
 	}
 
 	for _, tt := range tests {

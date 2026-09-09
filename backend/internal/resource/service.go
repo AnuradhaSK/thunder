@@ -14,6 +14,7 @@ import (
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 
 	oupkg "github.com/thunder-id/thunderid/internal/ou"
+	"github.com/thunder-id/thunderid/internal/sharing"
 	"github.com/thunder-id/thunderid/internal/system/config"
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	"github.com/thunder-id/thunderid/internal/system/log"
@@ -51,6 +52,14 @@ type ResourceServiceInterface interface {
 	) (*providers.ResourceServer, *tidcommon.ServiceError)
 	GetResourceServer(ctx context.Context, id string) (*providers.ResourceServer, *tidcommon.ServiceError)
 	GetResourceServerList(ctx context.Context, limit, offset int) (*ResourceServerList, *tidcommon.ServiceError)
+	// GetResourceServersForOU lists the resource servers ouID can see: those it owns plus those
+	// shared (directly or via reshare) to it. Enforces requireOwnOUScope, so a caller holding
+	// system:resource-servers(:view) without the root permission may only ask about its own OU.
+	// This is what the unfiltered GetResourceServerList degrades to for such a caller, mirroring
+	// how internal/role's GET /roles reroutes to GetRolesForOU. See
+	GetResourceServersForOU(
+		ctx context.Context, ouID string, limit, offset int,
+	) (*ResourceServerList, *tidcommon.ServiceError)
 	UpdateResourceServer(
 		ctx context.Context, id string, rs providers.ResourceServer,
 	) (*providers.ResourceServer, *tidcommon.ServiceError)
@@ -104,22 +113,91 @@ type ResourceServiceInterface interface {
 	SetDependencyRegistry(r resourcedependency.Registry)
 	GetResourceDependencies(
 		ctx context.Context, resourceType, id string) ([]resourcedependency.ResourceDependency, error)
+	// SetRolePermissionRevoker injects the callback used to strip a role's stored permission when
+	// the resource/action it names is unshared from the role's own organization unit. See
+	SetRolePermissionRevoker(r RolePermissionRevoker)
+
+	// RequireVisibility enforces that the caller can at least see (owns, or has share visibility
+	// of) the given sharing-framework resource. Used by the HTTP handler layer to gate a
+	// single-resource-server read and share-grant operations. Deliberately NOT applied inside
+	// GetResourceServer itself: that method is also reused internally by non-admin callers (the
+	// declarative exporter under a root-gated endpoint, and OAuth resource-indicator resolution via
+	// providers.ResourceServerProvider during token issuance) that must never be OU-restricted.
+	// GetResource/GetAction have no such external reuse, so their own OU-visibility check is
+	// applied inline instead — see's
+	// system:resource-servers scope.
+	RequireVisibility(
+		ctx context.Context, resourceType sharing.ResourceType, resourceID, owningOUID string,
+	) *tidcommon.ServiceError
+
+	// FilterVisiblePermissions filters permissions (already known to be authorized for the caller
+	// by role-assignment sharing) down to those whose resource server, and whichever resource/action
+	// node they name, are also visible to ouID (owned or shared) — the compound RBAC check described
+	// in The deployment's own root permission is
+	// always kept, unconditionally (§4.4).
+	FilterVisiblePermissions(
+		ctx context.Context, resourceServerID string, permissions []string, ouID string,
+	) ([]string, *tidcommon.ServiceError)
+
+	// ShareResourceServer shares resourceServerID (and, cascading, every resource/action currently
+	// under it, minus req.ExcludedNodeIDs) per req. See §5.1 of the design doc.
+	ShareResourceServer(
+		ctx context.Context, id string, req ShareRequest,
+	) ([]GrantInfo, *tidcommon.ServiceError)
+	// ListResourceServerGrants lists the resource server's own grants (not its
+	// descendants' — see each node's own list endpoint for those).
+	ListResourceServerGrants(ctx context.Context, id string) ([]GrantInfo, *tidcommon.ServiceError)
+	// UnshareResourceServerGrant revokes grantID and, cascading, every descendant grant created
+	// alongside it by the same original cascade share (see §5.3 of the design doc).
+	UnshareResourceServerGrant(ctx context.Context, id, grantID string) *tidcommon.ServiceError
+
+	// ShareResource shares a resource (and, cascading, every sub-resource/action beneath it, minus
+	// req.ExcludedNodeIDs) per req.
+	ShareResource(
+		ctx context.Context, resourceServerID, id string, req ShareRequest,
+	) ([]GrantInfo, *tidcommon.ServiceError)
+	ListResourceGrants(
+		ctx context.Context, resourceServerID, id string,
+	) ([]GrantInfo, *tidcommon.ServiceError)
+	UnshareResourceGrant(ctx context.Context, resourceServerID, id, grantID string) *tidcommon.ServiceError
+
+	// ShareAction shares a leaf action per req. Actions have no descendants, so req.ExcludedNodeIDs
+	// is ignored.
+	ShareAction(
+		ctx context.Context, resourceServerID string, resourceID *string, id string, req ShareRequest,
+	) ([]GrantInfo, *tidcommon.ServiceError)
+	ListActionGrants(
+		ctx context.Context, resourceServerID string, resourceID *string, id string,
+	) ([]GrantInfo, *tidcommon.ServiceError)
+	UnshareActionGrant(
+		ctx context.Context, resourceServerID string, resourceID *string, id, grantID string,
+	) *tidcommon.ServiceError
 }
 
 // resourceService is the default implementation of ResourceServiceInterface.
 type resourceService struct {
-	logger             log.Logger
-	resourceStore      resourceStoreInterface
-	ouService          oupkg.OrganizationUnitServiceInterface
-	defaultDelimiter   string
-	transactioner      providers.Transactioner
-	dependencyRegistry resourcedependency.Registry
+	logger                log.Logger
+	resourceStore         resourceStoreInterface
+	ouService             oupkg.OrganizationUnitServiceInterface
+	sharingService        sharing.ServiceInterface
+	defaultDelimiter      string
+	transactioner         providers.Transactioner
+	dependencyRegistry    resourcedependency.Registry
+	rolePermissionRevoker RolePermissionRevoker
 }
 
 // SetDependencyRegistry injects the dependency registry. Called by servicemanager after the
 // provider services are initialized to avoid a cyclic import.
 func (rs *resourceService) SetDependencyRegistry(r resourcedependency.Registry) {
 	rs.dependencyRegistry = r
+}
+
+// SetRolePermissionRevoker injects the role package's permission-revocation callback. Called by
+// servicemanager after internal/role is initialized to avoid a cyclic import (internal/role
+// already imports internal/resource for permission validation/visibility). Optional: if never
+// set, OnUnshare (sharing.go) is a no-op.
+func (rs *resourceService) SetRolePermissionRevoker(r RolePermissionRevoker) {
+	rs.rolePermissionRevoker = r
 }
 
 // ensureNoBlockingDependencies refuses deletion when other resources depend on the target
@@ -210,6 +288,7 @@ func newResourceService(
 	ouService oupkg.OrganizationUnitServiceInterface,
 	resourceStore resourceStoreInterface,
 	transactionerInstance providers.Transactioner,
+	sharingService sharing.ServiceInterface,
 ) (ResourceServiceInterface, error) {
 	// Load default delimiter from config
 	defaultDelimiter := getDefaultDelimiter()
@@ -221,6 +300,7 @@ func newResourceService(
 		logger:           *log.GetLogger().With(log.String(log.LoggerKeyComponentName, loggerComponentName)),
 		resourceStore:    resourceStore,
 		ouService:        ouService,
+		sharingService:   sharingService,
 		defaultDelimiter: defaultDelimiter,
 		transactioner:    transactionerInstance,
 	}, nil
@@ -239,8 +319,18 @@ func (rs *resourceService) CreateResourceServer(
 		return nil, err
 	}
 
-	// Validate organization unit exists
-	_, svcErr := rs.ouService.GetOrganizationUnit(ctx, resourceServer.OUID)
+	// Checked before any OU-service/store access so an unauthorized caller cannot use this
+	// endpoint to probe which OU IDs exist.
+	if svcErr := requireOwnOUScope(ctx, resourceServer.OUID); svcErr != nil {
+		return nil, svcErr
+	}
+
+	// Validate organization unit exists. The caller's authority over resourceServer.OUID was
+	// already established above via requireOwnOUScope, which uses a different permission model
+	// (own-OU/root) than the OU package's own system:ou/system:ou:view check — wrap with a runtime
+	// context so this existence lookup isn't re-authorized against that unrelated, stricter
+	// permission, exactly as internal/role's CreateRole does.
+	_, svcErr := rs.ouService.GetOrganizationUnit(security.WithRuntimeContext(ctx), resourceServer.OUID)
 	if svcErr != nil {
 		if svcErr.Code == oupkg.ErrorOrganizationUnitNotFound.Code {
 			rs.logger.Debug(ctx, "Organization unit not found", log.String("ouID", resourceServer.OUID))
@@ -293,11 +383,15 @@ func (rs *resourceService) CreateResourceServer(
 			return nil, &tidcommon.InternalServerError
 		}
 	} else {
-		_, svcErr := rs.GetResourceServer(ctx, id)
-		if svcErr != nil && svcErr.Code != ErrorResourceServerNotFound.Code {
-			return nil, svcErr
+		// A uniqueness check against every resource server regardless of OU (like the name/
+		// identifier checks above), not a caller-facing read: goes straight to the store rather
+		// than the OU-visibility-checked GetResourceServer.
+		_, err := rs.resourceStore.GetResourceServer(ctx, id)
+		if err != nil && !errors.Is(err, errResourceServerNotFound) {
+			rs.logger.Error(ctx, "Failed to check resource server ID", log.Error(err))
+			return nil, &tidcommon.InternalServerError
 		}
-		if svcErr == nil {
+		if err == nil {
 			rs.logger.Debug(ctx, "Resource server ID already exists", log.String("id", id))
 			return nil, &ErrorResourceServerIDConflict
 		}
@@ -409,6 +503,78 @@ func (rs *resourceService) GetResourceServerList(
 	return response, nil
 }
 
+// GetResourceServersForOU implements ResourceServiceInterface. See its doc comment there.
+func (rs *resourceService) GetResourceServersForOU(
+	ctx context.Context, ouID string, limit, offset int,
+) (*ResourceServerList, *tidcommon.ServiceError) {
+	if err := validatePaginationParams(limit, offset); err != nil {
+		return nil, err
+	}
+	if ouID == "" {
+		return nil, &ErrorMissingID
+	}
+	if svcErr := requireOwnOUScope(ctx, ouID); svcErr != nil {
+		return nil, svcErr
+	}
+
+	// Owned first, then whatever is shared to ouID. Both slices are gathered whole before
+	// pagination, since the two sources cannot be paginated independently without skipping or
+	// duplicating rows across page boundaries. Mirrors internal/role's ListRolesForOU.
+	ownedCount, err := rs.resourceStore.GetResourceServerListCountByOUID(ctx, ouID)
+	if err != nil {
+		if errors.Is(err, errResultLimitExceededInCompositeMode) {
+			return nil, &ErrResultLimitExceededInCompositeMode
+		}
+		rs.logger.Error(ctx, "Failed to count owned resource servers",
+			log.String("ouID", ouID), log.Error(err))
+		return nil, &tidcommon.InternalServerError
+	}
+	owned, err := rs.resourceStore.GetResourceServerListByOUID(ctx, ouID, ownedCount, 0)
+	if err != nil {
+		if errors.Is(err, errResultLimitExceededInCompositeMode) {
+			return nil, &ErrResultLimitExceededInCompositeMode
+		}
+		rs.logger.Error(ctx, "Failed to list owned resource servers",
+			log.String("ouID", ouID), log.Error(err))
+		return nil, &tidcommon.InternalServerError
+	}
+
+	sharedIDs, svcErr := rs.sharingService.ListSharedResourceIDs(ctx, resourceServerSharingType, ouID)
+	if svcErr != nil {
+		return nil, svcErr
+	}
+
+	combined := make([]providers.ResourceServer, 0, len(owned)+len(sharedIDs))
+	combined = append(combined, owned...)
+	for _, id := range sharedIDs {
+		shared, err := rs.resourceStore.GetResourceServer(ctx, id)
+		if err != nil {
+			if errors.Is(err, errResourceServerNotFound) {
+				// A stale grant pointing at a deleted resource server; skip it rather than fail
+				// the whole listing.
+				continue
+			}
+			rs.logger.Error(ctx, "Failed to load shared resource server",
+				log.String("resourceServerId", id), log.Error(err))
+			return nil, &tidcommon.InternalServerError
+		}
+		combined = append(combined, shared)
+	}
+
+	totalCount := len(combined)
+	start := min(offset, totalCount)
+	end := min(start+limit, totalCount)
+	page := combined[start:end]
+
+	return &ResourceServerList{
+		TotalResults:    totalCount,
+		ResourceServers: page,
+		StartIndex:      offset + 1,
+		Count:           len(page),
+		Links:           buildPaginationLinks("/resource-servers", limit, offset, totalCount),
+	}, nil
+}
+
 // UpdateResourceServer updates a resource server.
 func (rs *resourceService) UpdateResourceServer(
 	ctx context.Context,
@@ -438,6 +604,22 @@ func (rs *resourceService) UpdateResourceServer(
 		return nil, ErrorImmutableResourceServer.WithParams(map[string]string{"id": id})
 	}
 
+	// Core config may only ever be modified by the OU that owns the resource server. If this
+	// request also moves the resource server to a different OU, the destination must be owned by
+	// the caller too, unless the caller is unrestricted.
+	if svcErr := rs.sharingService.RequireOwnership(
+		ctx, resourceServerSharingType, existingResServer.OUID,
+	); svcErr != nil {
+		return nil, svcErr
+	}
+	if resourceServer.OUID != existingResServer.OUID {
+		if svcErr := rs.sharingService.RequireOwnership(
+			ctx, resourceServerSharingType, resourceServer.OUID,
+		); svcErr != nil {
+			return nil, svcErr
+		}
+	}
+
 	// Delimiter is always preserved from the existing record
 	resourceServer.Delimiter = existingResServer.Delimiter
 
@@ -460,8 +642,11 @@ func (rs *resourceService) UpdateResourceServer(
 		}
 	}
 
-	// Validate organization unit
-	_, svcErr := rs.ouService.GetOrganizationUnit(ctx, resourceServer.OUID)
+	// Validate organization unit. Wrapped in a runtime context for the same reason as in
+	// CreateResourceServer: ownership of both the existing and the destination OU was already
+	// established above via sharing.RequireOwnership, so this existence lookup must not be
+	// re-authorized against the OU package's own unrelated system:ou/system:ou:view permission.
+	_, svcErr := rs.ouService.GetOrganizationUnit(security.WithRuntimeContext(ctx), resourceServer.OUID)
 	if svcErr != nil {
 		if svcErr.Code == oupkg.ErrorOrganizationUnitNotFound.Code {
 			return nil, &ErrorOrganizationUnitNotFound
@@ -517,13 +702,19 @@ func (rs *resourceService) DeleteResourceServer(ctx context.Context, id string) 
 		return ErrorImmutableResourceServer.WithParams(map[string]string{"id": id})
 	}
 
-	_, err := rs.resourceStore.GetResourceServer(ctx, id)
+	existingRS, err := rs.resourceStore.GetResourceServer(ctx, id)
 	if err != nil {
 		if errors.Is(err, errResourceServerNotFound) {
 			return nil // Idempotent delete
 		}
 		rs.logger.Error(ctx, "Failed to check resource server existence", log.Error(err))
 		return &tidcommon.InternalServerError
+	}
+
+	if svcErr := rs.sharingService.RequireOwnershipForDeletion(
+		ctx, resourceServerSharingType, existingRS.OUID,
+	); svcErr != nil {
+		return svcErr
 	}
 
 	// Refuse deletion when resources or actions still depend on this resource server. Dependencies
@@ -562,6 +753,10 @@ func (rs *resourceService) CreateResource(
 	// Validate resource server exists
 	resourceServer, svcErr := rs.validateAndGetResourceServer(ctx, resourceServerID)
 	if svcErr != nil {
+		return nil, svcErr
+	}
+
+	if svcErr := requireOwnOUScope(ctx, resourceServer.OUID); svcErr != nil {
 		return nil, svcErr
 	}
 
@@ -642,6 +837,19 @@ func (rs *resourceService) CreateResource(
 		return nil, &tidcommon.InternalServerError
 	}
 
+	// Auto-inherit: a new resource created under an already-shared parent (or resource server
+	// root) becomes visible to whichever OUs the parent is already shared to, without a separate
+	// manual share call.
+	parentType, parentID := resourceServerSharingType, resourceServerID
+	if resource.Parent != nil {
+		parentType, parentID = resourceNodeSharingType, *resource.Parent
+	}
+	if svcErr := rs.inheritGrants(
+		ctx, parentType, parentID, resourceNodeSharingType, id, resourceServer.OUID,
+	); svcErr != nil {
+		return nil, svcErr
+	}
+
 	return createdResource, nil
 }
 
@@ -654,7 +862,7 @@ func (rs *resourceService) GetResource(
 	}
 
 	// Validate resource server exists
-	_, svcErr := rs.validateAndGetResourceServer(ctx, resourceServerID)
+	resourceServer, svcErr := rs.validateAndGetResourceServer(ctx, resourceServerID)
 	if svcErr != nil {
 		return nil, svcErr
 	}
@@ -666,6 +874,10 @@ func (rs *resourceService) GetResource(
 		}
 		rs.logger.Error(ctx, "Failed to get resource", log.Error(err))
 		return nil, &tidcommon.InternalServerError
+	}
+
+	if svcErr := rs.RequireVisibility(ctx, resourceNodeSharingType, id, resourceServer.OUID); svcErr != nil {
+		return nil, svcErr
 	}
 
 	return &resource, nil
@@ -780,8 +992,14 @@ func (rs *resourceService) UpdateResource(
 	}
 
 	// Validate resource server exists
-	_, svcErr := rs.validateAndGetResourceServer(ctx, resourceServerID)
+	resourceServer, svcErr := rs.validateAndGetResourceServer(ctx, resourceServerID)
 	if svcErr != nil {
+		return nil, svcErr
+	}
+
+	if svcErr := rs.sharingService.RequireOwnership(
+		ctx, resourceNodeSharingType, resourceServer.OUID,
+	); svcErr != nil {
 		return nil, svcErr
 	}
 
@@ -844,13 +1062,19 @@ func (rs *resourceService) DeleteResource(
 	}
 
 	// Validate resource server exists
-	_, err := rs.resourceStore.GetResourceServer(ctx, resourceServerID)
+	resourceServer, err := rs.resourceStore.GetResourceServer(ctx, resourceServerID)
 	if err != nil {
 		if errors.Is(err, errResourceServerNotFound) {
 			return nil // Idempotent delete
 		}
 		rs.logger.Error(ctx, "Failed to check resource server", log.Error(err))
 		return &tidcommon.InternalServerError
+	}
+
+	if svcErr := rs.sharingService.RequireOwnershipForDeletion(
+		ctx, resourceNodeSharingType, resourceServer.OUID,
+	); svcErr != nil {
+		return svcErr
 	}
 
 	// Check resource exists
@@ -894,6 +1118,10 @@ func (rs *resourceService) CreateAction(
 	// Validate resource server exists
 	resourceServer, svcErr := rs.validateAndGetResourceServer(ctx, resourceServerID)
 	if svcErr != nil {
+		return nil, svcErr
+	}
+
+	if svcErr := requireOwnOUScope(ctx, resourceServer.OUID); svcErr != nil {
 		return nil, svcErr
 	}
 
@@ -975,6 +1203,17 @@ func (rs *resourceService) CreateAction(
 		return nil, &tidcommon.InternalServerError
 	}
 
+	// Auto-inherit: see the identical note in CreateResource.
+	parentType, parentID := resourceServerSharingType, resourceServerID
+	if resourceID != nil {
+		parentType, parentID = resourceNodeSharingType, *resourceID
+	}
+	if svcErr := rs.inheritGrants(
+		ctx, parentType, parentID, actionSharingType, id, resourceServer.OUID,
+	); svcErr != nil {
+		return nil, svcErr
+	}
+
 	return createdAction, nil
 }
 
@@ -994,7 +1233,7 @@ func (rs *resourceService) GetAction(
 	}
 
 	// Validate resource server exists
-	_, svcErr := rs.validateAndGetResourceServer(ctx, resourceServerID)
+	resourceServer, svcErr := rs.validateAndGetResourceServer(ctx, resourceServerID)
 	if svcErr != nil {
 		return nil, svcErr
 	}
@@ -1017,6 +1256,11 @@ func (rs *resourceService) GetAction(
 		rs.logger.Error(ctx, "Failed to get action", log.Error(err))
 		return nil, &tidcommon.InternalServerError
 	}
+
+	if svcErr := rs.RequireVisibility(ctx, actionSharingType, id, resourceServer.OUID); svcErr != nil {
+		return nil, svcErr
+	}
+
 	return &action, nil
 }
 
@@ -1113,8 +1357,14 @@ func (rs *resourceService) UpdateAction(
 		return nil, ErrorImmutableAction.WithParams(map[string]string{"id": id})
 	}
 	// Validate resource server exists
-	_, svcErr := rs.validateAndGetResourceServer(ctx, resourceServerID)
+	resourceServer, svcErr := rs.validateAndGetResourceServer(ctx, resourceServerID)
 	if svcErr != nil {
+		return nil, svcErr
+	}
+
+	if svcErr := rs.sharingService.RequireOwnership(
+		ctx, actionSharingType, resourceServer.OUID,
+	); svcErr != nil {
 		return nil, svcErr
 	}
 
@@ -1201,11 +1451,17 @@ func (rs *resourceService) DeleteAction(
 	}
 
 	// Validate resource server exists
-	_, svcErr := rs.validateAndGetResourceServer(ctx, resourceServerID)
+	resourceServer, svcErr := rs.validateAndGetResourceServer(ctx, resourceServerID)
 	if svcErr != nil {
 		if svcErr.Code == ErrorResourceServerNotFound.Code {
 			return nil // Idempotent delete
 		}
+		return svcErr
+	}
+
+	if svcErr := rs.sharingService.RequireOwnershipForDeletion(
+		ctx, actionSharingType, resourceServer.OUID,
+	); svcErr != nil {
 		return svcErr
 	}
 

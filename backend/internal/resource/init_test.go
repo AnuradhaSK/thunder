@@ -27,11 +27,13 @@ func (f *fakeTransactioner) Transact(ctx context.Context, txFunc func(context.Co
 
 type InitTestSuite struct {
 	suite.Suite
-	mockOUService *oumock.OrganizationUnitServiceInterfaceMock
+	mockOUService  *oumock.OrganizationUnitServiceInterfaceMock
+	sharingService *fakeSharingService
 }
 
 func (suite *InitTestSuite) SetupTest() {
 	suite.mockOUService = oumock.NewOrganizationUnitServiceInterfaceMock(suite.T())
+	suite.sharingService = &fakeSharingService{}
 
 	// Reset config to clear singleton state
 	config.ResetServerRuntime()
@@ -76,7 +78,7 @@ func (suite *InitTestSuite) TestInitialize() {
 	mux := http.NewServeMux()
 
 	// Execute
-	service, exporter, err := Initialize(mux, suite.mockOUService)
+	service, exporter, err := Initialize(mux, suite.mockOUService, suite.sharingService)
 
 	// Assert
 	suite.NoError(err)
@@ -305,7 +307,7 @@ func (suite *InitTestSuite) TestNewResourceService() {
 	// Execute
 	mockTransactioner := &fakeTransactioner{}
 	service, err := newResourceService(
-		suite.mockOUService, mockStore, mockTransactioner,
+		suite.mockOUService, mockStore, mockTransactioner, suite.sharingService,
 	)
 
 	// Assert
@@ -375,7 +377,7 @@ func (suite *InitTestSuite) TestInitialize_IntegrationFlow() {
 	mux := http.NewServeMux()
 
 	// Execute
-	service, _, err := Initialize(mux, suite.mockOUService)
+	service, _, err := Initialize(mux, suite.mockOUService, suite.sharingService)
 
 	// Assert service is created
 	suite.NoError(err)

@@ -3,7 +3,10 @@
 
 package resource
 
-import "github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+import (
+	"github.com/thunder-id/thunderid/internal/sharing"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+)
 
 // HTTP Response Models
 
@@ -149,4 +152,84 @@ type ActionList struct {
 	Count        int
 	Actions      []providers.Action
 	Links        []Link
+}
+
+// ShareRequest represents the request body for creating a grant on a resource server,
+// resource, or action. Exactly one of three target-scope modes must be selected: root-targeting
+// (allRoots or rootOuIds — only valid when ouId is the node's own owning organization unit),
+// children-targeting (allChildren or ouIds — valid for any currently-visible ouId), or
+// deployment-wide (allOus — owner-only). See role.ShareRequest, which this mirrors; there is no
+// editableFields field here, since resource servers/resources/actions declare no templated fields.
+//
+// The yaml tags carry the same shape through the declarative/bootstrap import path (a
+// resource_server document's grants block), so a declared grant and a live API call are
+// indistinguishable to the sharing framework. The json tags remain the REST contract.
+type ShareRequest struct {
+	// OUID is the organization unit performing this share. Optional; defaults to the node's own
+	// owning organization unit (its resource server's OUID) when omitted.
+	OUID string `json:"ouId,omitempty" yaml:"ouId,omitempty"`
+	// AllOUs shares to every organization unit in the deployment at every depth, current and
+	// future. Owner-only, and mutually exclusive with every other target-scope field. Unlike
+	// AllRoots this reaches descendants too. Reserved for a resource server the whole deployment
+	// must always see (the System resource server); ordinary distribution names its recipients.
+	AllOUs    bool     `json:"allOus,omitempty"    yaml:"allOus,omitempty"`
+	AllRoots  bool     `json:"allRoots,omitempty"  yaml:"allRoots,omitempty"`
+	RootOUIDs []string `json:"rootOuIds,omitempty" yaml:"rootOuIds,omitempty"`
+	// ExcludedRootOUIDs carves these Root OUs (and their subtrees) out of an AllRoots share.
+	ExcludedRootOUIDs []string `json:"excludedRootOuIds,omitempty" yaml:"excludedRootOuIds,omitempty"`
+	AllChildren       bool     `json:"allChildren,omitempty"       yaml:"allChildren,omitempty"`
+	// OUIDs, when set, must each be a direct child of ouId.
+	OUIDs []string `json:"ouIds,omitempty" yaml:"ouIds,omitempty"`
+	// ExcludedOUIDs carves these OUs (and their subtrees) out of an AllChildren share, or out of
+	// an AllOUs share.
+	ExcludedOUIDs []string `json:"excludedOuIds,omitempty" yaml:"excludedOuIds,omitempty"`
+	// ExcludedNodeIDs names specific descendant resource/action IDs to leave out of the cascade
+	// share this request otherwise performs (e.g. share a resource but withhold one action).
+	// Ignored on a leaf Action's own share request, which has no descendants to cascade to.
+	ExcludedNodeIDs []string `json:"excludedNodeIds,omitempty" yaml:"excludedNodeIds,omitempty"`
+}
+
+// ToSharePolicy converts req's target-scope fields into the sharing.SharePolicy Share() expects.
+func (req ShareRequest) ToSharePolicy() sharing.SharePolicy {
+	return sharing.SharePolicy{
+		AllOUs:            req.AllOUs,
+		AllRoots:          req.AllRoots,
+		RootOUIDs:         req.RootOUIDs,
+		ExcludedRootOUIDs: req.ExcludedRootOUIDs,
+		AllChildren:       req.AllChildren,
+		OUIDs:             req.OUIDs,
+		ExcludedOUIDs:     req.ExcludedOUIDs,
+	}
+}
+
+// GrantInfo represents a single grant created for, or recorded against, one specific
+// node in the resource server/resource/action tree. NodeType/NodeID identify which node this
+// grant covers — necessary because a single cascade share (§5.1 of the design doc) creates grants
+// across several different nodes (and node types) in one call.
+type GrantInfo struct {
+	ID            string
+	NodeType      string
+	NodeID        string
+	Stage         string
+	TargetScope   string
+	TargetOUID    string
+	OwningOUID    string
+	ExcludedOUIDs []string
+}
+
+// GrantResponse represents a single grant over HTTP.
+type GrantResponse struct {
+	ID            string   `json:"id"`
+	NodeType      string   `json:"nodeType"`
+	NodeID        string   `json:"nodeId"`
+	Stage         string   `json:"stage"`
+	TargetScope   string   `json:"targetScope"`
+	TargetOUID    string   `json:"targetOuId,omitempty"`
+	OwningOUID    string   `json:"owningOuId"`
+	ExcludedOUIDs []string `json:"excludedOuIds,omitempty"`
+}
+
+// GrantListResponse represents the response for listing or creating grants.
+type GrantListResponse struct {
+	Grants []GrantResponse `json:"grants"`
 }

@@ -53,6 +53,11 @@ type RoleServiceInterface interface {
 		ctx context.Context, entityID string, groups []string, resourceServerID string, requestedPermissions []string,
 		ouID string,
 	) ([]string, *tidcommon.ServiceError)
+	// RevokeRolePermissionForOU implements resource.RolePermissionRevoker: it strips permission
+	// (scoped to resourceServerID) from every role owned by ouID that currently has it. Called by
+	// internal/resource's sharing hooks when a resource/action is unshared from ouID, so a role in
+	// that OU stops claiming a permission it can no longer use. See
+	RevokeRolePermissionForOU(ctx context.Context, ouID, resourceServerID, permission string) (int, error)
 	// GetAllPermissions returns every permission the entity and/or groups hold, keyed by resource
 	// server. Unlike GetAuthorizedPermissionsByResourceServer it enumerates rather than checks.
 	GetAllPermissions(
@@ -328,6 +333,14 @@ func (rs *roleService) CreateRole(
 		return nil, err
 	}
 
+	// Write-time defense in depth: role.OUID is already confirmed owned by the caller above
+	// (requireOwnOUScope), so its own visibility of each requested permission's resource
+	// server/resource/action can be checked now, rather than only discovering the gap the next
+	// time a token is issued.
+	if err := rs.checkPermissionVisibility(ctx, role.OUID, role.Permissions); err != nil {
+		return nil, err
+	}
+
 	// Defining a role conveys its permissions to future assignees. Inline assignments need no
 	// separate check: they assign this same role, already covered above.
 	if svcErr := rs.authzService.CanGrantPermissions(
@@ -508,6 +521,12 @@ func (rs *roleService) UpdateRoleWithPermissions(
 		}
 	}
 
+	// Write-time defense in depth: see the identical note in CreateRole. role.OUID is confirmed
+	// owned by the caller by this point (RequireOwnership above).
+	if err := rs.checkPermissionVisibility(ctx, role.OUID, role.Permissions); err != nil {
+		return nil, err
+	}
+
 	// Validate organization unit exists using OU service. As in CreateRole, ownership was already
 	// established above via RequireOwnership, so this lookup is wrapped with a runtime context to
 	// avoid being re-authorized against the OU package's own, unrelated permission model.
@@ -646,6 +665,21 @@ func (rs *roleService) GetAuthorizedPermissionsByResourceServer(
 		return nil, &tidcommon.InternalServerError
 	}
 
+	// Role-assignment sharing (above) is only half of the authorization decision for an OU-scoped
+	// caller: the resource server, and whichever resource/action each permission string names,
+	// must also be visible to ouID (owned or shared) — see
+	// Skipped when ouID is empty: that is
+	// the pre-existing, deliberately unscoped legacy mode (see this method's own ouID doc comment
+	// on RoleServiceInterface), where there is no single acting OU to check visibility against.
+	if ouID != "" && len(authorizedPermissions) > 0 {
+		filtered, svcErr := rs.resourceService.FilterVisiblePermissions(
+			ctx, resourceServerID, authorizedPermissions, ouID)
+		if svcErr != nil {
+			return nil, svcErr
+		}
+		authorizedPermissions = filtered
+	}
+
 	logger.Debug(ctx, "Retrieved authorized permissions",
 		log.MaskedString(log.LoggerKeyUserID, entityID),
 		log.Int("groupCount", len(groups)),
@@ -654,6 +688,27 @@ func (rs *roleService) GetAuthorizedPermissionsByResourceServer(
 		log.Int("authorizedCount", len(authorizedPermissions)))
 
 	return authorizedPermissions, nil
+}
+
+// RevokeRolePermissionForOU implements resource.RolePermissionRevoker. See its doc comment on
+// RoleServiceInterface.
+func (rs *roleService) RevokeRolePermissionForOU(
+	ctx context.Context, ouID, resourceServerID, permission string,
+) (int, error) {
+	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, loggerComponentName))
+	rowsAffected, err := rs.roleStore.DeleteRolePermissionForOU(ctx, ouID, resourceServerID, permission)
+	if err != nil {
+		logger.Error(ctx, "Failed to revoke role permission for OU",
+			log.String("ouID", ouID), log.String("resourceServerID", resourceServerID),
+			log.String("permission", permission), log.Error(err))
+		return 0, err
+	}
+	if rowsAffected > 0 {
+		logger.Debug(ctx, "Revoked role permission after unshare",
+			log.String("ouID", ouID), log.String("resourceServerID", resourceServerID),
+			log.String("permission", permission), log.Int("roleCount", int(rowsAffected)))
+	}
+	return int(rowsAffected), nil
 }
 
 // GetAllPermissions retrieves every permission the entity and/or groups hold through their assigned
@@ -867,6 +922,35 @@ func (rs *roleService) validatePermissions(
 				log.Any("invalidPermissions", invalidPerms),
 				log.Int("count", len(invalidPerms)))
 			return &ErrorInvalidPermissions
+		}
+	}
+
+	return nil
+}
+
+// checkPermissionVisibility rejects permissions if any named permission's resource server, or the
+// specific resource/action it names, is not visible (owned or shared) to ouID — the write-time
+// counterpart of the check GetAuthorizedPermissionsByResourceServer applies at token-issuance
+// time.
+func (rs *roleService) checkPermissionVisibility(
+	ctx context.Context, ouID string, permissions []ResourcePermissions,
+) *tidcommon.ServiceError {
+	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, loggerComponentName))
+
+	for _, resPerm := range permissions {
+		if len(resPerm.Permissions) == 0 {
+			continue
+		}
+
+		visible, svcErr := rs.resourceService.FilterVisiblePermissions(
+			ctx, resPerm.ResourceServerID, resPerm.Permissions, ouID)
+		if svcErr != nil {
+			return svcErr
+		}
+		if len(visible) != len(resPerm.Permissions) {
+			logger.Debug(ctx, "Requested permission(s) not visible to organization unit",
+				log.String("resourceServerId", resPerm.ResourceServerID), log.String("ouID", ouID))
+			return &ErrorPermissionNotVisibleToOU
 		}
 	}
 

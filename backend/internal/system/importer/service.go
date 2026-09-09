@@ -130,6 +130,11 @@ type sharingAdapter interface {
 		ctx context.Context, resourceType sharing.ResourceType, resourceID, owningOUID, actingOUID string,
 		policy sharing.SharePolicy,
 	) ([]sharing.Grant, *tidcommon.ServiceError)
+	// ExportGrants lets a repeatable import (bootstrap upserts, re-imports) skip a declarative
+	// grant it has already created, since Share itself does not dedupe.
+	ExportGrants(
+		ctx context.Context, resourceType sharing.ResourceType, resourceID string,
+	) ([]sharing.ReplayableGrant, *tidcommon.ServiceError)
 }
 
 type groupAdapter interface {
@@ -144,6 +149,12 @@ type groupAdapter interface {
 type resourceServerAdapter interface {
 	CreateResourceServer(ctx context.Context, rs providers.ResourceServer) (*providers.ResourceServer,
 		*tidcommon.ServiceError)
+	// ShareResourceServer applies a declared grant. Used instead of sharingService.Share
+	// directly because a resource server's permissions live on its resources and actions, so the
+	// grant has to cascade to them: the generic Share would grant only the server row, leaving
+	// every permission it defines invisible.
+	ShareResourceServer(ctx context.Context, id string, req resource.ShareRequest) (
+		[]resource.GrantInfo, *tidcommon.ServiceError)
 	GetResourceServer(ctx context.Context, id string) (*providers.ResourceServer, *tidcommon.ServiceError)
 	UpdateResourceServer(ctx context.Context, id string, rs providers.ResourceServer) (*providers.ResourceServer,
 		*tidcommon.ServiceError)

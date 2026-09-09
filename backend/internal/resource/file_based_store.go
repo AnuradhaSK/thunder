@@ -105,6 +105,60 @@ func (f *fileBasedResourceStore) GetResourceServerListCount(ctx context.Context)
 	return f.GenericFileBasedStore.Count()
 }
 
+// GetResourceServerListByOUID returns the declarative resource servers owned by ouID, paginated
+// the same way GetResourceServerList paginates the unfiltered listing.
+func (f *fileBasedResourceStore) GetResourceServerListByOUID(
+	_ context.Context, ouID string, limit, offset int,
+) ([]providers.ResourceServer, error) {
+	owned, err := f.resourceServersByOUID(ouID)
+	if err != nil {
+		return nil, err
+	}
+
+	start := offset
+	if start < 0 {
+		start = 0
+	}
+	if limit < 0 {
+		limit = 0
+	}
+	if start >= len(owned) {
+		return owned[:0], nil
+	}
+	end := start + limit
+	if end > len(owned) {
+		end = len(owned)
+	}
+	return owned[start:end], nil
+}
+
+// GetResourceServerListCountByOUID counts the declarative resource servers owned by ouID.
+func (f *fileBasedResourceStore) GetResourceServerListCountByOUID(
+	_ context.Context, ouID string,
+) (int, error) {
+	owned, err := f.resourceServersByOUID(ouID)
+	if err != nil {
+		return 0, err
+	}
+	return len(owned), nil
+}
+
+// resourceServersByOUID collects every declarative resource server owned by ouID.
+func (f *fileBasedResourceStore) resourceServersByOUID(ouID string) ([]providers.ResourceServer, error) {
+	list, err := f.GenericFileBasedStore.List()
+	if err != nil {
+		return nil, err
+	}
+
+	owned := make([]providers.ResourceServer, 0, len(list))
+	for _, item := range list {
+		if rs, ok := item.Data.(*providers.ResourceServer); ok && rs.OUID == ouID {
+			owned = append(owned, *rs)
+		}
+	}
+	return owned, nil
+}
+
 func (f *fileBasedResourceStore) UpdateResourceServer(
 	ctx context.Context,
 	id string,
@@ -618,4 +672,60 @@ func (f *fileBasedResourceStore) ValidatePermissions(
 		}
 	}
 	return invalidList, nil
+}
+
+func (f *fileBasedResourceStore) ResolvePermissionNode(
+	_ context.Context, resServerID, permission string,
+) (id, kind string, found bool, err error) {
+	list, err := f.GenericFileBasedStore.List()
+	if err != nil {
+		return "", "", false, err
+	}
+
+	for _, item := range list {
+		rs, ok := item.Data.(*providers.ResourceServer)
+		if !ok || rs.ID != resServerID {
+			continue
+		}
+		for _, res := range rs.Resources {
+			if res.Permission == permission {
+				return res.ID, nodeKindResource, true, nil
+			}
+			for _, action := range res.Actions {
+				if action.Permission == permission {
+					return action.ID, nodeKindAction, true, nil
+				}
+			}
+		}
+	}
+	return "", "", false, nil
+}
+
+// ResolveNodePermission resolves nodeID (a Resource row when kind is "resource", an Action row
+// when kind is "action") to its owning resource server ID and its own derived permission string.
+func (f *fileBasedResourceStore) ResolveNodePermission(
+	_ context.Context, kind, nodeID string,
+) (resourceServerID, permission string, found bool, err error) {
+	list, err := f.GenericFileBasedStore.List()
+	if err != nil {
+		return "", "", false, err
+	}
+
+	for _, item := range list {
+		rs, ok := item.Data.(*providers.ResourceServer)
+		if !ok {
+			continue
+		}
+		for _, res := range rs.Resources {
+			if kind == nodeKindResource && res.ID == nodeID {
+				return rs.ID, res.Permission, true, nil
+			}
+			for _, action := range res.Actions {
+				if kind == nodeKindAction && action.ID == nodeID {
+					return rs.ID, action.Permission, true, nil
+				}
+			}
+		}
+	}
+	return "", "", false, nil
 }

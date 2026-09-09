@@ -847,10 +847,14 @@ func (suite *PermissionDependencyTestSuite) TestRoleWithEmptyPermissionListAccep
 }
 
 func (suite *PermissionDependencyTestSuite) TestRoleWithDeclarativePermissionAccepted() {
+	// The role must belong to declarativeOUID (decl-rs-1's own owning OU) to pass
+	// FilterVisiblePermissions' owner short-circuit: decl-rs-1 is never shared to suite.ouID, so a
+	// role there would be correctly rejected (ROL-1025) rather than exercising what this test is
+	// actually about — that a declarative resource server's permissions validate like any other.
 	roleID, err := testutils.CreateRole(testutils.Role{
 		Name:        "Role With Declarative Permission",
 		Description: "Role referencing a permission from a declarative resource server",
-		OUID:        suite.ouID,
+		OUID:        declarativeOUID,
 		Permissions: []testutils.ResourcePermissions{{
 			ResourceServerID: declarativeResourceServerID,
 			Permissions:      []string{declarativeReadPermission},

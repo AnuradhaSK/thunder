@@ -13,8 +13,10 @@ import (
 	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 
+	"github.com/thunder-id/thunderid/internal/sharing"
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	"github.com/thunder-id/thunderid/internal/system/error/apierror"
+	"github.com/thunder-id/thunderid/internal/system/security"
 	sysutils "github.com/thunder-id/thunderid/internal/system/utils"
 )
 
@@ -38,6 +40,20 @@ func (h *resourceHandler) HandleResourceServerListRequest(w http.ResponseWriter,
 	limit, offset, svcErr := parsePaginationParams(r.URL.Query())
 	if svcErr != nil {
 		handleError(ctx, w, svcErr)
+		return
+	}
+
+	// A caller holding system:resource-servers(:view) but not the root permission is confined to
+	// its own organization unit, so it gets that OU's owned-plus-shared listing rather than the
+	// unrestricted deployment-wide one. Mirrors HandleRoleListRequest in internal/role. See
+	if !security.IsRuntimeContext(ctx) && !security.HasSystemPermission(security.GetPermissions(ctx)) {
+		result, svcErr := h.resourceService.GetResourceServersForOU(
+			ctx, security.GetOUID(ctx), limit, offset)
+		if svcErr != nil {
+			handleError(ctx, w, svcErr)
+			return
+		}
+		sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, toResourceServerListResponse(result))
 		return
 	}
 
@@ -91,6 +107,10 @@ func (h *resourceHandler) HandleResourceServerGetRequest(w http.ResponseWriter, 
 	id := r.PathValue("id")
 	result, svcErr := h.resourceService.GetResourceServer(ctx, id)
 	if svcErr != nil {
+		handleError(ctx, w, svcErr)
+		return
+	}
+	if svcErr := h.resourceService.RequireVisibility(ctx, resourceServerSharingType, id, result.OUID); svcErr != nil {
 		handleError(ctx, w, svcErr)
 		return
 	}
@@ -572,10 +592,17 @@ func handleError(ctx context.Context, w http.ResponseWriter, svcErr *tidcommon.S
 	statusCode := http.StatusInternalServerError
 	if svcErr.Type == tidcommon.ClientErrorType {
 		switch svcErr.Code {
-		case ErrorResourceServerNotFound.Code, ErrorResourceNotFound.Code, ErrorActionNotFound.Code:
+		case ErrorResourceServerNotFound.Code, ErrorResourceNotFound.Code, ErrorActionNotFound.Code,
+			sharing.ErrorGrantNotFound.Code:
 			statusCode = http.StatusNotFound
 		case ErrorNameConflict.Code, ErrorHandleConflict.Code, ErrorIdentifierConflict.Code:
 			statusCode = http.StatusConflict
+		// Authorization refusals, not malformed requests. Mirrors internal/role's handleError,
+		// which maps its own ErrorRoleOutsideOwnOUScope and sharing.ErrorCoreConfigOwnerOnly the
+		// same way.
+		case ErrorResourceOutsideOwnOUScope.Code, sharing.ErrorCoreConfigOwnerOnly.Code,
+			tidcommon.ErrorUnauthorized.Code:
+			statusCode = http.StatusForbidden
 		default:
 			statusCode = http.StatusBadRequest
 		}

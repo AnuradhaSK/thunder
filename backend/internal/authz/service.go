@@ -94,6 +94,7 @@ func toEngineAccessEvaluationsRequest(request providers.AccessEvaluationsRequest
 				Properties: evaluation.Permission.Properties,
 			},
 			Context: evaluation.Context,
+			OUID:    evaluation.OUID,
 		})
 	}
 	return engine.AccessEvaluationsRequest{Evaluations: evaluations}

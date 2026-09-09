@@ -210,11 +210,29 @@ func (s *service) Share(
 
 	rootMode := policy.AllRoots || len(policy.RootOUIDs) > 0
 	childrenMode := policy.AllChildren || len(policy.OUIDs) > 0 || len(policy.SubtreeOUIDs) > 0
-	if rootMode == childrenMode {
-		// Exactly one mode must be selected: neither policy populated, or both, are both invalid.
+	allOUsMode := policy.AllOUs
+	selected := 0
+	for _, on := range []bool{rootMode, childrenMode, allOUsMode} {
+		if on {
+			selected++
+		}
+	}
+	if selected != 1 {
+		// Exactly one mode must be selected: neither policy populated, or more than one, are both
+		// invalid. Rejecting rather than silently preferring one keeps an ambiguous request from
+		// creating a grant the caller did not mean to.
 		return nil, &ErrorInvalidRequestFormat
 	}
 
+	if allOUsMode {
+		if actingOUID != owningOUID {
+			// Deployment-wide distribution is the owner's decision alone. A sharee resharing what
+			// it received may only fan out within its own subtree (children-targeting), never to
+			// every OU in the deployment.
+			return nil, &ErrorInvalidTargetOU
+		}
+		return s.shareToAllOUs(ctx, resourceType, resourceID, owningOUID, policy)
+	}
 	if rootMode {
 		if actingOUID != owningOUID {
 			// Only the resource's own owner may cross into a different tree; a sharee has no
@@ -224,6 +242,49 @@ func (s *service) Share(
 		return s.shareToRoots(ctx, resourceType, resourceID, owningOUID, policy)
 	}
 	return s.shareToChildren(ctx, resourceType, resourceID, owningOUID, actingOUID, policy)
+}
+
+// shareToAllOUs implements Share's deployment-wide mode: owningOUID makes resourceID visible to
+// every OU at every depth, current and future, minus policy.ExcludedOUIDs and their subtrees.
+// Unlike shareToRoots there is no cross-tree restriction to apply: the grant spans every tree by
+// construction, so gating it on the owner's own tree would be meaningless. It remains owner-only
+// (enforced by Share above), which is what keeps it from being a privilege-escalation path for a
+// sharee.
+func (s *service) shareToAllOUs(
+	ctx context.Context, resourceType ResourceType, resourceID, owningOUID string, policy SharePolicy,
+) ([]Grant, *tidcommon.ServiceError) {
+	// Owner-only, so there is no acting grant to inherit editability from: the default, absent an
+	// explicit list, is every declared field.
+	editableFields, svcErr := s.resolveGrantEditableFields(
+		resourceType, owningOUID, owningOUID, nil, policy.EditableFields)
+	if svcErr != nil {
+		return nil, svcErr
+	}
+
+	var grants []Grant
+	var capturedSvcErr *tidcommon.ServiceError
+	err := s.transactioner.Transact(ctx, func(txCtx context.Context) error {
+		grant, svcErr := s.createGrant(
+			txCtx, resourceType, resourceID, owningOUID,
+			StageShare, TargetScopeAllOUs, "", "",
+			policy.ExcludedOUIDs, editableFields,
+		)
+		if svcErr != nil {
+			capturedSvcErr = svcErr
+			return fmt.Errorf("%s", svcErr.Error.DefaultValue)
+		}
+		grants = append(grants, *grant)
+		return nil
+	})
+	s.clearVisibilityCaches()
+	if capturedSvcErr != nil {
+		return nil, capturedSvcErr
+	}
+	if err != nil {
+		s.logger.Error(ctx, "Failed to share resource to all organization units", log.Error(err))
+		return nil, &tidcommon.InternalServerError
+	}
+	return grants, nil
 }
 
 // shareToRoots implements Share's root-targeting mode: owningOUID shares resourceID to Root(s).
@@ -605,6 +666,16 @@ func (s *service) resolveGrantOUIDs(ctx context.Context, grant Grant) ([]string,
 			"for every root OU; only future access is revoked",
 			log.String("resourceType", string(grant.ResourceType)), log.String("resourceID", grant.ResourceID))
 		return []string{}, nil
+	case TargetScopeAllOUs:
+		// Same documented, narrow scope reduction as TargetScopeAllRoots above, for the same
+		// reason: enumerating every OU in the deployment to fire per-OU cleanup is unbounded work
+		// on an admin path, and the OU package exposes no whole-deployment enumeration. Revoking
+		// the grant stops it governing any future reshare or assignment; it does not retroactively
+		// purge per-OU state each OU accumulated while it was in force.
+		s.logger.Warn(ctx, "Unsharing an all-organization-units grant does not retroactively purge "+
+			"per-OU state for every organization unit; only future access is revoked",
+			log.String("resourceType", string(grant.ResourceType)), log.String("resourceID", grant.ResourceID))
+		return []string{}, nil
 	default:
 		return []string{}, nil
 	}
@@ -748,6 +819,10 @@ func (s *service) grantActingOUID(ctx context.Context, grant Grant) (string, *ti
 // recreate it via Share() — the inverse of shareToRoots'/shareToChildren's own grant construction.
 func policyFromGrant(grant Grant) SharePolicy {
 	switch grant.TargetScope {
+	case TargetScopeAllOUs:
+		return SharePolicy{
+			AllOUs: true, ExcludedOUIDs: grant.ExcludedOUIDs, EditableFields: grant.EditableFields,
+		}
 	case TargetScopeAllRoots:
 		return SharePolicy{
 			AllRoots: true, ExcludedRootOUIDs: grant.ExcludedOUIDs, EditableFields: grant.EditableFields,
@@ -1162,6 +1237,9 @@ func evaluateChainVisibility(
 					covered[0], coveredBy[0] = true, g
 				}
 			}
+			if !covered[0] {
+				covered[0], coveredBy[0] = coverageByAllOUs(chain[:1], grants)
+			}
 			continue
 		}
 
@@ -1216,10 +1294,44 @@ func evaluateChainVisibility(
 				}
 			}
 		}
+
+		// Deployment-wide fallback, checked only after every specific grant has been tried, so a
+		// narrower grant covering this same OU stays the recorded nearestGrant (which editability
+		// resolution treats as authoritative). Unlike the scopes above this needs no covered
+		// ancestor: an all_ous grant reaches every OU directly, so a descendant is visible through
+		// it even when no hop above it is covered by anything else.
+		if !covered[i] {
+			covered[i], coveredBy[i] = coverageByAllOUs(chain[:i+1], grants)
+		}
 	}
 
 	last := len(chain) - 1
 	return covered[last], owningOUID, coveredBy[last]
+}
+
+// coverageByAllOUs reports whether a deployment-wide (all_ous) share-stage grant covers the OU
+// at the end of ancestryToOU, which is the chain from the tree root down to and including that
+// OU. The whole ancestry is tested, not just the OU itself: excluding an OU from an all_ous
+// grant must cut off everything beneath it too, mirroring how an excluded Root's subtree is cut
+// off by being unreachable through the root position.
+func coverageByAllOUs(ancestryToOU []string, grants []Grant) (bool, *Grant) {
+	for gi := range grants {
+		g := &grants[gi]
+		if g.Stage != StageShare || g.TargetScope != TargetScopeAllOUs {
+			continue
+		}
+		excluded := false
+		for _, hop := range ancestryToOU {
+			if slices.Contains(g.ExcludedOUIDs, hop) {
+				excluded = true
+				break
+			}
+		}
+		if !excluded {
+			return true, g
+		}
+	}
+	return false, nil
 }
 
 // isImmediateChildOf reports whether ouID's direct parent is parentOUID. A Root OU (no parent) is

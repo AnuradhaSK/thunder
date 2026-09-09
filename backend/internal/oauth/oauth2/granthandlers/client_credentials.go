@@ -109,7 +109,7 @@ func (h *clientCredentialsGrantHandler) HandleGrant(ctx context.Context, tokenRe
 			}
 
 			authzResp, svcErr := h.authzService.EvaluateAccessBatch(ctx,
-				buildAccessEvaluationsRequest(oauthApp.ID, groupIDs, scopes, targetRS.ID))
+				buildAccessEvaluationsRequest(oauthApp.ID, groupIDs, scopes, targetRS.ID, oauthApp.OUID))
 			if svcErr != nil {
 				logger.Error(ctx, "Failed to get authorized permissions for app",
 					log.String("appID", oauthApp.ID), log.String("error", svcErr.Error.DefaultValue))
@@ -159,6 +159,7 @@ func buildAccessEvaluationsRequest(
 	groupIDs []string,
 	permissions []string,
 	resourceServerID string,
+	ouID string,
 ) providers.AccessEvaluationsRequest {
 	evaluations := make([]providers.AccessEvaluationRequest, 0, len(permissions))
 	for _, permission := range permissions {
@@ -169,6 +170,7 @@ func buildAccessEvaluationsRequest(
 			},
 			ResourceServer: providers.AccessEvaluationResourceServer{ID: resourceServerID},
 			Permission:     providers.Permission{Name: permission},
+			OUID:           ouID,
 		})
 	}
 	return providers.AccessEvaluationsRequest{Evaluations: evaluations}

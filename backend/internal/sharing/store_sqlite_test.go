@@ -126,6 +126,20 @@ func (suite *SQLiteVisibilityTestSuite) TestRelevantGrants_AllRoots_AlwaysReturn
 	suite.Equal([]string{"g1"}, suite.relevantGrantIDs([]string{"root1", "child1"}, testDeploymentID))
 }
 
+// An all_ous grant must survive the store-side pre-filter for every chain, exactly like all_roots.
+// If the SQL dropped it, deployment-wide visibility would silently never resolve, since
+// evaluateChainVisibility only ever sees the rows this query returns.
+func (suite *SQLiteVisibilityTestSuite) TestRelevantGrants_AllOUs_AlwaysReturned() {
+	suite.insertGrant(Grant{
+		ID: "g1", ResourceType: "role", ResourceID: "role1", OwningOUID: "owner",
+		Stage: StageShare, TargetScope: TargetScopeAllOUs,
+	})
+
+	suite.Equal([]string{"g1"}, suite.relevantGrantIDs([]string{"root1", "child1"}, testDeploymentID))
+	// Including a chain in a completely unrelated tree, which is the whole point of the scope.
+	suite.Equal([]string{"g1"}, suite.relevantGrantIDs([]string{"otherRoot"}, testDeploymentID))
+}
+
 func (suite *SQLiteVisibilityTestSuite) TestRelevantGrants_MatchesTargetOUIDInChain() {
 	suite.insertGrant(Grant{
 		ID: "g1", ResourceType: "role", ResourceID: "role1", OwningOUID: "owner",

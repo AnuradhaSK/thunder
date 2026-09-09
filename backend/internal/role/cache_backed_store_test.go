@@ -15,66 +15,136 @@ import (
 	"github.com/thunder-id/thunderid/tests/mocks/cachemock"
 )
 
+// CacheBackedRoleStoreTestSuite covers cacheBackedRoleStore's point-invalidation behavior: writes
+// that affect potentially many roles at once (DeleteRolePermission, DeleteRolePermissionForOU)
+// must invalidate every affected cache entry, not just pass through to the underlying store —
+// otherwise a subsequent GetRole can return a stale, already-deleted permission.
 type CacheBackedRoleStoreTestSuite struct {
 	suite.Suite
-	mockInner   *roleStoreInterfaceMock
-	roleCache   *cachemock.CacheInterfaceMock[*RoleWithPermissions]
-	cachedStore roleStoreInterface
+	mockStore *roleStoreInterfaceMock
+	mockCache *cachemock.CacheInterfaceMock[*RoleWithPermissions]
+	store     roleStoreInterface
 }
 
 func TestCacheBackedRoleStoreTestSuite(t *testing.T) {
 	suite.Run(t, new(CacheBackedRoleStoreTestSuite))
 }
 
-func (s *CacheBackedRoleStoreTestSuite) SetupTest() {
-	s.mockInner = newRoleStoreInterfaceMock(s.T())
-	s.roleCache = cachemock.NewCacheInterfaceMock[*RoleWithPermissions](s.T())
-	s.cachedStore = newCacheBackedRoleStore(s.mockInner, s.roleCache)
+func (suite *CacheBackedRoleStoreTestSuite) SetupTest() {
+	suite.mockStore = newRoleStoreInterfaceMock(suite.T())
+	suite.mockCache = cachemock.NewCacheInterfaceMock[*RoleWithPermissions](suite.T())
+	suite.store = newCacheBackedRoleStore(suite.mockStore, suite.mockCache)
 }
 
-// TestDeleteRolePermission_ClearsCache proves the cascade that strips a deleted resource's
-// permission from every role also drops the cached roles. A cached RoleWithPermissions carries its
-// permission list, and this deletion spans roles whose ids are not known here, so a point
-// invalidation is impossible and skipping it would keep serving the deleted permission.
-func (s *CacheBackedRoleStoreTestSuite) TestDeleteRolePermission_ClearsCache() {
-	s.mockInner.On("DeleteRolePermission", mock.Anything, "rs1", "res:action").Return(int64(2), nil)
-	s.roleCache.On("Clear", mock.Anything).Return(nil)
+func (suite *CacheBackedRoleStoreTestSuite) TestDeleteRolePermission_ClearsCacheWhenRowsDeleted() {
+	suite.mockStore.On("DeleteRolePermission", mock.Anything, "rs1", "read").Return(int64(3), nil)
+	suite.mockCache.On("Clear", mock.Anything).Return(nil)
 
-	deleted, err := s.cachedStore.DeleteRolePermission(context.Background(), "rs1", "res:action")
+	deleted, err := suite.store.DeleteRolePermission(context.Background(), "rs1", "read")
 
-	s.NoError(err)
-	s.Equal(int64(2), deleted)
-	s.roleCache.AssertCalled(s.T(), "Clear", mock.Anything)
+	suite.NoError(err)
+	suite.Equal(int64(3), deleted)
 }
 
-// TestDeleteRolePermission_NoRowsLeavesCacheAlone proves a deletion that matched nothing does not
-// throw away every cached role for no reason.
-func (s *CacheBackedRoleStoreTestSuite) TestDeleteRolePermission_NoRowsLeavesCacheAlone() {
-	s.mockInner.On("DeleteRolePermission", mock.Anything, "rs1", "res:action").Return(int64(0), nil)
+func (suite *CacheBackedRoleStoreTestSuite) TestDeleteRolePermission_NoClearWhenNothingDeleted() {
+	suite.mockStore.On("DeleteRolePermission", mock.Anything, "rs1", "read").Return(int64(0), nil)
 
-	deleted, err := s.cachedStore.DeleteRolePermission(context.Background(), "rs1", "res:action")
+	deleted, err := suite.store.DeleteRolePermission(context.Background(), "rs1", "read")
 
-	s.NoError(err)
-	s.Equal(int64(0), deleted)
-	s.roleCache.AssertNotCalled(s.T(), "Clear", mock.Anything)
+	suite.NoError(err)
+	suite.Equal(int64(0), deleted)
+	suite.mockCache.AssertNotCalled(suite.T(), "Clear", mock.Anything)
 }
 
-// TestDeleteRolePermission_StoreErrorLeavesCacheAlone proves a failed deletion does not clear the
-// cache: nothing changed underneath it.
-func (s *CacheBackedRoleStoreTestSuite) TestDeleteRolePermission_StoreErrorLeavesCacheAlone() {
-	s.mockInner.On("DeleteRolePermission", mock.Anything, "rs1", "res:action").
+func (suite *CacheBackedRoleStoreTestSuite) TestDeleteRolePermission_StoreErrorSkipsClear() {
+	suite.mockStore.On("DeleteRolePermission", mock.Anything, "rs1", "read").
 		Return(int64(0), errors.New("db error"))
 
-	_, err := s.cachedStore.DeleteRolePermission(context.Background(), "rs1", "res:action")
+	deleted, err := suite.store.DeleteRolePermission(context.Background(), "rs1", "read")
 
-	s.Error(err)
-	s.roleCache.AssertNotCalled(s.T(), "Clear", mock.Anything)
+	suite.Error(err)
+	suite.Equal(int64(0), deleted)
+	suite.mockCache.AssertNotCalled(suite.T(), "Clear", mock.Anything)
+}
+
+func (suite *CacheBackedRoleStoreTestSuite) TestDeleteRolePermissionForOU_InvalidatesAffectedRoles() {
+	suite.mockStore.On("DeleteRolePermissionForOU", mock.Anything, "ou1", "rs1", "books:create").
+		Return(int64(2), nil)
+	suite.mockStore.On("GetRoleListCountByOUID", mock.Anything, "ou1").Return(2, nil)
+	suite.mockStore.On("GetRoleListByOUID", mock.Anything, "ou1", 2, 0).Return([]Role{
+		{ID: "role1"}, {ID: "role2"},
+	}, nil)
+	suite.mockCache.On("Delete", mock.Anything, cache.CacheKey{Key: "role1"}).Return(nil)
+	suite.mockCache.On("Delete", mock.Anything, cache.CacheKey{Key: "role2"}).Return(nil)
+
+	deleted, err := suite.store.DeleteRolePermissionForOU(context.Background(), "ou1", "rs1", "books:create")
+
+	suite.NoError(err)
+	suite.Equal(int64(2), deleted)
+}
+
+func (suite *CacheBackedRoleStoreTestSuite) TestDeleteRolePermissionForOU_NoInvalidationWhenNothingDeleted() {
+	suite.mockStore.On("DeleteRolePermissionForOU", mock.Anything, "ou1", "rs1", "books:create").
+		Return(int64(0), nil)
+
+	deleted, err := suite.store.DeleteRolePermissionForOU(context.Background(), "ou1", "rs1", "books:create")
+
+	suite.NoError(err)
+	suite.Equal(int64(0), deleted)
+	suite.mockStore.AssertNotCalled(suite.T(), "GetRoleListCountByOUID", mock.Anything, mock.Anything)
+}
+
+func (suite *CacheBackedRoleStoreTestSuite) TestDeleteRolePermissionForOU_StoreErrorSkipsInvalidation() {
+	suite.mockStore.On("DeleteRolePermissionForOU", mock.Anything, "ou1", "rs1", "books:create").
+		Return(int64(0), errors.New("db error"))
+
+	deleted, err := suite.store.DeleteRolePermissionForOU(context.Background(), "ou1", "rs1", "books:create")
+
+	suite.Error(err)
+	suite.Equal(int64(0), deleted)
+	suite.mockStore.AssertNotCalled(suite.T(), "GetRoleListCountByOUID", mock.Anything, mock.Anything)
+}
+
+func (suite *CacheBackedRoleStoreTestSuite) TestDeleteRolePermissionForOU_CountErrorIsLoggedNotPropagated() {
+	// Cache invalidation failures must never fail the caller: the permission is already deleted at
+	// this point, and the cache will simply serve stale data until it naturally expires/evicts.
+	suite.mockStore.On("DeleteRolePermissionForOU", mock.Anything, "ou1", "rs1", "books:create").
+		Return(int64(1), nil)
+	suite.mockStore.On("GetRoleListCountByOUID", mock.Anything, "ou1").Return(0, errors.New("db error"))
+
+	deleted, err := suite.store.DeleteRolePermissionForOU(context.Background(), "ou1", "rs1", "books:create")
+
+	suite.NoError(err)
+	suite.Equal(int64(1), deleted)
+}
+
+func (suite *CacheBackedRoleStoreTestSuite) TestGetRole_ServesFromCacheWhenPresent() {
+	cached := &RoleWithPermissions{ID: "role1", Name: "Cached"}
+	suite.mockCache.On("Get", mock.Anything, cache.CacheKey{Key: "role1"}).Return(cached, true)
+
+	role, err := suite.store.GetRole(context.Background(), "role1")
+
+	suite.NoError(err)
+	suite.Equal("Cached", role.Name)
+	suite.mockStore.AssertNotCalled(suite.T(), "GetRole", mock.Anything, mock.Anything)
+}
+
+func (suite *CacheBackedRoleStoreTestSuite) TestGetRole_FallsBackToStoreAndCachesResult() {
+	suite.mockCache.On("Get", mock.Anything, cache.CacheKey{Key: "role1"}).Return((*RoleWithPermissions)(nil), false)
+	suite.mockStore.On("GetRole", mock.Anything, "role1").
+		Return(RoleWithPermissions{ID: "role1", Name: "FromStore"}, nil)
+	suite.mockCache.On("Set", mock.Anything, cache.CacheKey{Key: "role1"}, mock.Anything).Return(nil)
+
+	role, err := suite.store.GetRole(context.Background(), "role1")
+
+	suite.NoError(err)
+	suite.Equal("FromStore", role.Name)
 }
 
 // TestGetRole_ServesFreshRoleAfterPermissionDeletion is the end-to-end shape of the defect the
 // clear above fixes: read a role (populating the cache), strip one of its permissions through the
 // cascade, then read it again and get the post-deletion row rather than the cached one.
-func (s *CacheBackedRoleStoreTestSuite) TestGetRole_ServesFreshRoleAfterPermissionDeletion() {
+func (suite *CacheBackedRoleStoreTestSuite) TestGetRole_ServesFreshRoleAfterPermissionDeletion() {
 	key := cache.CacheKey{Key: "role1"}
 	withPermission := RoleWithPermissions{
 		ID: "role1", OUID: "ou1",
@@ -85,24 +155,24 @@ func (s *CacheBackedRoleStoreTestSuite) TestGetRole_ServesFreshRoleAfterPermissi
 		Permissions: []ResourcePermissions{{ResourceServerID: "rs1", Permissions: []string{}}},
 	}
 
-	s.roleCache.On("Get", mock.Anything, key).Return((*RoleWithPermissions)(nil), false).Once()
-	s.mockInner.On("GetRole", mock.Anything, "role1").Return(withPermission, nil).Once()
-	s.roleCache.On("Set", mock.Anything, key, mock.Anything).Return(nil)
+	suite.mockCache.On("Get", mock.Anything, key).Return((*RoleWithPermissions)(nil), false).Once()
+	suite.mockStore.On("GetRole", mock.Anything, "role1").Return(withPermission, nil).Once()
+	suite.mockCache.On("Set", mock.Anything, key, mock.Anything).Return(nil)
 
-	first, err := s.cachedStore.GetRole(context.Background(), "role1")
-	s.Require().NoError(err)
-	s.Equal([]string{"res:action"}, first.Permissions[0].Permissions)
+	first, err := suite.store.GetRole(context.Background(), "role1")
+	suite.Require().NoError(err)
+	suite.Equal([]string{"res:action"}, first.Permissions[0].Permissions)
 
-	s.mockInner.On("DeleteRolePermission", mock.Anything, "rs1", "res:action").Return(int64(1), nil)
-	s.roleCache.On("Clear", mock.Anything).Return(nil)
-	_, err = s.cachedStore.DeleteRolePermission(context.Background(), "rs1", "res:action")
-	s.Require().NoError(err)
+	suite.mockStore.On("DeleteRolePermission", mock.Anything, "rs1", "res:action").Return(int64(1), nil)
+	suite.mockCache.On("Clear", mock.Anything).Return(nil)
+	_, err = suite.store.DeleteRolePermission(context.Background(), "rs1", "res:action")
+	suite.Require().NoError(err)
 
 	// The clear happened, so the next read misses and goes back to the store.
-	s.roleCache.On("Get", mock.Anything, key).Return((*RoleWithPermissions)(nil), false).Once()
-	s.mockInner.On("GetRole", mock.Anything, "role1").Return(withoutPermission, nil).Once()
+	suite.mockCache.On("Get", mock.Anything, key).Return((*RoleWithPermissions)(nil), false).Once()
+	suite.mockStore.On("GetRole", mock.Anything, "role1").Return(withoutPermission, nil).Once()
 
-	second, err := s.cachedStore.GetRole(context.Background(), "role1")
-	s.Require().NoError(err)
-	s.Empty(second.Permissions[0].Permissions)
+	second, err := suite.store.GetRole(context.Background(), "role1")
+	suite.Require().NoError(err)
+	suite.Empty(second.Permissions[0].Permissions)
 }

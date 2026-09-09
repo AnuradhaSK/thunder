@@ -998,6 +998,84 @@ func (_c *RoleServiceInterfaceMock_ResolveRoleOUHandle_Call) RunAndReturn(run fu
 	return _c
 }
 
+// RevokeRolePermissionForOU provides a mock function for the type RoleServiceInterfaceMock
+func (_mock *RoleServiceInterfaceMock) RevokeRolePermissionForOU(ctx context.Context, ouID string, resourceServerID string, permission string) (int, error) {
+	ret := _mock.Called(ctx, ouID, resourceServerID, permission)
+
+	if len(ret) == 0 {
+		panic("no return value specified for RevokeRolePermissionForOU")
+	}
+
+	var r0 int
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string, string) (int, error)); ok {
+		return returnFunc(ctx, ouID, resourceServerID, permission)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string, string) int); ok {
+		r0 = returnFunc(ctx, ouID, resourceServerID, permission)
+	} else {
+		r0 = ret.Get(0).(int)
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string, string) error); ok {
+		r1 = returnFunc(ctx, ouID, resourceServerID, permission)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// RoleServiceInterfaceMock_RevokeRolePermissionForOU_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'RevokeRolePermissionForOU'
+type RoleServiceInterfaceMock_RevokeRolePermissionForOU_Call struct {
+	*mock.Call
+}
+
+// RevokeRolePermissionForOU is a helper method to define mock.On call
+//   - ctx context.Context
+//   - ouID string
+//   - resourceServerID string
+//   - permission string
+func (_e *RoleServiceInterfaceMock_Expecter) RevokeRolePermissionForOU(ctx interface{}, ouID interface{}, resourceServerID interface{}, permission interface{}) *RoleServiceInterfaceMock_RevokeRolePermissionForOU_Call {
+	return &RoleServiceInterfaceMock_RevokeRolePermissionForOU_Call{Call: _e.mock.On("RevokeRolePermissionForOU", ctx, ouID, resourceServerID, permission)}
+}
+
+func (_c *RoleServiceInterfaceMock_RevokeRolePermissionForOU_Call) Run(run func(ctx context.Context, ouID string, resourceServerID string, permission string)) *RoleServiceInterfaceMock_RevokeRolePermissionForOU_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 string
+		if args[2] != nil {
+			arg2 = args[2].(string)
+		}
+		var arg3 string
+		if args[3] != nil {
+			arg3 = args[3].(string)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+			arg3,
+		)
+	})
+	return _c
+}
+
+func (_c *RoleServiceInterfaceMock_RevokeRolePermissionForOU_Call) Return(n int, err error) *RoleServiceInterfaceMock_RevokeRolePermissionForOU_Call {
+	_c.Call.Return(n, err)
+	return _c
+}
+
+func (_c *RoleServiceInterfaceMock_RevokeRolePermissionForOU_Call) RunAndReturn(run func(ctx context.Context, ouID string, resourceServerID string, permission string) (int, error)) *RoleServiceInterfaceMock_RevokeRolePermissionForOU_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // UpdateRoleWithPermissions provides a mock function for the type RoleServiceInterfaceMock
 func (_mock *RoleServiceInterfaceMock) UpdateRoleWithPermissions(ctx context.Context, id string, role RoleUpdateDetail) (*RoleWithPermissions, *common.ServiceError) {
 	ret := _mock.Called(ctx, id, role)

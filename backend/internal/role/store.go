@@ -63,6 +63,10 @@ type roleStoreInterface interface {
 	GetReferencedPermissions(ctx context.Context) ([]ResourcePermissions, error)
 	// DeleteRolePermission removes the given permission from every role that holds it.
 	DeleteRolePermission(ctx context.Context, resourceServerID, permission string) (int64, error)
+	// DeleteRolePermissionForOU removes the given permission from every role owned by ouID that
+	// holds it, leaving roles owned by other OUs untouched. Used when a resource/action is
+	// unshared from ouID, so a role in that OU stops claiming a permission it can no longer use.
+	DeleteRolePermissionForOU(ctx context.Context, ouID, resourceServerID, permission string) (int64, error)
 	// GetEntityRoleIDs returns the set of role IDs assigned to the entity directly or via
 	// group membership. Unlike GetUserRoles this does not require the role to exist in the
 	// underlying store; it returns raw assignee->role bindings. Used by the composite store
@@ -521,6 +525,23 @@ func (s *roleStore) DeleteRolePermission(
 		ctx, queryDeleteRolePermissionByValue, resourceServerID, permission, s.scope(ctx))
 	if err != nil {
 		return 0, fmt.Errorf("failed to delete role permission: %w", err)
+	}
+	return rowsAffected, nil
+}
+
+// DeleteRolePermissionForOU removes the given permission from every role owned by ouID that holds
+// it.
+func (s *roleStore) DeleteRolePermissionForOU(
+	ctx context.Context, ouID, resourceServerID, permission string) (int64, error) {
+	dbClient, err := s.getConfigDBClient()
+	if err != nil {
+		return 0, err
+	}
+
+	rowsAffected, err := dbClient.ExecuteContext(
+		ctx, queryDeleteRolePermissionByValueForOU, resourceServerID, permission, s.scope(ctx), ouID, s.scope(ctx))
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete role permission for OU: %w", err)
 	}
 	return rowsAffected, nil
 }

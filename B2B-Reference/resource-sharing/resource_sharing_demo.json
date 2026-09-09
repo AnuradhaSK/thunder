@@ -1,0 +1,5238 @@
+{
+	"info": {
+		"_postman_id": "c3a1f6d2-8b4e-4a1a-9c3d-resource-sharing-demo",
+		"name": "ThunderID - Resource Sharing Demo",
+		"description": "Demonstrates the B2B sharing of resource servers, resources, and actions across organization units: three separate sharing-framework resource types (resource_server/resource/action) so a specific action can be withheld while its sibling is shared; cascade share fanning a single call out to every descendant; cascade exclusion via excludedNodeIds; a newly created action auto-inheriting its parent's active share with no separate call; cascade unshare tearing down every descendant grant created alongside the one revoked; write-time defense in depth against naming a permission not currently visible to the caller's own organization unit; the deployment root permission's categorical bypass; and, the actual point of the whole feature, a compound RBAC check proving a role's stored permissions are not enough by themselves, only what is both assigned AND currently shared is honored by real client_credentials token issuance. See B2B-Reference/B2B_RESOURCE_SHARING_DESIGN.md for the full design and api/resource.yaml for the REST API reference these requests exercise. This collection is deliberately scoped to what is new/different about resource-server/resource/action sharing; the underlying OU-targeting mechanics (allRoots/allChildren/rootOuIds/ouIds, exclusion, one-hop delegation chains, cross-tree restrictions) are inherited unchanged from the generic sharing framework and are already fully proven by B2B-Reference/role-sharing. It also pins the Resource Management API's own authorization boundary: the system:resource-servers/system:resource-servers:view scope split and the per-caller organization unit confinement layered on top of it, whose three refusal layers (AUTH-4030, RES-1024, SHR-1007) folder '07' keeps deliberately distinguishable.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"auth": {
+		"type": "bearer",
+		"bearer": [
+			{
+				"key": "token",
+				"value": "{{accessToken}}",
+				"type": "string"
+			}
+		]
+	},
+	"variable": [
+		{
+			"key": "scheme",
+			"value": "https",
+			"type": "string"
+		},
+		{
+			"key": "host",
+			"value": "localhost",
+			"type": "string"
+		},
+		{
+			"key": "port",
+			"value": "8090",
+			"type": "string"
+		},
+		{
+			"key": "baseUrl",
+			"value": "{{scheme}}://{{host}}:{{port}}",
+			"type": "string"
+		},
+		{
+			"key": "clientId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "clientSecret",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "accessToken",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "aOuId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "bOuId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "resourceServerId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "resourceServerIdentifier",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "bookingsResourceId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "viewActionId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "permissionView",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "createActionId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "permissionCreate",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "refundsResourceId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "approveActionId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "permissionApprove",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "resourceServerGrantId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "bookingsResourceGrantId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "viewActionGrantId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "createActionGrantId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "reshareCreateActionGrantId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "bookingAppId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "bookingAppClientId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "bookingAppClientSecret",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "bookingOpsRoleId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "cancelActionId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "permissionCancel",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "cancelActionGrantId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "systemResourceServerId",
+			"value": "01900000-0000-7000-8000-000000000020",
+			"type": "string"
+		},
+		{
+			"key": "rootPermission",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "rootAccessAppId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "rootAccessAppClientId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "rootAccessAppClientSecret",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "rootAccessRoleId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "defaultOuId",
+			"value": "01900000-0000-7000-8000-000000000001",
+			"type": "string"
+		},
+		{
+			"key": "systemResourceId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "systemResourceServersResourceId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "systemResourceServersViewResourceId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "rsManageAppId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "rsManageClientId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "rsManageClientSecret",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "rsViewAppId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "rsViewClientId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "rsViewClientSecret",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "resourceServersManagerRoleId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "resourceServersViewerRoleId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "bResourceServersToken",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "bViewResourceServersToken",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "noResourceServersScopeToken",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "authzResourceServerGrantId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "authzDemoResourceServerId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "authzDemoResourceId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "authzDemoActionId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "authzDemoGrantId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "confinementControlRsId",
+			"value": ""
+		}
+	],
+	"item": [
+		{
+			"name": "00 - Setup",
+			"item": [
+				{
+					"name": "Get Access Token",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/oauth2/token",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"oauth2",
+								"token"
+							]
+						},
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "grant_type",
+									"value": "client_credentials",
+									"type": "text"
+								},
+								{
+									"key": "scope",
+									"value": "system",
+									"type": "text"
+								},
+								{
+									"key": "resource",
+									"value": "https://localhost:8090/mcp",
+									"type": "text"
+								}
+							]
+						},
+						"description": "Obtains a system-scoped management token via client_credentials, authenticating with HTTP Basic auth. Fill in clientId/clientSecret in the environment first. This admin token is used as the bearer credential for every request below except the client_credentials token requests, which authenticate as the application under test.",
+						"auth": {
+							"type": "basic",
+							"basic": [
+								{
+									"key": "username",
+									"value": "{{clientId}}",
+									"type": "string"
+								},
+								{
+									"key": "password",
+									"value": "{{clientSecret}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"pm.collectionVariables.set('accessToken', pm.response.json().access_token);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Create OU A (Owns the Resource Server)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/organization-units",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"organization-units"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"handle\": \"resource-sharing-a\",\n  \"name\": \"A\",\n  \"description\": \"Owns the resource server, resource, and actions being shared in this demo.\",\n  \"parent\": null\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 201', function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"pm.collectionVariables.set('aOuId', pm.response.json().id);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Create OU B (Sharee, a Root)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/organization-units",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"organization-units"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"handle\": \"resource-sharing-b\",\n  \"name\": \"B\",\n  \"description\": \"A Root organization unit with no relationship to A's resource server until shared.\",\n  \"parent\": null\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 201', function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"pm.collectionVariables.set('bOuId', pm.response.json().id);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Create Resource Server (Booking System)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Booking System\",\n  \"description\": \"Owned by A. Its Bookings resource and Refunds resource are shared, or withheld, to B at increasing granularity through this collection.\",\n  \"identifier\": \"https://api.example.com/resource-sharing-booking\",\n  \"ouId\": \"{{aOuId}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 201', function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"pm.collectionVariables.set('resourceServerId', pm.response.json().id);",
+									"pm.collectionVariables.set('resourceServerIdentifier', pm.response.json().identifier);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Create Resource: Bookings (Top-Level)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}/resources",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}",
+								"resources"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Bookings\",\n  \"handle\": \"bookings\",\n  \"parent\": null\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 201', function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"pm.collectionVariables.set('bookingsResourceId', pm.response.json().id);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Create Action: view (Under Bookings)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}/resources/{{bookingsResourceId}}/actions",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}",
+								"resources",
+								"{{bookingsResourceId}}",
+								"actions"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"View Booking\",\n  \"handle\": \"view\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 201', function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"pm.collectionVariables.set('viewActionId', pm.response.json().id);",
+									"pm.collectionVariables.set('permissionView', pm.response.json().permission);",
+									"pm.test('Derived permission is bookings:view', function () {",
+									"    pm.expect(pm.response.json().permission).to.eql('bookings:view');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Create Action: create (Under Bookings)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}/resources/{{bookingsResourceId}}/actions",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}",
+								"resources",
+								"{{bookingsResourceId}}",
+								"actions"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Create Booking\",\n  \"handle\": \"create\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 201', function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"pm.collectionVariables.set('createActionId', pm.response.json().id);",
+									"pm.collectionVariables.set('permissionCreate', pm.response.json().permission);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Create Resource: Refunds (Top-Level, Never Shared)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}/resources",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}",
+								"resources"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Refunds\",\n  \"handle\": \"refunds\",\n  \"description\": \"Deliberately excluded from every share in this collection, so it stands in for 'a permission this organization unit can never see' in the write-time defense-in-depth negative tests.\",\n  \"parent\": null\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 201', function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"pm.collectionVariables.set('refundsResourceId', pm.response.json().id);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Create Action: approve (Under Refunds, Never Shared)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}/resources/{{refundsResourceId}}/actions",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}",
+								"resources",
+								"{{refundsResourceId}}",
+								"actions"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Approve Refund\",\n  \"handle\": \"approve\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 201', function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"pm.collectionVariables.set('approveActionId', pm.response.json().id);",
+									"pm.collectionVariables.set('permissionApprove', pm.response.json().permission);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				}
+			],
+			"description": "Admin access token, the two organization units (A owns the resource server; B is the sharee), the Booking System resource server, and its Bookings/Refunds resource trees."
+		},
+		{
+			"name": "01 - Cascade Share of the Resource Server, With Exclusion",
+			"item": [
+				{
+					"name": "Share Resource Server to B (Cascade, Excluding Refunds)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}/grants",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}",
+								"grants"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"rootOuIds\": [\n    \"{{bOuId}}\"\n  ],\n  \"excludedNodeIds\": [\n    \"{{refundsResourceId}}\",\n    \"{{approveActionId}}\"\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "A single call fans out from the resource server to every resource/action currently beneath it (Bookings, view, create, Refunds, approve). excludedNodeIds withholds Refunds and its own approve action from the cascade: note both ids must be listed explicitly, since excluding a non-leaf resource does not implicitly exclude its own descendants (backend/internal/resource/sharing.go's descendantsOf enumeration and exclusion check are independent of tree nesting). See B2B-Reference/B2B_RESOURCE_SHARING_DESIGN.md \u00a75.1."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 201', function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"const grants = pm.response.json().grants;",
+									"pm.test('Cascade creates exactly 4 grants (server, Bookings, view, create)', function () {",
+									"    pm.expect(grants.length).to.eql(4);",
+									"});",
+									"pm.test('No grant was created for the excluded Refunds resource or approve action', function () {",
+									"    pm.expect(grants.find(g => g.nodeId === pm.collectionVariables.get('refundsResourceId'))).to.be.undefined;",
+									"    pm.expect(grants.find(g => g.nodeId === pm.collectionVariables.get('approveActionId'))).to.be.undefined;",
+									"});",
+									"const serverGrant = grants.find(g => g.nodeType === 'resource_server');",
+									"const bookingsGrant = grants.find(g => g.nodeType === 'resource' && g.nodeId === pm.collectionVariables.get('bookingsResourceId'));",
+									"const viewGrant = grants.find(g => g.nodeType === 'action' && g.nodeId === pm.collectionVariables.get('viewActionId'));",
+									"const createGrant = grants.find(g => g.nodeType === 'action' && g.nodeId === pm.collectionVariables.get('createActionId'));",
+									"pm.test('Every cascade-created grant targets B as a root share', function () {",
+									"    [serverGrant, bookingsGrant, viewGrant, createGrant].forEach(g => {",
+									"        pm.expect(g.stage).to.eql('share');",
+									"        pm.expect(g.targetScope).to.eql('root');",
+									"        pm.expect(g.targetOuId).to.eql(pm.collectionVariables.get('bOuId'));",
+									"    });",
+									"});",
+									"pm.collectionVariables.set('resourceServerGrantId', serverGrant.id);",
+									"pm.collectionVariables.set('bookingsResourceGrantId', bookingsGrant.id);",
+									"pm.collectionVariables.set('viewActionGrantId', viewGrant.id);",
+									"pm.collectionVariables.set('createActionGrantId', createGrant.id);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "List Grants for the Resource Server (Scoped to Its Own Node)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}/grants",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}",
+								"grants"
+							]
+						},
+						"description": "GET on a grants sub-resource lists only that node's own grants, not the cascade's descendant grants \u2014 those are visible via each descendant's own GET, exercised below."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"pm.test('Exactly the resource server\\'s own grant is listed', function () {",
+									"    const grants = pm.response.json().grants;",
+									"    pm.expect(grants.length).to.eql(1);",
+									"    pm.expect(grants[0].id).to.eql(pm.collectionVariables.get('resourceServerGrantId'));",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "List Grants for Bookings Resource",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}/resources/{{bookingsResourceId}}/grants",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}",
+								"resources",
+								"{{bookingsResourceId}}",
+								"grants"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"pm.test('Exactly the Bookings resource\\'s own cascade-created grant is listed', function () {",
+									"    const grants = pm.response.json().grants;",
+									"    pm.expect(grants.length).to.eql(1);",
+									"    pm.expect(grants[0].id).to.eql(pm.collectionVariables.get('bookingsResourceGrantId'));",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "List Grants for Refunds Resource (Withheld)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}/resources/{{refundsResourceId}}/grants",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}",
+								"resources",
+								"{{refundsResourceId}}",
+								"grants"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"pm.test('No grant exists for the excluded Refunds resource', function () {",
+									"    pm.expect(pm.response.json().grants.length).to.eql(0);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "List Grants for 'approve' Action (Withheld)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}/resources/{{refundsResourceId}}/actions/{{approveActionId}}/grants",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}",
+								"resources",
+								"{{refundsResourceId}}",
+								"actions",
+								"{{approveActionId}}",
+								"grants"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"pm.test('No grant exists for the excluded approve action', function () {",
+									"    pm.expect(pm.response.json().grants.length).to.eql(0);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				}
+			],
+			"description": "A single POST .../grants call fans out to every resource/action beneath the resource server, except the descendants named in excludedNodeIds."
+		},
+		{
+			"name": "02 - Compound RBAC: Withheld Permission Blocks Real Access",
+			"item": [
+				{
+					"name": "Create Application 'Booking App' in B",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/applications",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"applications"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Booking App\",\n  \"description\": \"An m2m application belonging to B, assigned to the booking-ops role below.\",\n  \"ouId\": \"{{bOuId}}\",\n  \"type\": \"m2m\",\n  \"inboundAuthConfig\": [\n    {\n      \"type\": \"oauth2\",\n      \"config\": {\n        \"grantTypes\": [\n          \"client_credentials\"\n        ],\n        \"tokenEndpointAuthMethod\": \"client_secret_basic\",\n        \"scopes\": [\n          \"bookings:view\",\n          \"bookings:create\",\n          \"bookings:cancel\"\n        ]\n      }\n    }\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Declares bookings:cancel as a requestable scope even though the cancel action does not exist yet (created in '04 - Auto-Inherit on Creation') \u2014 the permission string is deterministic from the resource server's delimiter and the resource/action handles chosen in '00', so it can be named here ahead of time."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 201', function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"pm.collectionVariables.set('bookingAppId', pm.response.json().id);",
+									"pm.collectionVariables.set('bookingAppClientId', pm.response.json().clientId);",
+									"pm.collectionVariables.set('bookingAppClientSecret', pm.response.json().inboundAuthConfig[0].config.clientSecret);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Create Role 'booking-ops' Owned by B (view + create, Both Currently Visible)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/roles",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"roles"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"booking-ops\",\n  \"description\": \"Owned directly by B. Both requested permissions pass the write-time visibility check because the cascade share in '01' made both view and create visible to B at the time this role is created.\",\n  \"ouId\": \"{{bOuId}}\",\n  \"permissions\": [\n    {\n      \"resourceServerId\": \"{{resourceServerId}}\",\n      \"permissions\": [\n        \"{{permissionView}}\",\n        \"{{permissionCreate}}\"\n      ]\n    }\n  ],\n  \"assignments\": [\n    {\n      \"type\": \"app\",\n      \"id\": \"{{bookingAppId}}\"\n    }\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 201', function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"pm.collectionVariables.set('bookingOpsRoleId', pm.response.json().id);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Get Client Credentials Token for Booking App (Both Permissions Visible)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/oauth2/token",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"oauth2",
+								"token"
+							]
+						},
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "grant_type",
+									"value": "client_credentials",
+									"type": "text"
+								},
+								{
+									"key": "scope",
+									"value": "{{permissionView}} {{permissionCreate}}",
+									"type": "text"
+								},
+								{
+									"key": "resource",
+									"value": "{{resourceServerIdentifier}}",
+									"type": "text"
+								}
+							]
+						},
+						"description": "Confirms the shared role's assignment is honored by real client_credentials token issuance (RBAC), not just by the sharing API's own bookkeeping.",
+						"auth": {
+							"type": "basic",
+							"basic": [
+								{
+									"key": "username",
+									"value": "{{bookingAppClientId}}",
+									"type": "string"
+								},
+								{
+									"key": "password",
+									"value": "{{bookingAppClientSecret}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"const body = pm.response.json();",
+									"const scopes = (body.scope || '').split(' ');",
+									"const payloadB64 = body.access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
+									"const payload = JSON.parse(atob(payloadB64));",
+									"const jwtScopes = (payload.scope || '').split(' ');",
+									"pm.test('Granted scope includes permissionView', function () {",
+									"    pm.expect(scopes).to.include(pm.collectionVariables.get('permissionView'));",
+									"    pm.expect(jwtScopes).to.include(pm.collectionVariables.get('permissionView'));",
+									"});",
+									"pm.test('Granted scope includes permissionCreate', function () {",
+									"    pm.expect(scopes).to.include(pm.collectionVariables.get('permissionCreate'));",
+									"    pm.expect(jwtScopes).to.include(pm.collectionVariables.get('permissionCreate'));",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Unshare 'create' Action's Grant (Withhold It After the Fact)",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}/resources/{{bookingsResourceId}}/actions/{{createActionId}}/grants/{{createActionGrantId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}",
+								"resources",
+								"{{bookingsResourceId}}",
+								"actions",
+								"{{createActionId}}",
+								"grants",
+								"{{createActionGrantId}}"
+							]
+						},
+						"description": "Revokes only the create action's own grant \u2014 the resource server and Bookings resource stay shared to B, and view's own grant is untouched. booking-ops still names bookings:create in its stored permissions list; nothing about the role itself changes."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 204', function () {",
+									"    pm.response.to.have.status(204);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Inspect booking-ops Role (create Was Stripped by the Unshare)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/roles/{{bookingOpsRoleId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"roles",
+								"{{bookingOpsRoleId}}"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"// Unsharing an action does not merely hide its permission at token time: it is",
+									"// physically removed from every role owned by the organization unit that lost",
+									"// access, so the role's own stored definition stops claiming access it can no",
+									"// longer use. See B2B-Reference/B2B_RESOURCE_SHARING_DESIGN.md section 5.4.",
+									"const groups = pm.response.json().permissions || [];",
+									"const perms = groups.reduce(function (acc, g) { return acc.concat(g.permissions || []); }, []);",
+									"pm.test('permissionView survives on the role', function () {",
+									"    pm.expect(perms).to.include(pm.collectionVariables.get('permissionView'));",
+									"});",
+									"pm.test('permissionCreate was stripped from the role', function () {",
+									"    pm.expect(perms).to.not.include(pm.collectionVariables.get('permissionCreate'));",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Get a New Token for Booking App (create Now Withheld)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/oauth2/token",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"oauth2",
+								"token"
+							]
+						},
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "grant_type",
+									"value": "client_credentials",
+									"type": "text"
+								},
+								{
+									"key": "scope",
+									"value": "{{permissionView}} {{permissionCreate}}",
+									"type": "text"
+								},
+								{
+									"key": "resource",
+									"value": "{{resourceServerIdentifier}}",
+									"type": "text"
+								}
+							]
+						},
+						"description": "The core proof of this whole feature: booking-ops still 'has' bookings:create on ROLE_ASSIGNMENT, but FilterVisiblePermissions filters it out of the issued token fresh, on every request, because it is no longer shared to B. See B2B-Reference/B2B_RESOURCE_SHARING_DESIGN.md \u00a74.2/\u00a74.3.",
+						"auth": {
+							"type": "basic",
+							"basic": [
+								{
+									"key": "username",
+									"value": "{{bookingAppClientId}}",
+									"type": "string"
+								},
+								{
+									"key": "password",
+									"value": "{{bookingAppClientSecret}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"const body = pm.response.json();",
+									"const scopes = (body.scope || '').split(' ');",
+									"const payloadB64 = body.access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
+									"const payload = JSON.parse(atob(payloadB64));",
+									"const jwtScopes = (payload.scope || '').split(' ');",
+									"pm.test('Granted scope includes permissionView', function () {",
+									"    pm.expect(scopes).to.include(pm.collectionVariables.get('permissionView'));",
+									"    pm.expect(jwtScopes).to.include(pm.collectionVariables.get('permissionView'));",
+									"});",
+									"pm.test('Granted scope excludes permissionCreate', function () {",
+									"    pm.expect(scopes).to.not.include(pm.collectionVariables.get('permissionCreate'));",
+									"    pm.expect(jwtScopes).to.not.include(pm.collectionVariables.get('permissionCreate'));",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Reshare 'create' Action to B (Prove It Starts Working Again)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}/resources/{{bookingsResourceId}}/actions/{{createActionId}}/grants",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}",
+								"resources",
+								"{{bookingsResourceId}}",
+								"actions",
+								"{{createActionId}}",
+								"grants"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"rootOuIds\": [\n    \"{{bOuId}}\"\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 201', function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"pm.collectionVariables.set('reshareCreateActionGrantId', pm.response.json().grants[0].id);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Re-Add create to booking-ops Role (Resharing Alone Does Not Restore It)",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/roles/{{bookingOpsRoleId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"roles",
+								"{{bookingOpsRoleId}}"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"booking-ops\",\n  \"description\": \"Re-adding create after the reshare. The unshare removed it from this role outright, so restoring visibility does not bring it back: only this explicit update does, and it succeeds now because the action is visible to B again. The identical request would have been rejected with ROL-1025 while the action was still unshared.\",\n  \"ouId\": \"{{bOuId}}\",\n  \"permissions\": [\n    {\n      \"resourceServerId\": \"{{resourceServerId}}\",\n      \"permissions\": [\n        \"{{permissionView}}\",\n        \"{{permissionCreate}}\"\n      ]\n    }\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"const groups = pm.response.json().permissions || [];",
+									"const perms = groups.reduce(function (acc, g) { return acc.concat(g.permissions || []); }, []);",
+									"pm.test('Both permissions are on the role again', function () {",
+									"    pm.expect(perms).to.include(pm.collectionVariables.get('permissionView'));",
+									"    pm.expect(perms).to.include(pm.collectionVariables.get('permissionCreate'));",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Get a New Token for Booking App (create Visible Again)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/oauth2/token",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"oauth2",
+								"token"
+							]
+						},
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "grant_type",
+									"value": "client_credentials",
+									"type": "text"
+								},
+								{
+									"key": "scope",
+									"value": "{{permissionView}} {{permissionCreate}}",
+									"type": "text"
+								},
+								{
+									"key": "resource",
+									"value": "{{resourceServerIdentifier}}",
+									"type": "text"
+								}
+							]
+						},
+						"auth": {
+							"type": "basic",
+							"basic": [
+								{
+									"key": "username",
+									"value": "{{bookingAppClientId}}",
+									"type": "string"
+								},
+								{
+									"key": "password",
+									"value": "{{bookingAppClientSecret}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"const body = pm.response.json();",
+									"const scopes = (body.scope || '').split(' ');",
+									"const payloadB64 = body.access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
+									"const payload = JSON.parse(atob(payloadB64));",
+									"const jwtScopes = (payload.scope || '').split(' ');",
+									"pm.test('Granted scope includes permissionView', function () {",
+									"    pm.expect(scopes).to.include(pm.collectionVariables.get('permissionView'));",
+									"    pm.expect(jwtScopes).to.include(pm.collectionVariables.get('permissionView'));",
+									"});",
+									"pm.test('Granted scope includes permissionCreate', function () {",
+									"    pm.expect(scopes).to.include(pm.collectionVariables.get('permissionCreate'));",
+									"    pm.expect(jwtScopes).to.include(pm.collectionVariables.get('permissionCreate'));",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				}
+			],
+			"description": "The actual point of the whole feature: a role's stored permissions are not enough by themselves. A permission is only usable at token-issuance time while its resource/action is currently shared, and that is re-evaluated fresh on every request."
+		},
+		{
+			"name": "03 - Write-Time Defense in Depth (ROL-1025)",
+			"item": [
+				{
+					"name": "Attempt to Add a Withheld Permission to booking-ops (Rejected)",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/roles/{{bookingOpsRoleId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"roles",
+								"{{bookingOpsRoleId}}"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"booking-ops\",\n  \"ouId\": \"{{bOuId}}\",\n  \"permissions\": [\n    {\n      \"resourceServerId\": \"{{resourceServerId}}\",\n      \"permissions\": [\n        \"{{permissionView}}\",\n        \"{{permissionCreate}}\",\n        \"{{permissionApprove}}\"\n      ]\n    }\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "refunds:approve has never been shared to B (see '00'/'01'). Naming it on a role write is rejected outright, the write-time counterpart of the same visibility check that gates token issuance, so a misconfiguration is caught at grant time rather than only discovered the next time a token is issued."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 400', function () {",
+									"    pm.response.to.have.status(400);",
+									"});",
+									"pm.test('Error code is ROL-1025', function () {",
+									"    pm.expect(pm.response.json().code).to.eql('ROL-1025');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Attempt to Create a New Role With a Withheld Permission (Rejected)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/roles",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"roles"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"refund-ops-attempt\",\n  \"ouId\": \"{{bOuId}}\",\n  \"permissions\": [\n    {\n      \"resourceServerId\": \"{{resourceServerId}}\",\n      \"permissions\": [\n        \"{{permissionApprove}}\"\n      ]\n    }\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 400', function () {",
+									"    pm.response.to.have.status(400);",
+									"});",
+									"pm.test('Error code is ROL-1025', function () {",
+									"    pm.expect(pm.response.json().code).to.eql('ROL-1025');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Update booking-ops Without the Withheld Permission (Succeeds)",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/roles/{{bookingOpsRoleId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"roles",
+								"{{bookingOpsRoleId}}"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"booking-ops\",\n  \"ouId\": \"{{bOuId}}\",\n  \"permissions\": [\n    {\n      \"resourceServerId\": \"{{resourceServerId}}\",\n      \"permissions\": [\n        \"{{permissionView}}\",\n        \"{{permissionCreate}}\"\n      ]\n    }\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "A control: the identical write succeeds once it names only currently-visible permissions."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				}
+			],
+			"description": "A role write naming a permission not currently visible to its own organization unit is rejected outright, catching a misconfiguration at grant time rather than only at the next token issuance."
+		},
+		{
+			"name": "04 - Auto-Inherit on Creation",
+			"item": [
+				{
+					"name": "Create a New Action 'cancel' Under an Already-Shared Resource",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}/resources/{{bookingsResourceId}}/actions",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}",
+								"resources",
+								"{{bookingsResourceId}}",
+								"actions"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Cancel Booking\",\n  \"handle\": \"cancel\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Bookings already has an active cascade share to B (from '01'). Creating a new action beneath it should make that action visible to B immediately, with no separate share call."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 201', function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"pm.collectionVariables.set('cancelActionId', pm.response.json().id);",
+									"pm.collectionVariables.set('permissionCancel', pm.response.json().permission);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "List Grants for 'cancel' Action (Auto-Inherited)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}/resources/{{bookingsResourceId}}/actions/{{cancelActionId}}/grants",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}",
+								"resources",
+								"{{bookingsResourceId}}",
+								"actions",
+								"{{cancelActionId}}",
+								"grants"
+							]
+						},
+						"description": "No POST .../grants call was made for 'cancel'. This grant was replayed automatically from Bookings' own active grant when the action was created. See B2B-Reference/B2B_RESOURCE_SHARING_DESIGN.md \u00a75.2."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"const grants = pm.response.json().grants;",
+									"pm.test('cancel already has a grant targeting B, with no separate share call', function () {",
+									"    pm.expect(grants.length).to.eql(1);",
+									"    pm.expect(grants[0].targetOuId).to.eql(pm.collectionVariables.get('bOuId'));",
+									"    pm.expect(grants[0].targetScope).to.eql('root');",
+									"});",
+									"pm.collectionVariables.set('cancelActionGrantId', grants[0].id);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Add cancel to booking-ops and Confirm It Is Genuinely Usable",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/roles/{{bookingOpsRoleId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"roles",
+								"{{bookingOpsRoleId}}"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"booking-ops\",\n  \"ouId\": \"{{bOuId}}\",\n  \"permissions\": [\n    {\n      \"resourceServerId\": \"{{resourceServerId}}\",\n      \"permissions\": [\n        \"{{permissionView}}\",\n        \"{{permissionCreate}}\",\n        \"{{permissionCancel}}\"\n      ]\n    }\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "The write-time visibility check passes for bookings:cancel immediately, with no share call of its own \u2014 stronger evidence than the grant listing above, since it proves real RBAC visibility, not just a share-grant bookkeeping row."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Get a New Token for Booking App (cancel Included)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/oauth2/token",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"oauth2",
+								"token"
+							]
+						},
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "grant_type",
+									"value": "client_credentials",
+									"type": "text"
+								},
+								{
+									"key": "scope",
+									"value": "{{permissionView}} {{permissionCreate}} {{permissionCancel}}",
+									"type": "text"
+								},
+								{
+									"key": "resource",
+									"value": "{{resourceServerIdentifier}}",
+									"type": "text"
+								}
+							]
+						},
+						"auth": {
+							"type": "basic",
+							"basic": [
+								{
+									"key": "username",
+									"value": "{{bookingAppClientId}}",
+									"type": "string"
+								},
+								{
+									"key": "password",
+									"value": "{{bookingAppClientSecret}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"const body = pm.response.json();",
+									"const scopes = (body.scope || '').split(' ');",
+									"const payloadB64 = body.access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
+									"const payload = JSON.parse(atob(payloadB64));",
+									"const jwtScopes = (payload.scope || '').split(' ');",
+									"pm.test('Granted scope includes permissionView', function () {",
+									"    pm.expect(scopes).to.include(pm.collectionVariables.get('permissionView'));",
+									"    pm.expect(jwtScopes).to.include(pm.collectionVariables.get('permissionView'));",
+									"});",
+									"pm.test('Granted scope includes permissionCreate', function () {",
+									"    pm.expect(scopes).to.include(pm.collectionVariables.get('permissionCreate'));",
+									"    pm.expect(jwtScopes).to.include(pm.collectionVariables.get('permissionCreate'));",
+									"});",
+									"pm.test('Granted scope includes permissionCancel', function () {",
+									"    pm.expect(scopes).to.include(pm.collectionVariables.get('permissionCancel'));",
+									"    pm.expect(jwtScopes).to.include(pm.collectionVariables.get('permissionCancel'));",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				}
+			],
+			"description": "A new action created under an already-shared resource becomes visible to the sharee immediately, with no separate share call."
+		},
+		{
+			"name": "05 - Cascade Unshare",
+			"item": [
+				{
+					"name": "Unshare the Resource Server's Top-Level Grant (Cascades to Every Descendant)",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}/grants/{{resourceServerGrantId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}",
+								"grants",
+								"{{resourceServerGrantId}}"
+							]
+						},
+						"description": "Revokes every descendant grant created alongside it by the same cascade share, including the create action's grant even though it was individually unshared and reshared in between (its reshare in '02' targeted the identical OU selection \u2014 rootOuIds: [B] \u2014 as this top-level grant, so it is swept up by symmetry; see B2B-Reference/B2B_RESOURCE_SHARING_DESIGN.md \u00a75.3), and the cancel action's grant, which was itself never the subject of a direct share call at all (only auto-inherited)."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 204', function () {",
+									"    pm.response.to.have.status(204);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "List Grants for Bookings Resource (Gone)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}/resources/{{bookingsResourceId}}/grants",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}",
+								"resources",
+								"{{bookingsResourceId}}",
+								"grants"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"pm.expect(pm.response.json().grants.length).to.eql(0);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "List Grants for 'view' Action (Gone)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}/resources/{{bookingsResourceId}}/actions/{{viewActionId}}/grants",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}",
+								"resources",
+								"{{bookingsResourceId}}",
+								"actions",
+								"{{viewActionId}}",
+								"grants"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"pm.expect(pm.response.json().grants.length).to.eql(0);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "List Grants for 'create' Action (Gone, Despite the Reshare)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}/resources/{{bookingsResourceId}}/actions/{{createActionId}}/grants",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}",
+								"resources",
+								"{{bookingsResourceId}}",
+								"actions",
+								"{{createActionId}}",
+								"grants"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"pm.expect(pm.response.json().grants.length).to.eql(0);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "List Grants for 'cancel' Action (Gone, Despite Never Being Directly Shared)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}/resources/{{bookingsResourceId}}/actions/{{cancelActionId}}/grants",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}",
+								"resources",
+								"{{bookingsResourceId}}",
+								"actions",
+								"{{cancelActionId}}",
+								"grants"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"pm.expect(pm.response.json().grants.length).to.eql(0);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Inspect booking-ops Role (Every Bookings Permission Stripped)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/roles/{{bookingOpsRoleId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"roles",
+								"{{bookingOpsRoleId}}"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"// A cascade unshare revokes each descendant's own grant individually, so each one",
+									"// fires the same role-permission cleanup a single unshare does. Every permission",
+									"// booking-ops named under this resource server is therefore gone, not just hidden.",
+									"// See B2B-Reference/B2B_RESOURCE_SHARING_DESIGN.md sections 5.3 and 5.4.",
+									"const groups = pm.response.json().permissions || [];",
+									"const perms = groups.reduce(function (acc, g) { return acc.concat(g.permissions || []); }, []);",
+									"pm.test('No Bookings permission remains on the role', function () {",
+									"    ['permissionView', 'permissionCreate', 'permissionCancel'].forEach(function (v) {",
+									"        pm.expect(perms).to.not.include(pm.collectionVariables.get(v));",
+									"    });",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Get a New Token for Booking App (Nothing Left Visible)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/oauth2/token",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"oauth2",
+								"token"
+							]
+						},
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "grant_type",
+									"value": "client_credentials",
+									"type": "text"
+								},
+								{
+									"key": "scope",
+									"value": "{{permissionView}} {{permissionCreate}} {{permissionCancel}}",
+									"type": "text"
+								},
+								{
+									"key": "resource",
+									"value": "{{resourceServerIdentifier}}",
+									"type": "text"
+								}
+							]
+						},
+						"description": "The resource server itself is no longer shared to B at all, so FilterVisiblePermissions' server-level gate now returns nothing for any permission under it, regardless of the individual resource/action grants' own history.",
+						"auth": {
+							"type": "basic",
+							"basic": [
+								{
+									"key": "username",
+									"value": "{{bookingAppClientId}}",
+									"type": "string"
+								},
+								{
+									"key": "password",
+									"value": "{{bookingAppClientSecret}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"const body = pm.response.json();",
+									"const scopes = (body.scope || '').split(' ');",
+									"pm.test('None of the Bookings permissions remain in the granted scope', function () {",
+									"    ['permissionView', 'permissionCreate', 'permissionCancel'].forEach(v => {",
+									"        pm.expect(scopes).to.not.include(pm.collectionVariables.get(v));",
+									"    });",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				}
+			],
+			"description": "Revoking the top-level cascade grant tears down every descendant grant created alongside it, including ones later individually reshared or auto-inherited."
+		},
+		{
+			"name": "06 - The Root Permission Bypass",
+			"item": [
+				{
+					"name": "Look Up the Literal Deployment Root Permission",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{systemResourceServerId}}/resources?limit=100&offset=0",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{systemResourceServerId}}",
+								"resources"
+							],
+							"query": [
+								{
+									"key": "limit",
+									"value": "100"
+								},
+								{
+									"key": "offset",
+									"value": "0"
+								}
+							]
+						},
+						"description": "Resolves the bootstrap-fixed System resource server's top-level 'system' resource, whose own derived permission (just its handle, since it has no parent) is the literal deployment root permission (security.GetSystemRootPermission()). See B2B-Reference/B2B_RESOURCE_SHARING_DESIGN.md \u00a74.4."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"const systemResource = (pm.response.json().resources || []).find(r => r.handle === 'system');",
+									"pm.test(\"'system' resource found\", function () {",
+									"    pm.expect(systemResource).to.not.be.undefined;",
+									"});",
+									"pm.collectionVariables.set('rootPermission', systemResource.permission);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Create Application 'Root Access App' in B",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/applications",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"applications"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Root Access App\",\n  \"description\": \"An m2m application in B, assigned to a role that carries only the bare deployment root permission.\",\n  \"ouId\": \"{{bOuId}}\",\n  \"type\": \"m2m\",\n  \"inboundAuthConfig\": [\n    {\n      \"type\": \"oauth2\",\n      \"config\": {\n        \"grantTypes\": [\n          \"client_credentials\"\n        ],\n        \"tokenEndpointAuthMethod\": \"client_secret_basic\",\n        \"scopes\": [\n          \"{{rootPermission}}\"\n        ]\n      }\n    }\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 201', function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"pm.collectionVariables.set('rootAccessAppId', pm.response.json().id);",
+									"pm.collectionVariables.set('rootAccessAppClientId', pm.response.json().clientId);",
+									"pm.collectionVariables.set('rootAccessAppClientSecret', pm.response.json().inboundAuthConfig[0].config.clientSecret);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Create Role 'root-access' Owned by B (Bare Root Permission Only)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/roles",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"roles"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"root-access\",\n  \"description\": \"Carries only the literal deployment root permission. B has, and will ever have, no grant at all for the System resource server: the root permission is a categorical bypass, never itself subject to a share/unshare call.\",\n  \"ouId\": \"{{bOuId}}\",\n  \"permissions\": [\n    {\n      \"resourceServerId\": \"{{systemResourceServerId}}\",\n      \"permissions\": [\n        \"{{rootPermission}}\"\n      ]\n    }\n  ],\n  \"assignments\": [\n    {\n      \"type\": \"app\",\n      \"id\": \"{{rootAccessAppId}}\"\n    }\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Succeeds even though B owns nothing on the System resource server and nothing has been shared to it: the write-time visibility check exempts the root permission before any OU-visibility check runs (the same bypass FilterVisiblePermissions applies at token-issuance time below)."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 201', function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"pm.collectionVariables.set('rootAccessRoleId', pm.response.json().id);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Get Client Credentials Token for Root Access App",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/oauth2/token",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"oauth2",
+								"token"
+							]
+						},
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "grant_type",
+									"value": "client_credentials",
+									"type": "text"
+								},
+								{
+									"key": "scope",
+									"value": "{{rootPermission}}",
+									"type": "text"
+								},
+								{
+									"key": "resource",
+									"value": "https://localhost:8090/mcp",
+									"type": "text"
+								}
+							]
+						},
+						"description": "Proves the read-time half of the bypass: the bare root permission is granted unconditionally, regardless of any resource-sharing state for the System resource server and B.",
+						"auth": {
+							"type": "basic",
+							"basic": [
+								{
+									"key": "username",
+									"value": "{{rootAccessAppClientId}}",
+									"type": "string"
+								},
+								{
+									"key": "password",
+									"value": "{{rootAccessAppClientSecret}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"const body = pm.response.json();",
+									"const scopes = (body.scope || '').split(' ');",
+									"const payloadB64 = body.access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
+									"const payload = JSON.parse(atob(payloadB64));",
+									"const jwtScopes = (payload.scope || '').split(' ');",
+									"pm.test('Granted scope includes rootPermission', function () {",
+									"    pm.expect(scopes).to.include(pm.collectionVariables.get('rootPermission'));",
+									"    pm.expect(jwtScopes).to.include(pm.collectionVariables.get('rootPermission'));",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				}
+			],
+			"description": "The bare deployment root permission keeps full access regardless of any resource-sharing state; it is never itself subject to a share/unshare call."
+		},
+		{
+			"name": "07 - API Authorization: system:resource-servers Scope",
+			"item": [
+				{
+					"name": "Look Up the System Resource Server's 'system' Resource",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{systemResourceServerId}}/resources?limit=100&offset=0",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{systemResourceServerId}}",
+								"resources"
+							],
+							"query": [
+								{
+									"key": "limit",
+									"value": "100"
+								},
+								{
+									"key": "offset",
+									"value": "0"
+								}
+							]
+						},
+						"description": "Resolves the bootstrap-fixed System resource server's top-level 'system' resource id dynamically, rather than assuming the deterministic <systemResourceServerId>_system id shape. The two sub-resources created below are nested under it, which is what derives the system:resource-servers and system:resource-servers:view permission strings the API's own authorization gate matches on (backend/internal/system/security/permissions.go)."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () { pm.response.to.have.status(200); });",
+									"const systemResource = (pm.response.json().resources || []).find(r => r.handle === 'system');",
+									"pm.test(\"'system' resource found\", function () {",
+									"    pm.expect(systemResource).to.not.be.undefined;",
+									"});",
+									"pm.collectionVariables.set('systemResourceId', systemResource.id);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Create 'Resource Servers' Sub-Resource Under System Resource",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{systemResourceServerId}}/resources",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{systemResourceServerId}}",
+								"resources"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Resource Servers\",\n  \"handle\": \"resource-servers\",\n  \"parent\": \"{{systemResourceId}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Nesting a 'Resource Servers' resource under the 'system' resource via parent, rather than as a top-level resource, is what derives the permission string system:resource-servers (parent resource's own permission, the delimiter, then this resource's handle) instead of a flat 'resource-servers'. That string is the manage tier the Resource Management API requires on POST, PUT, and DELETE."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 201', function () { pm.response.to.have.status(201); });",
+									"const resource = pm.response.json();",
+									"pm.test('Derived permission is system:resource-servers', function () {",
+									"    pm.expect(resource.permission).to.eql('system:resource-servers');",
+									"});",
+									"pm.collectionVariables.set('systemResourceServersResourceId', resource.id);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Create 'View' Sub-Resource Under Resource Servers Resource",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{systemResourceServerId}}/resources",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{systemResourceServerId}}",
+								"resources"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"View\",\n  \"handle\": \"view\",\n  \"parent\": \"{{systemResourceServersResourceId}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Derives system:resource-servers:view, the read-only counterpart the API requires on GET /resource-servers and GET /resource-servers/**. The manage permission covers it by hierarchical prefix matching, so a system:resource-servers caller can read too, but not the reverse."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 201', function () { pm.response.to.have.status(201); });",
+									"const resource = pm.response.json();",
+									"pm.test('Derived permission is system:resource-servers:view', function () {",
+									"    pm.expect(resource.permission).to.eql('system:resource-servers:view');",
+									"});",
+									"pm.collectionVariables.set('systemResourceServersViewResourceId', resource.id);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Create Scoped Admin App (B, Manage)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/applications",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"applications"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"resource-sharing-scoped-admin-manage\",\n  \"description\": \"Scoped admin client owned by B, used to mint system:resource-servers-scoped tokens. Also declares an unrelated scope (system:group) so a token holding neither resource-servers scope can be minted from the same client.\",\n  \"ouId\": \"{{bOuId}}\",\n  \"type\": \"m2m\",\n  \"inboundAuthConfig\": [\n    {\n      \"type\": \"oauth2\",\n      \"config\": {\n        \"grantTypes\": [\n          \"client_credentials\"\n        ],\n        \"tokenEndpointAuthMethod\": \"client_secret_basic\",\n        \"scopes\": [\n          \"system:resource-servers\",\n          \"system:group\"\n        ],\n        \"token\": {\n          \"accessToken\": {\n            \"userConfig\": {\n              \"validityPeriod\": 3600\n            },\n            \"clientConfig\": {\n              \"attributes\": [\n                \"sub_type\",\n                \"ouId\"\n              ]\n            }\n          },\n          \"idToken\": {\n            \"validityPeriod\": 3600,\n            \"responseType\": \"JWT\"\n          },\n          \"refreshToken\": {\n            \"validityPeriod\": 86400\n          }\n        }\n      }\n    }\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "The application's ouId is what fixes the ouId claim of every token it issues, so simulating a caller whose own organization unit is B (the sharee, not the owner) requires an application in B. The client secret is only ever returned in this create response."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 201', function () { pm.response.to.have.status(201); });",
+									"pm.collectionVariables.set('rsManageAppId', pm.response.json().id);",
+									"pm.collectionVariables.set('rsManageClientId', pm.response.json().clientId);",
+									"pm.collectionVariables.set('rsManageClientSecret', pm.response.json().inboundAuthConfig[0].config.clientSecret);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Create Scoped Admin App (B, View Only)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/applications",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"applications"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"resource-sharing-scoped-admin-view\",\n  \"description\": \"Scoped admin client owned by B, used to mint system:resource-servers:view-scoped tokens.\",\n  \"ouId\": \"{{bOuId}}\",\n  \"type\": \"m2m\",\n  \"inboundAuthConfig\": [\n    {\n      \"type\": \"oauth2\",\n      \"config\": {\n        \"grantTypes\": [\n          \"client_credentials\"\n        ],\n        \"tokenEndpointAuthMethod\": \"client_secret_basic\",\n        \"scopes\": [\n          \"system:resource-servers:view\"\n        ],\n        \"token\": {\n          \"accessToken\": {\n            \"userConfig\": {\n              \"validityPeriod\": 3600\n            },\n            \"clientConfig\": {\n              \"attributes\": [\n                \"sub_type\",\n                \"ouId\"\n              ]\n            }\n          },\n          \"idToken\": {\n            \"validityPeriod\": 3600,\n            \"responseType\": \"JWT\"\n          },\n          \"refreshToken\": {\n            \"validityPeriod\": 86400\n          }\n        }\n      }\n    }\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "The client secret is only ever returned in this create response."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 201', function () { pm.response.to.have.status(201); });",
+									"pm.collectionVariables.set('rsViewAppId', pm.response.json().id);",
+									"pm.collectionVariables.set('rsViewClientId', pm.response.json().clientId);",
+									"pm.collectionVariables.set('rsViewClientSecret', pm.response.json().inboundAuthConfig[0].config.clientSecret);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Create System Resource Servers Manager Role",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/roles",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"roles"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"System Resource Servers Manager\",\n  \"description\": \"Carries the system:resource-servers permission and is owned by B, the same organization unit the scoped applications live in. Two things have to hold for this to work, and both come from the System resource server being shared deployment-wide at bootstrap (grants: allOus). First, the write-time visibility check accepts the permission because B can see the System resource server. Second, and easy to miss, the assignment below is recorded against B, so the OU-scoped permission resolution at token issuance finds it: a role owned by the default organization unit would record its assignment there instead, and the token, whose ouId claim is B, would come back with no scopes at all.\",\n  \"ouId\": \"{{bOuId}}\",\n  \"permissions\": [\n    {\n      \"resourceServerId\": \"{{systemResourceServerId}}\",\n      \"permissions\": [\n        \"system:resource-servers\"\n      ]\n    }\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "An application's own inboundAuthConfig.scopes only lists what it may request. The client_credentials grant still filters the issued token's scope through the same RBAC check as any other permission, so system:resource-servers is only ever actually granted via a real role assignment like the one added below."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 201', function () { pm.response.to.have.status(201); });",
+									"pm.collectionVariables.set('resourceServersManagerRoleId', pm.response.json().id);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Create System Resource Servers Viewer Role",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/roles",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"roles"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"System Resource Servers Viewer\",\n  \"description\": \"Carries the read-only system:resource-servers:view permission; assigned to an m2m application that should only ever list and read resource servers, resources, and actions, never create, update, delete, or share them. Owned by B for the same two reasons as the manager role above.\",\n  \"ouId\": \"{{bOuId}}\",\n  \"permissions\": [\n    {\n      \"resourceServerId\": \"{{systemResourceServerId}}\",\n      \"permissions\": [\n        \"system:resource-servers:view\"\n      ]\n    }\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 201', function () { pm.response.to.have.status(201); });",
+									"pm.collectionVariables.set('resourceServersViewerRoleId', pm.response.json().id);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Assign Manage App to Manager Role",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/roles/{{resourceServersManagerRoleId}}/assignments/add",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"roles",
+								"{{resourceServersManagerRoleId}}",
+								"assignments",
+								"add"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"assignments\": [\n    {\n      \"type\": \"app\",\n      \"id\": \"{{rsManageAppId}}\"\n    }\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Without this assignment, system:resource-servers would never actually appear in the app's issued token."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 204', function () { pm.response.to.have.status(204); });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Assign View-Only App to Viewer Role",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/roles/{{resourceServersViewerRoleId}}/assignments/add",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"roles",
+								"{{resourceServersViewerRoleId}}",
+								"assignments",
+								"add"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"assignments\": [\n    {\n      \"type\": \"app\",\n      \"id\": \"{{rsViewAppId}}\"\n    }\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 204', function () { pm.response.to.have.status(204); });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Get Token: B (system:resource-servers)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/oauth2/token",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"oauth2",
+								"token"
+							]
+						},
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "grant_type",
+									"value": "client_credentials",
+									"type": "text"
+								},
+								{
+									"key": "scope",
+									"value": "system:resource-servers",
+									"type": "text"
+								},
+								{
+									"key": "resource",
+									"value": "https://localhost:8090/mcp",
+									"type": "text"
+								}
+							]
+						},
+						"description": "A system:resource-servers token whose ouId claim is B, since that is the issuing application's own organization unit. Everything this token can reach is therefore confined to B, even though the scope itself names no organization unit at all.",
+						"auth": {
+							"type": "basic",
+							"basic": [
+								{
+									"key": "username",
+									"value": "{{rsManageClientId}}",
+									"type": "string"
+								},
+								{
+									"key": "password",
+									"value": "{{rsManageClientSecret}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () { pm.response.to.have.status(200); });",
+									"const body = pm.response.json();",
+									"pm.collectionVariables.set('bResourceServersToken', body.access_token);",
+									"const payloadB64 = body.access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
+									"const payload = JSON.parse(atob(payloadB64));",
+									"pm.test(\"JWT ouId claim matches issuing application's own OU\", function () {",
+									"    pm.expect(payload.ouId).to.eql(pm.collectionVariables.get('bOuId'));",
+									"});",
+									"pm.test('JWT scope claim includes system:resource-servers', function () {",
+									"    pm.expect((payload.scope || '').split(' ')).to.include('system:resource-servers');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Get Token: B (system:resource-servers:view)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/oauth2/token",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"oauth2",
+								"token"
+							]
+						},
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "grant_type",
+									"value": "client_credentials",
+									"type": "text"
+								},
+								{
+									"key": "scope",
+									"value": "system:resource-servers:view",
+									"type": "text"
+								},
+								{
+									"key": "resource",
+									"value": "https://localhost:8090/mcp",
+									"type": "text"
+								}
+							]
+						},
+						"description": "A read-only token whose ouId claim is also B. Unlike the manage token above, it never satisfies a POST, PUT, or DELETE route on /resource-servers.",
+						"auth": {
+							"type": "basic",
+							"basic": [
+								{
+									"key": "username",
+									"value": "{{rsViewClientId}}",
+									"type": "string"
+								},
+								{
+									"key": "password",
+									"value": "{{rsViewClientSecret}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () { pm.response.to.have.status(200); });",
+									"const body = pm.response.json();",
+									"pm.collectionVariables.set('bViewResourceServersToken', body.access_token);",
+									"const payloadB64 = body.access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
+									"const payload = JSON.parse(atob(payloadB64));",
+									"pm.test(\"JWT ouId claim matches issuing application's own OU\", function () {",
+									"    pm.expect(payload.ouId).to.eql(pm.collectionVariables.get('bOuId'));",
+									"});",
+									"pm.test('JWT scope claim includes system:resource-servers:view', function () {",
+									"    pm.expect((payload.scope || '').split(' ')).to.include('system:resource-servers:view');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Get Token: B (No Resource-Servers Scope)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/oauth2/token",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"oauth2",
+								"token"
+							]
+						},
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "grant_type",
+									"value": "client_credentials",
+									"type": "text"
+								},
+								{
+									"key": "scope",
+									"value": "system:group",
+									"type": "text"
+								},
+								{
+									"key": "resource",
+									"value": "https://localhost:8090/mcp",
+									"type": "text"
+								}
+							]
+						},
+						"description": "Requests an unrelated scope (system:group) from the manage client, which is not assigned any role granting it. The token issues, but carries neither resource-servers scope, which is what the last request in this folder needs.",
+						"auth": {
+							"type": "basic",
+							"basic": [
+								{
+									"key": "username",
+									"value": "{{rsManageClientId}}",
+									"type": "string"
+								},
+								{
+									"key": "password",
+									"value": "{{rsManageClientSecret}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () { pm.response.to.have.status(200); });",
+									"const body = pm.response.json();",
+									"pm.collectionVariables.set('noResourceServersScopeToken', body.access_token);",
+									"const payloadB64 = body.access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
+									"const payload = JSON.parse(atob(payloadB64));",
+									"pm.test('JWT scope claim carries neither resource-servers scope', function () {",
+									"    const jwtScopes = (payload.scope || '').split(' ');",
+									"    pm.expect(jwtScopes).to.not.include('system:resource-servers');",
+									"    pm.expect(jwtScopes).to.not.include('system:resource-servers:view');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Re-Share A's Resource Server to B (Cascade, Excluding Refunds)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}/grants",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}",
+								"grants"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"rootOuIds\": [\n    \"{{bOuId}}\"\n  ],\n  \"excludedNodeIds\": [\n    \"{{refundsResourceId}}\",\n    \"{{approveActionId}}\"\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Folder '05' tore down every grant on A's resource server, so B currently sees nothing of it. This restores the same share '01' set up, with Refunds and its approve action still withheld, which is what makes the read cases below meaningful: one node B can see only because it is shared, and a sibling it cannot see at all. Issued with the collection's root-scoped admin token, not either scoped token. The grant is revoked again at the end of this folder."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 201', function () { pm.response.to.have.status(201); });",
+									"const grants = pm.response.json().grants;",
+									"const serverGrant = grants.find(g => g.nodeType === 'resource_server');",
+									"pm.test('Cascade re-creates the resource server grant plus the Bookings subtree', function () {",
+									"    pm.expect(serverGrant).to.not.be.undefined;",
+									"    pm.expect(serverGrant.targetOuId).to.eql(pm.collectionVariables.get('bOuId'));",
+									"});",
+									"pm.test('Refunds and its approve action stay withheld', function () {",
+									"    pm.expect(grants.find(g => g.nodeId === pm.collectionVariables.get('refundsResourceId'))).to.be.undefined;",
+									"    pm.expect(grants.find(g => g.nodeId === pm.collectionVariables.get('approveActionId'))).to.be.undefined;",
+									"});",
+									"pm.collectionVariables.set('authzResourceServerGrantId', serverGrant.id);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Create Unshared Resource Server in A (Confinement Control)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Confinement Control RS\",\n  \"description\": \"Owned by A and never shared to anyone. Exists so the scoped listing below has something that genuinely must not appear. The System resource server cannot play that role: it is shared deployment-wide on purpose.\",\n  \"ouId\": \"{{aOuId}}\",\n  \"identifier\": \"https://resource-sharing-demo.example.com/confinement-control\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 201', function () { pm.response.to.have.status(201); });",
+									"pm.collectionVariables.set('confinementControlRsId', pm.response.json().id);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "B (View-Only): List Resource Servers",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers?limit=100&offset=0",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers"
+							],
+							"query": [
+								{
+									"key": "limit",
+									"value": "100"
+								},
+								{
+									"key": "offset",
+									"value": "0"
+								}
+							]
+						},
+						"description": "GET /resource-servers requires only the read-only tier, so the view token is enough.",
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{bViewResourceServersToken}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () { pm.response.to.have.status(200); });",
+									"var ids = pm.response.json().resourceServers.map(function (rs) { return rs.id; });",
+									"// The listing is confined to the caller's own organization unit: a caller holding",
+									"// system:resource-servers:view but not system receives only what B owns plus what is",
+									"// shared to B, never the whole deployment.",
+									"pm.test('A\\'s shared resource server is visible to B', function () {",
+									"    pm.expect(ids).to.include(pm.collectionVariables.get('resourceServerId'));",
+									"});",
+									"// The System resource server is shared to every organization unit at bootstrap",
+									"// (grants: allOus), because it defines the permissions that gate the management",
+									"// APIs themselves. A scoped administrator that could not see it could not manage its own",
+									"// roles' system permissions at all, so it must appear here.",
+									"pm.test('The System resource server is visible to B', function () {",
+									"    pm.expect(ids).to.include(pm.collectionVariables.get('systemResourceServerId'));",
+									"});",
+									"// A's unshared control resource server is the real confinement proof: owned by another",
+									"// organization unit and shared to nobody, so it must never appear.",
+									"pm.test('An unshared resource server of A is not visible to B', function () {",
+									"    pm.expect(ids).to.not.include(pm.collectionVariables.get('confinementControlRsId'));",
+									"});",
+									"pm.test('totalResults reflects the filtered set', function () {",
+									"    var body = pm.response.json();",
+									"    pm.expect(body.totalResults).to.eql(body.resourceServers.length);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "B (View-Only): Get A's Resource Server via Share Fallback",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}"
+							]
+						},
+						"description": "A owns this resource server, so B's own-OU check fails, but RequireVisibility falls back to share visibility and the re-share above makes it readable. This is the read tier working end to end: the right scope plus a currently valid share.",
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{bViewResourceServersToken}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () { pm.response.to.have.status(200); });",
+									"pm.test('Resource server is still owned by A', function () {",
+									"    pm.expect(pm.response.json().ouId).to.eql(pm.collectionVariables.get('aOuId'));",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "B (View-Only): List A's Resource Server Grants",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}/grants",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}",
+								"grants"
+							]
+						},
+						"description": "Listing grants is a read operation, so the view tier reaches it. The grant listed is the one created by the re-share above.",
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{bViewResourceServersToken}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () { pm.response.to.have.status(200); });",
+									"pm.test(\"Exactly the resource server's own grant is listed\", function () {",
+									"    const grants = pm.response.json().grants;",
+									"    pm.expect(grants.length).to.eql(1);",
+									"    pm.expect(grants[0].id).to.eql(pm.collectionVariables.get('authzResourceServerGrantId'));",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "B (View-Only): Attempt Create Resource Server (Rejected)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"View Only Attempt\",\n  \"description\": \"Should never be created.\",\n  \"identifier\": \"https://api.example.com/resource-sharing-view-only-attempt\",\n  \"ouId\": \"{{bOuId}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "system:resource-servers:view is read-only, so POST /resource-servers is refused at the global security gate before internal/resource runs at all. The organization unit named here is B's own, so nothing but the missing manage scope is at issue.",
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{bViewResourceServersToken}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 403', function () {",
+									"    pm.response.to.have.status(403);",
+									"});",
+									"pm.test('Error code is AUTH-4030', function () {",
+									"    pm.expect(pm.response.json().code).to.eql('AUTH-4030');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "B (View-Only): Attempt Update A's Resource Server (Rejected)",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Hijacked Booking System\",\n  \"description\": \"Should never be applied.\",\n  \"identifier\": \"{{resourceServerIdentifier}}\",\n  \"ouId\": \"{{aOuId}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Refused at the same gate as create. Note the request never reaches the ownership check that would also have refused it, so the response is AUTH-4030 and not SHR-1007.",
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{bViewResourceServersToken}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 403', function () {",
+									"    pm.response.to.have.status(403);",
+									"});",
+									"pm.test('Error code is AUTH-4030', function () {",
+									"    pm.expect(pm.response.json().code).to.eql('AUTH-4030');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "B (View-Only): Attempt Delete A's Resource Server (Rejected)",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}"
+							]
+						},
+						"description": "Refused at the global gate for the same reason as create and update, before any deletion is attempted, so A's resource server is untouched and the rest of the collection still has its fixtures.",
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{bViewResourceServersToken}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 403', function () {",
+									"    pm.response.to.have.status(403);",
+									"});",
+									"pm.test('Error code is AUTH-4030', function () {",
+									"    pm.expect(pm.response.json().code).to.eql('AUTH-4030');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "B (View-Only): Attempt Share A's Resource Server (Rejected)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}/grants",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}",
+								"grants"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"rootOuIds\": [\n    \"{{bOuId}}\"\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Sharing is a manage operation, not a read one: POST on a grants sub-resource matches the same POST /resource-servers/** rule as any other write, so the read-only tier can list grants (above) but never create one.",
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{bViewResourceServersToken}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 403', function () {",
+									"    pm.response.to.have.status(403);",
+									"});",
+									"pm.test('Error code is AUTH-4030', function () {",
+									"    pm.expect(pm.response.json().code).to.eql('AUTH-4030');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "B (Manage): Create Resource Server in Own OU",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Scoped Admin Demo Server\",\n  \"description\": \"Created by a system:resource-servers token in its own organization unit.\",\n  \"identifier\": \"https://api.example.com/resource-sharing-scoped-admin-demo\",\n  \"ouId\": \"{{bOuId}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "The manage tier covers everything the view tier does, plus writes inside the caller's own organization unit.",
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{bResourceServersToken}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 201', function () { pm.response.to.have.status(201); });",
+									"pm.collectionVariables.set('authzDemoResourceServerId', pm.response.json().id);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "B (Manage): Create Resource in Own Resource Server",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{authzDemoResourceServerId}}/resources",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{authzDemoResourceServerId}}",
+								"resources"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Invoices\",\n  \"handle\": \"invoices\",\n  \"parent\": null\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{bResourceServersToken}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 201', function () { pm.response.to.have.status(201); });",
+									"pm.collectionVariables.set('authzDemoResourceId', pm.response.json().id);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "B (Manage): Create Action in Own Resource",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{authzDemoResourceServerId}}/resources/{{authzDemoResourceId}}/actions",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{authzDemoResourceServerId}}",
+								"resources",
+								"{{authzDemoResourceId}}",
+								"actions"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Issue Invoice\",\n  \"handle\": \"issue\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{bResourceServersToken}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 201', function () { pm.response.to.have.status(201); });",
+									"pm.collectionVariables.set('authzDemoActionId', pm.response.json().id);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "B (Manage): Update Own Resource Server",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{authzDemoResourceServerId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{authzDemoResourceServerId}}"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Scoped Admin Demo Server\",\n  \"description\": \"Updated by a system:resource-servers token that owns this resource server.\",\n  \"identifier\": \"https://api.example.com/resource-sharing-scoped-admin-demo\",\n  \"ouId\": \"{{bOuId}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "sharing.RequireOwnership passes because the existing record's organization unit is the caller's own, and the request does not move it elsewhere.",
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{bResourceServersToken}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () { pm.response.to.have.status(200); });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "B (Manage): Share Own Resource Server to A",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{authzDemoResourceServerId}}/grants",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{authzDemoResourceServerId}}",
+								"grants"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"rootOuIds\": [\n    \"{{aOuId}}\"\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "The manage tier includes sharing what the caller owns. B and A are both Root organization units, so this is ordinary Root-to-Root distribution. The cascade fans out to the Invoices resource and its issue action too.",
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{bResourceServersToken}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 201', function () { pm.response.to.have.status(201); });",
+									"const grants = pm.response.json().grants;",
+									"pm.test('Cascade creates exactly 3 grants (server, Invoices, issue)', function () {",
+									"    pm.expect(grants.length).to.eql(3);",
+									"});",
+									"const serverGrant = grants.find(g => g.nodeType === 'resource_server');",
+									"pm.test('The resource server grant targets A as a root share', function () {",
+									"    pm.expect(serverGrant.targetScope).to.eql('root');",
+									"    pm.expect(serverGrant.targetOuId).to.eql(pm.collectionVariables.get('aOuId'));",
+									"});",
+									"pm.collectionVariables.set('authzDemoGrantId', serverGrant.id);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "B (Manage): Unshare Own Resource Server Grant",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{authzDemoResourceServerId}}/grants/{{authzDemoGrantId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{authzDemoResourceServerId}}",
+								"grants",
+								"{{authzDemoGrantId}}"
+							]
+						},
+						"description": "Revoking a grant on a resource server the caller owns is equally within the manage tier.",
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{bResourceServersToken}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 204', function () { pm.response.to.have.status(204); });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "B (Manage): Attempt Create Resource Server in A (Rejected)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Cross OU Attempt\",\n  \"description\": \"Should never be created.\",\n  \"identifier\": \"https://api.example.com/resource-sharing-cross-ou-attempt\",\n  \"ouId\": \"{{aOuId}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "The scope check passes, and the request is still refused. Neither system:resource-servers nor its view counterpart carries a subtree tier, so requireOwnOUScope confines the caller to the organization unit its own token was issued for (RES-1024). Checked before any organization unit lookup, so the endpoint cannot be used to probe which organization unit ids exist.",
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{bResourceServersToken}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 403', function () {",
+									"    pm.response.to.have.status(403);",
+									"});",
+									"pm.test('Error code is RES-1024', function () {",
+									"    pm.expect(pm.response.json().code).to.eql('RES-1024');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "B (Manage): Attempt Create Resource Under A's Resource Server (Rejected)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}/resources",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}",
+								"resources"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Cross OU Resource Attempt\",\n  \"handle\": \"cross-ou-attempt\",\n  \"parent\": null\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "The same confinement applies one level down: A's resource server being shared to B lets B read it, never write into it.",
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{bResourceServersToken}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 403', function () {",
+									"    pm.response.to.have.status(403);",
+									"});",
+									"pm.test('Error code is RES-1024', function () {",
+									"    pm.expect(pm.response.json().code).to.eql('RES-1024');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "B (Manage): Attempt Create Action Under A's Bookings Resource (Rejected)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}/resources/{{bookingsResourceId}}/actions",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}",
+								"resources",
+								"{{bookingsResourceId}}",
+								"actions"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Cross OU Action Attempt\",\n  \"handle\": \"cross-ou-attempt\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Bookings is currently shared to B, and creating an action under it is still refused: the confinement is evaluated against the owning resource server's organization unit, not against share visibility.",
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{bResourceServersToken}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 403', function () {",
+									"    pm.response.to.have.status(403);",
+									"});",
+									"pm.test('Error code is RES-1024', function () {",
+									"    pm.expect(pm.response.json().code).to.eql('RES-1024');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "B (Manage): Attempt Update A's Resource Server (Rejected)",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Hijacked Booking System\",\n  \"description\": \"Should never be applied.\",\n  \"identifier\": \"{{resourceServerIdentifier}}\",\n  \"ouId\": \"{{aOuId}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Updating an existing record defers to sharing.RequireOwnership rather than requireOwnOUScope, so the error is the sharing framework's own SHR-1007 and not RES-1024. Same refusal, different owner of the rule: core configuration may only ever be changed by the owning organization unit.",
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{bResourceServersToken}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 403', function () {",
+									"    pm.response.to.have.status(403);",
+									"});",
+									"pm.test('Error code is SHR-1007', function () {",
+									"    pm.expect(pm.response.json().code).to.eql('SHR-1007');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "B (Manage): Attempt Delete A's Resource Server (Rejected)",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}"
+							]
+						},
+						"description": "Also SHR-1007, via RequireOwnershipForDeletion. internal/resource declares no deletion specific ownership error of its own, unlike internal/role, so deletion and core-config edits report the same code. Refused before any deletion is attempted, so A's resource server survives for the Cleanup folder.",
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{bResourceServersToken}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 403', function () {",
+									"    pm.response.to.have.status(403);",
+									"});",
+									"pm.test('Error code is SHR-1007', function () {",
+									"    pm.expect(pm.response.json().code).to.eql('SHR-1007');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "B (Manage): Get A's Bookings Resource via Share Fallback",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}/resources/{{bookingsResourceId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}",
+								"resources",
+								"{{bookingsResourceId}}"
+							]
+						},
+						"description": "The positive contrast for the two refusals below: Bookings belongs to A, but it is currently shared to B, so RequireVisibility's share fallback applies and the read succeeds.",
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{bResourceServersToken}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () { pm.response.to.have.status(200); });",
+									"pm.test('Bookings resource is readable', function () {",
+									"    pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get('bookingsResourceId'));",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "B (Manage): Attempt Get A's Refunds Resource (Rejected, Not Shared)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}/resources/{{refundsResourceId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}",
+								"resources",
+								"{{refundsResourceId}}"
+							]
+						},
+						"description": "Refunds sits under the same resource server as Bookings and was excluded from every cascade, so neither branch of RequireVisibility holds: not B's own organization unit, and not shared to it. Being able to read the parent resource server buys nothing here.",
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{bResourceServersToken}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 403', function () {",
+									"    pm.response.to.have.status(403);",
+									"});",
+									"pm.test('Error code is RES-1024', function () {",
+									"    pm.expect(pm.response.json().code).to.eql('RES-1024');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "B (Manage): Attempt Get A's approve Action (Rejected, Not Shared)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}/resources/{{refundsResourceId}}/actions/{{approveActionId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}",
+								"resources",
+								"{{refundsResourceId}}",
+								"actions",
+								"{{approveActionId}}"
+							]
+						},
+						"description": "The identical check at the action tier, the third of the three sharing-framework resource types.",
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{bResourceServersToken}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 403', function () {",
+									"    pm.response.to.have.status(403);",
+									"});",
+									"pm.test('Error code is RES-1024', function () {",
+									"    pm.expect(pm.response.json().code).to.eql('RES-1024');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "No Resource-Servers Scope: Rejected at Global Gate",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers?limit=100&offset=0",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers"
+							],
+							"query": [
+								{
+									"key": "limit",
+									"value": "100"
+								},
+								{
+									"key": "offset",
+									"value": "0"
+								}
+							]
+						},
+						"description": "A token holding neither system, system:resource-servers, nor system:resource-servers:view never reaches internal/resource at all, so the response is the security middleware's own AUTH-4030 rather than any RES code.",
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{noResourceServersScopeToken}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 403', function () {",
+									"    pm.response.to.have.status(403);",
+									"});",
+									"pm.test('Error code is AUTH-4030', function () {",
+									"    pm.expect(pm.response.json().code).to.eql('AUTH-4030');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "B (Manage): Delete Own Action issue",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{authzDemoResourceServerId}}/resources/{{authzDemoResourceId}}/actions/{{authzDemoActionId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{authzDemoResourceServerId}}",
+								"resources",
+								"{{authzDemoResourceId}}",
+								"actions",
+								"{{authzDemoActionId}}"
+							]
+						},
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{bResourceServersToken}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 204', function () { pm.response.to.have.status(204); });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "B (Manage): Delete Own Resource Invoices",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{authzDemoResourceServerId}}/resources/{{authzDemoResourceId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{authzDemoResourceServerId}}",
+								"resources",
+								"{{authzDemoResourceId}}"
+							]
+						},
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{bResourceServersToken}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 204', function () { pm.response.to.have.status(204); });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "B (Manage): Delete Own Resource Server",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{authzDemoResourceServerId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{authzDemoResourceServerId}}"
+							]
+						},
+						"description": "The last of the three manage-tier writes on a resource server the caller owns, and this folder's own teardown of it. A resource server cannot be deleted while resources or actions still depend on it, hence the order.",
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{bResourceServersToken}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 204', function () { pm.response.to.have.status(204); });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Unshare A's Resource Server Grant (Restore Folder 05's State)",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}/grants/{{authzResourceServerGrantId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}",
+								"grants",
+								"{{authzResourceServerGrantId}}"
+							]
+						},
+						"description": "Issued with the collection's root-scoped admin token. Tears down the re-share this folder created, along with every descendant grant that came with it, leaving A's resource server unshared again as folder '05' left it."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 204', function () { pm.response.to.have.status(204); });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				}
+			],
+			"description": "The Resource Management API's own token-scope tier, independent of the sharing model the folders above exercise. system:resource-servers grants full access (create, update, delete, share); system:resource-servers:view grants read-only access, exactly mirroring Role Management's split. On top of the scope check, a caller without the deployment root permission is confined to the organization unit its own token was issued for, so this folder separates three distinct refusals that all answer 403 and are easy to conflate: AUTH-4030 from the security middleware when the scope itself is insufficient, RES-1024 from internal/resource when the scope is right but the target organization unit is not the caller's own (and not shared to it), and SHR-1007 from the sharing framework when an existing record's owner is someone else. The two scoped tokens are minted for B, the sharee, not for A, the owner. Every request overrides the collection-level bearer auth with one of them, except the fixture setup and the final unshare, which use the root-scoped admin token."
+		},
+		{
+			"name": "08 - Cleanup",
+			"item": [
+				{
+					"name": "Remove Manage App Assignment From Manager Role",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/roles/{{resourceServersManagerRoleId}}/assignments/remove",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"roles",
+								"{{resourceServersManagerRoleId}}",
+								"assignments",
+								"remove"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"assignments\": [\n    {\n      \"type\": \"app\",\n      \"id\": \"{{rsManageAppId}}\"\n    }\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 204', function () { pm.response.to.have.status(204); });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Remove View-Only App Assignment From Viewer Role",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/roles/{{resourceServersViewerRoleId}}/assignments/remove",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"roles",
+								"{{resourceServersViewerRoleId}}",
+								"assignments",
+								"remove"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"assignments\": [\n    {\n      \"type\": \"app\",\n      \"id\": \"{{rsViewAppId}}\"\n    }\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 204', function () { pm.response.to.have.status(204); });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Delete Role System Resource Servers Manager",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/roles/{{resourceServersManagerRoleId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"roles",
+								"{{resourceServersManagerRoleId}}"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 204', function () { pm.response.to.have.status(204); });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Delete Role System Resource Servers Viewer",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/roles/{{resourceServersViewerRoleId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"roles",
+								"{{resourceServersViewerRoleId}}"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 204', function () { pm.response.to.have.status(204); });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Delete Application Scoped Admin (Manage)",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/applications/{{rsManageAppId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"applications",
+								"{{rsManageAppId}}"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 204', function () { pm.response.to.have.status(204); });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Delete Application Scoped Admin (View Only)",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/applications/{{rsViewAppId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"applications",
+								"{{rsViewAppId}}"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 204', function () { pm.response.to.have.status(204); });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Delete System 'View' Sub-Resource",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{systemResourceServerId}}/resources/{{systemResourceServersViewResourceId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{systemResourceServerId}}",
+								"resources",
+								"{{systemResourceServersViewResourceId}}"
+							]
+						},
+						"description": "Child first: the Resource Servers resource cannot be removed while this one hangs off it."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 204', function () { pm.response.to.have.status(204); });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Delete System 'Resource Servers' Sub-Resource",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{systemResourceServerId}}/resources/{{systemResourceServersResourceId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{systemResourceServerId}}",
+								"resources",
+								"{{systemResourceServersResourceId}}"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 204', function () { pm.response.to.have.status(204); });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Delete Role root-access",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/roles/{{rootAccessRoleId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"roles",
+								"{{rootAccessRoleId}}"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 204', function () {",
+									"    pm.response.to.have.status(204);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Delete Application Root Access App",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/applications/{{rootAccessAppId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"applications",
+								"{{rootAccessAppId}}"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 204', function () {",
+									"    pm.response.to.have.status(204);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Delete Role booking-ops",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/roles/{{bookingOpsRoleId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"roles",
+								"{{bookingOpsRoleId}}"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 204', function () {",
+									"    pm.response.to.have.status(204);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Delete Application Booking App",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/applications/{{bookingAppId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"applications",
+								"{{bookingAppId}}"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 204', function () {",
+									"    pm.response.to.have.status(204);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Delete Action cancel",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}/resources/{{bookingsResourceId}}/actions/{{cancelActionId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}",
+								"resources",
+								"{{bookingsResourceId}}",
+								"actions",
+								"{{cancelActionId}}"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 204', function () {",
+									"    pm.response.to.have.status(204);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Delete Action create",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}/resources/{{bookingsResourceId}}/actions/{{createActionId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}",
+								"resources",
+								"{{bookingsResourceId}}",
+								"actions",
+								"{{createActionId}}"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 204', function () {",
+									"    pm.response.to.have.status(204);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Delete Action view",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}/resources/{{bookingsResourceId}}/actions/{{viewActionId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}",
+								"resources",
+								"{{bookingsResourceId}}",
+								"actions",
+								"{{viewActionId}}"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 204', function () {",
+									"    pm.response.to.have.status(204);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Delete Resource Bookings",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}/resources/{{bookingsResourceId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}",
+								"resources",
+								"{{bookingsResourceId}}"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 204', function () {",
+									"    pm.response.to.have.status(204);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Delete Action approve",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}/resources/{{refundsResourceId}}/actions/{{approveActionId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}",
+								"resources",
+								"{{refundsResourceId}}",
+								"actions",
+								"{{approveActionId}}"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 204', function () {",
+									"    pm.response.to.have.status(204);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Delete Resource Refunds",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}/resources/{{refundsResourceId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}",
+								"resources",
+								"{{refundsResourceId}}"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 204', function () {",
+									"    pm.response.to.have.status(204);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Delete Resource Server",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{resourceServerId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{resourceServerId}}"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 204', function () {",
+									"    pm.response.to.have.status(204);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Delete Confinement Control Resource Server",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{confinementControlRsId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{confinementControlRsId}}"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 204', function () { pm.response.to.have.status(204); });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Delete OU B",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/organization-units/{{bOuId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"organization-units",
+								"{{bOuId}}"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 204', function () {",
+									"    pm.response.to.have.status(204);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Delete OU A",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/organization-units/{{aOuId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"organization-units",
+								"{{aOuId}}"
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 204', function () {",
+									"    pm.response.to.have.status(204);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				}
+			],
+			"description": "Deletes every resource created by this collection, in dependency order, starting with the scoped admin fixtures and System resource server sub-resources that folder '07' added."
+		}
+	]
+}

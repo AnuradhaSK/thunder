@@ -31,6 +31,11 @@ type HandlerTestSuite struct {
 // SetupTest runs before each test
 func (suite *HandlerTestSuite) SetupTest() {
 	suite.mockService = new(ResourceServiceInterfaceMock)
+	// Permissive default so the resource-server read tests here, which predate the
+	// system:resource-servers OU-scoping check the handler now applies, keep passing unchanged.
+	// The check's own behavior is covered by SharingServiceTestSuite's RequireVisibility tests.
+	suite.mockService.On("RequireVisibility", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Return(nil).Maybe()
 	suite.handler = newResourceHandler(suite.mockService)
 }
 
@@ -58,7 +63,7 @@ func (suite *HandlerTestSuite) TestHandleResourceServerListRequest_Success() {
 		Links:           links,
 	}, nil)
 
-	req := httptest.NewRequest("GET", "/resource-servers", nil)
+	req := httptest.NewRequest("GET", "/resource-servers", nil).WithContext(testRootContext())
 	w := httptest.NewRecorder()
 
 	suite.handler.HandleResourceServerListRequest(w, req)
@@ -69,6 +74,43 @@ func (suite *HandlerTestSuite) TestHandleResourceServerListRequest_Success() {
 	suite.NoError(err)
 	suite.Equal(2, resp.TotalResults)
 	suite.Equal(2, len(resp.ResourceServers))
+}
+
+// A caller without the root permission must be rerouted to its own OU's owned-plus-shared
+// listing rather than the unrestricted deployment-wide one, so a scoped administrator can never
+// enumerate another OU's catalog. Mirrors HandleRoleListRequest's own branch in internal/role.
+func (suite *HandlerTestSuite) TestHandleResourceServerListRequest_ScopedCallerConfinedToOwnOU() {
+	suite.mockService.On("GetResourceServersForOU", mock.Anything, "ou-1", 30, 0).
+		Return(&ResourceServerList{
+			TotalResults:    1,
+			StartIndex:      1,
+			Count:           1,
+			ResourceServers: []providers.ResourceServer{{ID: "rs-own", Name: "Own RS", OUID: "ou-1"}},
+		}, nil)
+
+	req := httptest.NewRequest("GET", "/resource-servers", nil).WithContext(testOwnOUContext("ou-1"))
+	w := httptest.NewRecorder()
+
+	suite.handler.HandleResourceServerListRequest(w, req)
+
+	suite.Equal(http.StatusOK, w.Code)
+	var resp ResourceServerListResponse
+	suite.NoError(json.Unmarshal(w.Body.Bytes(), &resp))
+	suite.Equal(1, resp.TotalResults)
+	suite.mockService.AssertNotCalled(suite.T(), "GetResourceServerList",
+		mock.Anything, mock.Anything, mock.Anything)
+}
+
+func (suite *HandlerTestSuite) TestHandleResourceServerListRequest_ScopedCallerError() {
+	suite.mockService.On("GetResourceServersForOU", mock.Anything, "ou-1", 30, 0).
+		Return(nil, &ErrorResourceOutsideOwnOUScope)
+
+	req := httptest.NewRequest("GET", "/resource-servers", nil).WithContext(testOwnOUContext("ou-1"))
+	w := httptest.NewRecorder()
+
+	suite.handler.HandleResourceServerListRequest(w, req)
+
+	suite.Equal(http.StatusForbidden, w.Code)
 }
 
 func (suite *HandlerTestSuite) TestHandleResourceServerListRequest_InvalidLimit() {
@@ -84,7 +126,7 @@ func (suite *HandlerTestSuite) TestHandleResourceServerListRequest_Error() {
 	suite.mockService.On("GetResourceServerList", mock.Anything,
 		30, 0).Return(nil, &tidcommon.InternalServerError)
 
-	req := httptest.NewRequest("GET", "/resource-servers", nil)
+	req := httptest.NewRequest("GET", "/resource-servers", nil).WithContext(testRootContext())
 	w := httptest.NewRecorder()
 
 	suite.handler.HandleResourceServerListRequest(w, req)

@@ -687,6 +687,10 @@ func (f *fakeRoleAssignmentService) ResolveAssignmentOUIDs(
 type fakeSharingAdapter struct {
 	calls    []fakeSharingAdapterCall
 	shareErr *tidcommon.ServiceError
+	// existing is what ExportGrants reports back, letting a test simulate grants a previous
+	// import run already created so the idempotency skip can be exercised.
+	existing    []sharing.ReplayableGrant
+	exportCalls int
 }
 
 type fakeSharingAdapterCall struct {
@@ -694,6 +698,13 @@ type fakeSharingAdapterCall struct {
 	resourceID           string
 	owningOUID, actingOU string
 	policy               sharing.SharePolicy
+}
+
+func (f *fakeSharingAdapter) ExportGrants(
+	_ context.Context, _ sharing.ResourceType, _ string,
+) ([]sharing.ReplayableGrant, *tidcommon.ServiceError) {
+	f.exportCalls++
+	return f.existing, nil
 }
 
 func (f *fakeSharingAdapter) Share(
@@ -3064,6 +3075,21 @@ func TestGetAgentOAuthConfigForImport_NilRequest(t *testing.T) {
 type fakeResourceServerService struct {
 	created []providers.ResourceServer
 	updated []providers.ResourceServer
+	// shared records each ShareResourceServer call, which is how a declared grants block
+	// reaches the resource tree (a cascade), rather than only the resource server row.
+	shared []fakeResourceServerShareCall
+}
+
+type fakeResourceServerShareCall struct {
+	id  string
+	req resource.ShareRequest
+}
+
+func (f *fakeResourceServerService) ShareResourceServer(
+	_ context.Context, id string, req resource.ShareRequest,
+) ([]resource.GrantInfo, *tidcommon.ServiceError) {
+	f.shared = append(f.shared, fakeResourceServerShareCall{id: id, req: req})
+	return nil, nil
 }
 
 func (f *fakeResourceServerService) CreateResourceServer(
@@ -3732,4 +3758,168 @@ func TestImportResources_IDPUpsertUpdatePropertiesArePassedToService(t *testing.
 	plainValue, err2 := updated.Properties[0].GetValue()
 	require.NoError(t, err2)
 	assert.Equal(t, "updated-client-id", plainValue)
+}
+
+// TestImportResourceServer_AppliesGrants verifies a resource_server document's grants
+// block is replayed through the sharing service, with an omitted acting OU defaulting to the
+// resource server's own owning OU. This is what lets the bootstrap System resource server be made
+// visible deployment-wide, without which no organization unit but the owner could use the
+// management permissions it defines.
+func TestImportResourceServer_AppliesGrants(t *testing.T) {
+	ouSvc := &fakeOUService{existing: map[string]providers.OrganizationUnit{
+		"ou-owner": {ID: "ou-owner", Handle: "default"},
+	}}
+	rsSvc := &fakeResourceServerService{}
+	sharingSvc := &fakeSharingAdapter{}
+	svc := newImportService(
+		nil, nil, nil, nil, ouSvc, nil, nil, nil, nil, rsSvc, nil, nil, nil, nil, nil, nil, nil, nil,
+	)
+	svc.sharingService = sharingSvc
+
+	content := strings.Join([]string{
+		"resource_type: resource_server",
+		"id: rs-new",
+		"name: System",
+		"ouId: ou-owner",
+		"grants:",
+		"  - allOus: true",
+		"",
+	}, "\n")
+
+	resp, err := svc.ImportResources(context.Background(), &ImportRequest{Content: content})
+
+	require.Nil(t, err)
+	require.Len(t, resp.Results, 1)
+	assert.Equal(t, statusSuccess, resp.Results[0].Status)
+	// Routed through ShareResourceServer, not the generic Share, so the grant cascades to the
+	// server's resources and actions. A server-row-only grant would leave every permission it
+	// defines invisible.
+	require.Len(t, rsSvc.shared, 1)
+	assert.Equal(t, "rs-new", rsSvc.shared[0].id)
+	assert.True(t, rsSvc.shared[0].req.AllOUs)
+	assert.Empty(t, sharingSvc.calls, "the generic Share must not be used for a resource server")
+}
+
+// TestImportResourceServer_GrantsAreIdempotent is the reason this path does not simply mirror
+// applyRoleSharing: bootstrap re-runs against an existing deployment by design, and Share() does
+// not dedupe, so an unconditional replay would append a duplicate grant row on every single run.
+func TestImportResourceServer_GrantsAreIdempotent(t *testing.T) {
+	ouSvc := &fakeOUService{existing: map[string]providers.OrganizationUnit{
+		"ou-owner": {ID: "ou-owner", Handle: "default"},
+	}}
+	rsSvc := &fakeResourceServerService{}
+	sharingSvc := &fakeSharingAdapter{
+		existing: []sharing.ReplayableGrant{
+			{ActingOUID: "ou-owner", Policy: sharing.SharePolicy{AllOUs: true}},
+		},
+	}
+	svc := newImportService(
+		nil, nil, nil, nil, ouSvc, nil, nil, nil, nil, rsSvc, nil, nil, nil, nil, nil, nil, nil, nil,
+	)
+	svc.sharingService = sharingSvc
+
+	content := strings.Join([]string{
+		"resource_type: resource_server",
+		"id: rs-new",
+		"name: System",
+		"ouId: ou-owner",
+		"grants:",
+		"  - allOus: true",
+		"",
+	}, "\n")
+
+	resp, err := svc.ImportResources(context.Background(), &ImportRequest{Content: content})
+
+	require.Nil(t, err)
+	assert.Equal(t, statusSuccess, resp.Results[0].Status)
+	assert.Equal(t, 1, sharingSvc.exportCalls, "existing grants must be consulted")
+	assert.Empty(t, rsSvc.shared, "an already-present grant must not be created again")
+}
+
+// A grant that differs from what already exists must still be created: the skip is per grant, not
+// an all-or-nothing bail-out once any grant is found.
+func TestImportResourceServer_GrantsSkipsOnlyMatchingGrant(t *testing.T) {
+	ouSvc := &fakeOUService{existing: map[string]providers.OrganizationUnit{
+		"ou-owner": {ID: "ou-owner", Handle: "default"},
+	}}
+	rsSvc := &fakeResourceServerService{}
+	sharingSvc := &fakeSharingAdapter{
+		existing: []sharing.ReplayableGrant{
+			{ActingOUID: "ou-owner", Policy: sharing.SharePolicy{AllOUs: true}},
+		},
+	}
+	svc := newImportService(
+		nil, nil, nil, nil, ouSvc, nil, nil, nil, nil, rsSvc, nil, nil, nil, nil, nil, nil, nil, nil,
+	)
+	svc.sharingService = sharingSvc
+
+	content := strings.Join([]string{
+		"resource_type: resource_server",
+		"id: rs-new",
+		"name: System",
+		"ouId: ou-owner",
+		"grants:",
+		"  - allOus: true",
+		"  - rootOuIds: [root-b]",
+		"",
+	}, "\n")
+
+	resp, err := svc.ImportResources(context.Background(), &ImportRequest{Content: content})
+
+	require.Nil(t, err)
+	assert.Equal(t, statusSuccess, resp.Results[0].Status)
+	require.Len(t, rsSvc.shared, 1, "only the not-yet-present grant is created")
+	assert.Equal(t, []string{"root-b"}, rsSvc.shared[0].req.RootOUIDs)
+}
+
+// A document with no grants block must not consult the sharing service at all, so every
+// pre-existing resource_server import keeps working with sharingService unset.
+func TestImportResourceServer_NoGrantsIsNoOp(t *testing.T) {
+	ouSvc := &fakeOUService{existing: map[string]providers.OrganizationUnit{
+		"ou-owner": {ID: "ou-owner", Handle: "default"},
+	}}
+	rsSvc := &fakeResourceServerService{}
+	sharingSvc := &fakeSharingAdapter{}
+	svc := newImportService(
+		nil, nil, nil, nil, ouSvc, nil, nil, nil, nil, rsSvc, nil, nil, nil, nil, nil, nil, nil, nil,
+	)
+	svc.sharingService = sharingSvc
+
+	content := strings.Join([]string{
+		"resource_type: resource_server",
+		"id: rs-plain",
+		"name: Plain RS",
+		"ouId: ou-owner",
+		"",
+	}, "\n")
+
+	resp, err := svc.ImportResources(context.Background(), &ImportRequest{Content: content})
+
+	require.Nil(t, err)
+	assert.Equal(t, statusSuccess, resp.Results[0].Status)
+	assert.Zero(t, sharingSvc.exportCalls)
+	assert.Empty(t, rsSvc.shared)
+}
+
+func TestReplayableGrantPresent(t *testing.T) {
+	existing := []sharing.ReplayableGrant{
+		{ActingOUID: "ou-a", Policy: sharing.SharePolicy{
+			AllRoots: true, ExcludedRootOUIDs: []string{"r1", "r2"},
+		}},
+	}
+
+	// Same acting OU and policy, exclusions in a different order.
+	assert.True(t, replayableGrantPresent(existing, "ou-a", sharing.SharePolicy{
+		AllRoots: true, ExcludedRootOUIDs: []string{"r2", "r1"},
+	}))
+	// Different acting OU.
+	assert.False(t, replayableGrantPresent(existing, "ou-b", sharing.SharePolicy{
+		AllRoots: true, ExcludedRootOUIDs: []string{"r1", "r2"},
+	}))
+	// Different exclusion set.
+	assert.False(t, replayableGrantPresent(existing, "ou-a", sharing.SharePolicy{
+		AllRoots: true, ExcludedRootOUIDs: []string{"r1"},
+	}))
+	// Different mode entirely.
+	assert.False(t, replayableGrantPresent(existing, "ou-a", sharing.SharePolicy{AllOUs: true}))
 }

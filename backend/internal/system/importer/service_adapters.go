@@ -64,6 +64,13 @@ type roleDeclarativeYAML struct {
 	Grants      []role.ShareRequest        `yaml:"grants,omitempty"`
 }
 
+// resourceServerSharingYAML captures just the sharing block of a resource_server document.
+// providers.ResourceServer is the service-layer model and deliberately carries no grants
+// field, so the block is decoded from the same node separately rather than widening that model.
+type resourceServerSharingYAML struct {
+	Grants []resource.ShareRequest `yaml:"grants,omitempty"`
+}
+
 type userDeclarativeYAML struct {
 	ID          string                 `yaml:"id"`
 	Type        string                 `yaml:"type"`
@@ -546,6 +553,9 @@ func (s *importService) importResourceServer(
 			if err := s.importResourceServerChildren(ctx, updated.ID, req); err != nil {
 				return serviceErrorOutcome(resourceTypeResourceServer, updated.ID, updated.Name, operationUpdate, err)
 			}
+			if err := s.applyResourceServerSharing(ctx, doc, updated.ID, updated.OUID); err != nil {
+				return serviceErrorOutcome(resourceTypeResourceServer, updated.ID, updated.Name, operationUpdate, err)
+			}
 			return successOutcome(resourceTypeResourceServer, updated.ID, updated.Name, operationUpdate)
 		}
 
@@ -563,7 +573,103 @@ func (s *importService) importResourceServer(
 		return serviceErrorOutcome(resourceTypeResourceServer, created.ID, created.Name, operationCreate, err)
 	}
 
+	if err := s.applyResourceServerSharing(ctx, doc, created.ID, created.OUID); err != nil {
+		return serviceErrorOutcome(resourceTypeResourceServer, created.ID, created.Name, operationCreate, err)
+	}
+
 	return successOutcome(resourceTypeResourceServer, created.ID, created.Name, operationCreate)
+}
+
+// applyResourceServerSharing replays a declaratively-declared resource server's grants
+// through resourceService.ShareResourceServer, so they pass the same eligibility checks and take
+// the same cascade a live POST /resource-servers/{id}/grants call would. A no-op when the
+// document declares none.
+//
+// Cascading is the whole point of going through the resource service rather than calling
+// sharingService.Share directly (which is what the role path does): a resource server has no
+// permission string of its own, its permissions are its resources and actions. A grant on the
+// server row alone satisfies FilterVisiblePermissions' server-level gate but fails the
+// per-permission node check, so every permission the server defines would still be invisible and
+// every role naming one would be rejected with ROL-1025. See §4.6 and §5.1 of
+//
+// Unlike applyRoleSharing this is idempotent: bootstrap and import both run repeatedly against an
+// existing deployment (bootstrap is upsert-based by design), and Share() itself does not dedupe,
+// so replaying unconditionally would append a fresh duplicate grant row on every run. Grants
+// already present are therefore skipped, compared against ExportGrants' replayable form, which is
+// exactly the shape being replayed.
+func (s *importService) applyResourceServerSharing(
+	ctx context.Context, doc parsedDocument, id, ownerOUID string,
+) *tidcommon.ServiceError {
+	var sharingBlock resourceServerSharingYAML
+	if err := doc.Node.Decode(&sharingBlock); err != nil {
+		return tidcommon.CustomServiceError(tidcommon.InternalServerError,
+			tidcommon.I18nMessage{DefaultValue: "failed to decode resource server grants: " + err.Error()})
+	}
+	if len(sharingBlock.Grants) == 0 {
+		return nil
+	}
+	if s.sharingService == nil {
+		return tidcommon.CustomServiceError(tidcommon.InternalServerError,
+			tidcommon.I18nMessage{DefaultValue: "sharingService not configured"})
+	}
+
+	existing, svcErr := s.sharingService.ExportGrants(
+		ctx, sharing.ResourceType(resourceTypeResourceServer), id)
+	if svcErr != nil {
+		return svcErr
+	}
+
+	for _, grant := range sharingBlock.Grants {
+		actingOUID := grant.OUID
+		if actingOUID == "" {
+			actingOUID = ownerOUID
+		}
+		if replayableGrantPresent(existing, actingOUID, grant.ToSharePolicy()) {
+			continue
+		}
+		if _, svcErr := s.resourceService.ShareResourceServer(ctx, id, grant); svcErr != nil {
+			return svcErr
+		}
+	}
+	return nil
+}
+
+// replayableGrantPresent reports whether existing already contains a grant equivalent to the one
+// (actingOUID, policy) would create. Slice fields are compared as sets, since neither the grant
+// store nor ExportGrants promises to preserve the order they were declared in.
+func replayableGrantPresent(
+	existing []sharing.ReplayableGrant, actingOUID string, policy sharing.SharePolicy,
+) bool {
+	for _, e := range existing {
+		if e.ActingOUID != actingOUID {
+			continue
+		}
+		p := e.Policy
+		if p.AllOUs == policy.AllOUs && p.AllRoots == policy.AllRoots && p.AllChildren == policy.AllChildren &&
+			sameStringSet(p.RootOUIDs, policy.RootOUIDs) &&
+			sameStringSet(p.OUIDs, policy.OUIDs) &&
+			sameStringSet(p.ExcludedRootOUIDs, policy.ExcludedRootOUIDs) &&
+			sameStringSet(p.ExcludedOUIDs, policy.ExcludedOUIDs) &&
+			sameStringSet(p.EditableFields, policy.EditableFields) {
+			return true
+		}
+	}
+	return false
+}
+
+// sameStringSet reports whether a and b contain the same elements, ignoring order and duplicates.
+func sameStringSet(a, b []string) bool {
+	set := make(map[string]struct{}, len(a))
+	for _, v := range a {
+		set[v] = struct{}{}
+	}
+	for _, v := range b {
+		if _, ok := set[v]; !ok {
+			return false
+		}
+		delete(set, v)
+	}
+	return len(set) == 0
 }
 
 //nolint:dupl // Theme and layout imports share the same upsert pattern with type-specific services.

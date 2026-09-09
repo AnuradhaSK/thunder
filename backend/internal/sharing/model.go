@@ -81,8 +81,19 @@ type TargetScope string
 
 const (
 	// TargetScopeAllRoots is a share-stage grant visible to every Root OU, except any listed in
-	// ExcludedOUIDs (and their subtrees).
+	// ExcludedOUIDs (and their subtrees). Note this covers Root OUs *only*: a Root's descendants
+	// are not reached by it, and need their own Root's children-targeting reshare. Use
+	// TargetScopeAllOUs when the intent is genuinely every OU at every depth.
 	TargetScopeAllRoots TargetScope = "all_roots"
+	// TargetScopeAllOUs is a share-stage grant visible to every OU in the deployment at every
+	// depth, current and future, except any listed in ExcludedOUIDs (and their subtrees). It is
+	// the only scope that expresses deployment-wide visibility in a single grant: AllRoots reaches
+	// Root OUs alone, and covering their subtrees otherwise needs one children-targeting reshare
+	// per Root, which no grant can issue for a Root created later. Owner-only, like the other
+	// share-stage scopes. Intended for a resource the whole deployment must always be able to see
+	// (the System resource server, whose permissions gate the management APIs themselves), not for
+	// ordinary B2B distribution, where naming the recipients is the point.
+	TargetScopeAllOUs TargetScope = "all_ous"
 	// TargetScopeRoot is a share-stage grant visible to one specific Root OU (TargetOUID).
 	TargetScopeRoot TargetScope = "root"
 	// TargetScopeAllChildren is a reshare-stage grant visible to every current and future OU in
@@ -148,13 +159,20 @@ type ReplayableGrant struct {
 	Policy     SharePolicy
 }
 
-// SharePolicy describes the target scope of a Share call. Exactly one of the two modes below must
-// be selected: root-targeting (AllRoots or a non-empty RootOUIDs) or children-targeting
-// (AllChildren or a non-empty OUIDs) — see the package doc comment for what each mode means and
-// who may use it.
+// SharePolicy describes the target scope of a Share call. Exactly one of the three modes below
+// must be selected: root-targeting (AllRoots or a non-empty RootOUIDs), children-targeting
+// (AllChildren or a non-empty OUIDs), or deployment-wide (AllOUs) — see the package doc comment
+// for what each mode means and who may use it.
 type SharePolicy struct {
-	// AllRoots shares the resource to every current and future Root OU. Root-targeting mode;
-	// only valid when the caller is the resource's owning OU.
+	// AllOUs shares the resource to every OU in the deployment at every depth, current and
+	// future. Deployment-wide mode; only valid when the caller is the resource's owning OU, and
+	// mutually exclusive with both other modes. Unlike AllRoots this reaches descendants too, so
+	// it is the only single grant that covers a Root created later *and* that Root's own subtree.
+	// See TargetScopeAllOUs for when this is the right tool.
+	AllOUs bool
+	// AllRoots shares the resource to every current and future Root OU, and to Root OUs only:
+	// their descendants are not covered (see TargetScopeAllRoots). Root-targeting mode; only
+	// valid when the caller is the resource's owning OU.
 	AllRoots bool
 	// RootOUIDs is the explicit set of Root OUs to share to. Ignored when AllRoots is true.
 	// Root-targeting mode; only valid when the caller is the resource's owning OU.
@@ -180,7 +198,9 @@ type SharePolicy struct {
 	SubtreeOUIDs []string
 	// ExcludedOUIDs carves these OUs (and their subtrees) out of an AllChildren grant, or out of
 	// any SubtreeOUIDs grant whose own subtree contains them. Each must be the caller itself or
-	// within its subtree. Ignored when neither AllChildren nor SubtreeOUIDs is set.
+	// within its subtree. Ignored when neither AllChildren nor SubtreeOUIDs is set. For an AllOUs
+	// grant this same field carves OUs (and their subtrees) out of the deployment-wide grant, and
+	// each entry may be any OU, since the grant itself spans every tree.
 	ExcludedOUIDs []string
 	// EditableFields names the templated fields made editable through this grant. Empty means
 	// "everything": every field the resource type declares, when actingOUID is the resource's own

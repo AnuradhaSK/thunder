@@ -41,6 +41,24 @@ var (
 		Query: `SELECT COUNT(*) as total FROM "RESOURCE_SERVER" WHERE DEPLOYMENT_ID = $1`,
 	}
 
+	// queryGetResourceServerListByOUID retrieves the resource servers owned by one organization
+	// unit, for the OU-confined listing a system:resource-servers caller gets (see §4.5 of
+	queryGetResourceServerListByOUID = dbmodel.DBQuery{
+		ID: "RSQ-RES_MGT-44",
+		Query: `SELECT ID, OU_ID, NAME, DESCRIPTION, IDENTIFIER, TYPE, PROPERTIES
+			FROM "RESOURCE_SERVER"
+			WHERE OU_ID = $3 AND DEPLOYMENT_ID = $4
+			ORDER BY CREATED_AT DESC
+			LIMIT $1 OFFSET $2`,
+	}
+
+	// queryGetResourceServerListCountByOUID counts the resource servers owned by one organization unit.
+	queryGetResourceServerListCountByOUID = dbmodel.DBQuery{
+		ID: "RSQ-RES_MGT-45",
+		Query: `SELECT COUNT(*) as total FROM "RESOURCE_SERVER"
+			WHERE OU_ID = $1 AND DEPLOYMENT_ID = $2`,
+	}
+
 	// queryUpdateResourceServer updates a resource server.
 	queryUpdateResourceServer = dbmodel.DBQuery{
 		ID: "RSQ-RES_MGT-05",
@@ -416,5 +434,37 @@ var (
 		              AND a.DEPLOYMENT_ID = $2
 		              AND a.PERMISSION = p.value
 		        )`,
+	}
+
+	// queryResolvePermissionNode resolves a single permission string, scoped to one resource
+	// server, to the Resource-or-Action row it names — the ID and its node kind ("resource" or
+	// "action") — for sharing-visibility resolution (see resourceSharing.FilterVisiblePermissions).
+	// Both RESOURCE.PERMISSION and ACTION.PERMISSION are unique within a resource server (the
+	// handle-uniqueness constraints enforce this at write time), so at most one row is returned.
+	queryResolvePermissionNode = dbmodel.DBQuery{
+		ID: "RSQ-RES_MGT-41",
+		Query: `SELECT ID, 'resource' AS kind FROM "RESOURCE"
+		        WHERE RESOURCE_SERVER_ID = $1 AND DEPLOYMENT_ID = $2 AND PERMISSION = $3
+		        UNION ALL
+		        SELECT ID, 'action' AS kind FROM "ACTION"
+		        WHERE RESOURCE_SERVER_ID = $1 AND DEPLOYMENT_ID = $2 AND PERMISSION = $3`,
+	}
+
+	// queryResolveResourceNodePermission is the inverse of queryResolvePermissionNode: given a
+	// Resource row ID, resolves its owning resource server ID and its own derived permission
+	// string, for stripping a role's stored permission when a share grant naming this exact
+	// resource is revoked (see resourceService.OnUnshare).
+	queryResolveResourceNodePermission = dbmodel.DBQuery{
+		ID: "RSQ-RES_MGT-42",
+		Query: `SELECT RESOURCE_SERVER_ID, PERMISSION FROM "RESOURCE"
+		        WHERE ID = $1 AND DEPLOYMENT_ID = $2`,
+	}
+
+	// queryResolveActionNodePermission is the action-table equivalent of
+	// queryResolveResourceNodePermission.
+	queryResolveActionNodePermission = dbmodel.DBQuery{
+		ID: "RSQ-RES_MGT-43",
+		Query: `SELECT RESOURCE_SERVER_ID, PERMISSION FROM "ACTION"
+		        WHERE ID = $1 AND DEPLOYMENT_ID = $2`,
 	}
 )

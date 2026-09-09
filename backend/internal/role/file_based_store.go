@@ -364,6 +364,13 @@ func (f *fileBasedStore) DeleteRolePermission(
 	return 0, nil
 }
 
+// DeleteRolePermissionForOU is a no-op for the file-based store: declarative role permissions are
+// immutable, so there is nothing to remove.
+func (f *fileBasedStore) DeleteRolePermissionForOU(
+	_ context.Context, _, _, _ string) (int64, error) {
+	return 0, nil
+}
+
 // DeleteAssignmentsByOUID is a no-op for the file-based store: declarative roles are not
 // shareable and hold no mutable runtime assignments to clean up.
 func (f *fileBasedStore) DeleteAssignmentsByOUID(_ context.Context, _, _ string) error {

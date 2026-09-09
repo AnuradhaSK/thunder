@@ -143,6 +143,72 @@ func (c *compositeResourceStore) GetResourceServerListCount(ctx context.Context)
 	return len(merged), nil
 }
 
+// GetResourceServerListByOUID returns ouID's resource servers, deduplicated across both stores and
+// paginated on the merged slice, mirroring GetResourceServerList's own handling.
+func (c *compositeResourceStore) GetResourceServerListByOUID(
+	ctx context.Context, ouID string, limit, offset int,
+) ([]providers.ResourceServer, error) {
+	merged, err := c.mergedResourceServersByOUID(ctx, ouID)
+	if err != nil {
+		return nil, err
+	}
+
+	start := offset
+	if start > len(merged) {
+		return []providers.ResourceServer{}, nil
+	}
+	end := start + limit
+	if end > len(merged) {
+		end = len(merged)
+	}
+	return merged[start:end], nil
+}
+
+// GetResourceServerListCountByOUID returns ouID's deduplicated resource server count across both
+// stores.
+func (c *compositeResourceStore) GetResourceServerListCountByOUID(
+	ctx context.Context, ouID string,
+) (int, error) {
+	merged, err := c.mergedResourceServersByOUID(ctx, ouID)
+	if err != nil {
+		return 0, err
+	}
+	return len(merged), nil
+}
+
+// mergedResourceServersByOUID collects ouID's resource servers from both stores and deduplicates
+// them, applying the composite-mode record cap the same way the unfiltered listing does.
+func (c *compositeResourceStore) mergedResourceServersByOUID(
+	ctx context.Context, ouID string,
+) ([]providers.ResourceServer, error) {
+	dbCount, err := c.dbStore.GetResourceServerListCountByOUID(ctx, ouID)
+	if err != nil {
+		return nil, err
+	}
+	fileCount, err := c.fileStore.GetResourceServerListCountByOUID(ctx, ouID)
+	if err != nil {
+		return nil, err
+	}
+	if dbCount == 0 && fileCount == 0 {
+		return []providers.ResourceServer{}, nil
+	}
+
+	dbServers, err := c.dbStore.GetResourceServerListByOUID(ctx, ouID, dbCount, 0)
+	if err != nil {
+		return nil, err
+	}
+	fileServers, err := c.fileStore.GetResourceServerListByOUID(ctx, ouID, fileCount, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	merged := mergeAndDeduplicateResourceServers(dbServers, fileServers)
+	if len(merged) > serverconst.MaxCompositeStoreRecords {
+		return nil, errResultLimitExceededInCompositeMode
+	}
+	return merged, nil
+}
+
 // UpdateResourceServer updates a resource server in the database store.
 func (c *compositeResourceStore) UpdateResourceServer(
 	ctx context.Context,
@@ -597,6 +663,36 @@ func (c *compositeResourceStore) ValidatePermissions(
 	}
 
 	return result, nil
+}
+
+// ResolvePermissionNode checks the DB store first, then the file (declarative) store — a given
+// resource server ID only ever exists in one of the two, so at most one of these finds anything.
+func (c *compositeResourceStore) ResolvePermissionNode(
+	ctx context.Context, resServerID, permission string,
+) (id, kind string, found bool, err error) {
+	id, kind, found, err = c.dbStore.ResolvePermissionNode(ctx, resServerID, permission)
+	if err != nil {
+		return "", "", false, err
+	}
+	if found {
+		return id, kind, true, nil
+	}
+	return c.fileStore.ResolvePermissionNode(ctx, resServerID, permission)
+}
+
+// ResolveNodePermission checks the DB store first, then the file (declarative) store — a given
+// node ID only ever exists in one of the two, so at most one of these finds anything.
+func (c *compositeResourceStore) ResolveNodePermission(
+	ctx context.Context, kind, nodeID string,
+) (resourceServerID, permission string, found bool, err error) {
+	resourceServerID, permission, found, err = c.dbStore.ResolveNodePermission(ctx, kind, nodeID)
+	if err != nil {
+		return "", "", false, err
+	}
+	if found {
+		return resourceServerID, permission, true, nil
+	}
+	return c.fileStore.ResolveNodePermission(ctx, kind, nodeID)
 }
 
 // mergeAndDeduplicateResourceServers merges resource servers with database entries taking precedence.

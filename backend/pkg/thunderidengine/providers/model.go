@@ -1259,6 +1259,10 @@ type AccessEvaluationRequest struct {
 	ResourceServer AccessEvaluationResourceServer `json:"resourceServer"`
 	Permission     Permission                     `json:"permission"`
 	Context        map[string]interface{}         `json:"context,omitempty"`
+	// OUID scopes the check to permissions granted by role assignments made in that organization
+	// unit (owner or sharee). Empty preserves the prior, deployment-wide (unscoped) behavior for
+	// callers that have not adopted OU-scoped authorization.
+	OUID string `json:"ouId,omitempty"`
 }
 
 // AccessEvaluationResponse represents a single fine-grained access evaluation response.

@@ -301,6 +301,23 @@ var (
 				"delete this role; a shared or reshared organization unit cannot delete the original role",
 		},
 	}
+	// ErrorPermissionNotVisibleToOU is returned when a role write names a permission whose resource
+	// server, or the specific resource/action it names, is not visible (owned or shared) to the
+	// role's owning organization unit — the write-time counterpart of the same check
+	// GetAuthorizedPermissionsByResourceServer applies at token-issuance time. See
+	ErrorPermissionNotVisibleToOU = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "ROL-1025",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.roleservice.permission_not_visible_to_ou",
+			DefaultValue: "Permission not available to this organization unit",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key: "error.roleservice.permission_not_visible_to_ou_description",
+			DefaultValue: "One or more requested permissions belong to a resource server, resource, or " +
+				"action that has not been shared to this organization unit",
+		},
+	}
 )
 
 // Internal error constants for role management operations.

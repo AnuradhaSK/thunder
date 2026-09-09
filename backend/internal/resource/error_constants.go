@@ -286,6 +286,24 @@ var (
 			DefaultValue: "A resource server with the specified ID already exists",
 		},
 	}
+	// ErrorResourceOutsideOwnOUScope is returned when a caller without the root permission attempts
+	// to act on behalf of an organization unit other than its own token-issued one. Mirrors
+	// internal/role's ErrorRoleOutsideOwnOUScope (ROL-1023) for the system:resource-servers/
+	// system:resource-servers:view scope.
+	ErrorResourceOutsideOwnOUScope = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "RES-1024",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.resourceservice.resource_outside_own_ou_scope",
+			DefaultValue: "Outside the caller's organization unit scope",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key: "error.resourceservice.resource_outside_own_ou_scope_description",
+			DefaultValue: "The system:resource-servers/system:resource-servers:view scope confines the " +
+				"caller to its own token-issued organization unit; the requested organization unit is " +
+				"outside that scope",
+		},
+	}
 )
 
 // Internal error constants.

@@ -20,6 +20,12 @@ type resourceStoreInterface interface {
 	GetResourceServer(ctx context.Context, id string) (providers.ResourceServer, error)
 	GetResourceServerList(ctx context.Context, limit, offset int) ([]providers.ResourceServer, error)
 	GetResourceServerListCount(ctx context.Context) (int, error)
+	// GetResourceServerListByOUID and GetResourceServerListCountByOUID back the OU-confined
+	// listing a caller holding system:resource-servers(:view) but not the root permission gets.
+	GetResourceServerListByOUID(
+		ctx context.Context, ouID string, limit, offset int,
+	) ([]providers.ResourceServer, error)
+	GetResourceServerListCountByOUID(ctx context.Context, ouID string) (int, error)
 	UpdateResourceServer(ctx context.Context, id string, rs providers.ResourceServer) error
 	DeleteResourceServer(ctx context.Context, id string) error
 	CheckResourceServerNameExists(ctx context.Context, name string) (bool, error)
@@ -63,6 +69,16 @@ type resourceStoreInterface interface {
 		ctx context.Context, resServerID string, resID *string, handle string,
 	) (bool, error)
 	ValidatePermissions(ctx context.Context, resServerID string, permissions []string) ([]string, error)
+	// ResolvePermissionNode resolves permission, scoped to resServerID, to the Resource-or-Action
+	// row it names. found is false if no row has that exact permission string. kind is "resource"
+	// or "action" when found.
+	ResolvePermissionNode(ctx context.Context, resServerID, permission string) (id, kind string, found bool, err error)
+	// ResolveNodePermission is the inverse of ResolvePermissionNode: given a Resource-or-Action row
+	// ID (kind is "resource" or "action"), resolves its owning resource server ID and its own
+	// derived permission string. found is false if no row with that ID exists.
+	ResolveNodePermission(
+		ctx context.Context, kind, nodeID string,
+	) (resourceServerID, permission string, found bool, err error)
 }
 
 // resourceStore is the default implementation of resourceStoreInterface.
@@ -176,6 +192,50 @@ func (s *resourceStore) GetResourceServerListCount(ctx context.Context) (int, er
 		results, err := dbClient.QueryContext(ctx, queryGetResourceServerListCount, s.scope(ctx))
 		if err != nil {
 			return fmt.Errorf("failed to get resource server count: %w", err)
+		}
+
+		count, err = parseCountResult(results)
+		return err
+	})
+	return count, err
+}
+
+// GetResourceServerListByOUID retrieves the resource servers owned by one organization unit.
+func (s *resourceStore) GetResourceServerListByOUID(
+	ctx context.Context, ouID string, limit, offset int,
+) ([]providers.ResourceServer, error) {
+	var resourceServers []providers.ResourceServer
+	err := s.withDBClient(func(dbClient provider.DBClientInterface) error {
+		results, err := dbClient.QueryContext(
+			ctx, queryGetResourceServerListByOUID, limit, offset, ouID, s.scope(ctx))
+		if err != nil {
+			return fmt.Errorf("failed to get resource server list by organization unit: %w", err)
+		}
+
+		resourceServers = make([]providers.ResourceServer, 0, len(results))
+		for _, row := range results {
+			rs, err := buildResourceServerFromResultRow(row)
+			if err != nil {
+				return fmt.Errorf("failed to build resource server: %w", err)
+			}
+			resourceServers = append(resourceServers, rs)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resourceServers, nil
+}
+
+// GetResourceServerListCountByOUID counts the resource servers owned by one organization unit.
+func (s *resourceStore) GetResourceServerListCountByOUID(ctx context.Context, ouID string) (int, error) {
+	var count int
+	err := s.withDBClient(func(dbClient provider.DBClientInterface) error {
+		results, err := dbClient.QueryContext(ctx, queryGetResourceServerListCountByOUID, ouID, s.scope(ctx))
+		if err != nil {
+			return fmt.Errorf("failed to get resource server count by organization unit: %w", err)
 		}
 
 		count, err = parseCountResult(results)
@@ -865,6 +925,72 @@ func (s *resourceStore) ValidatePermissions(
 	}
 
 	return invalidPermissions, nil
+}
+
+// ResolvePermissionNode resolves permission, scoped to resServerID, to the Resource-or-Action row
+// it names.
+func (s *resourceStore) ResolvePermissionNode(
+	ctx context.Context, resServerID, permission string,
+) (id, kind string, found bool, err error) {
+	err = s.withDBClient(func(dbClient provider.DBClientInterface) error {
+		results, queryErr := dbClient.QueryContext(
+			ctx, queryResolvePermissionNode, resServerID, s.scope(ctx), permission,
+		)
+		if queryErr != nil {
+			return fmt.Errorf("failed to resolve permission node: %w", queryErr)
+		}
+		if len(results) == 0 {
+			return nil
+		}
+		resolvedID, ok := results[0]["id"].(string)
+		if !ok {
+			return fmt.Errorf("id field is missing or invalid in query result")
+		}
+		resolvedKind, ok := results[0]["kind"].(string)
+		if !ok {
+			return fmt.Errorf("kind field is missing or invalid in query result")
+		}
+		id, kind, found = resolvedID, resolvedKind, true
+		return nil
+	})
+	if err != nil {
+		return "", "", false, err
+	}
+	return id, kind, found, nil
+}
+
+// ResolveNodePermission resolves nodeID (a Resource row when kind is "resource", an Action row
+// when kind is "action") to its owning resource server ID and its own derived permission string.
+func (s *resourceStore) ResolveNodePermission(
+	ctx context.Context, kind, nodeID string,
+) (resourceServerID, permission string, found bool, err error) {
+	query := queryResolveResourceNodePermission
+	if kind == nodeKindAction {
+		query = queryResolveActionNodePermission
+	}
+	err = s.withDBClient(func(dbClient provider.DBClientInterface) error {
+		results, queryErr := dbClient.QueryContext(ctx, query, nodeID, s.scope(ctx))
+		if queryErr != nil {
+			return fmt.Errorf("failed to resolve node permission: %w", queryErr)
+		}
+		if len(results) == 0 {
+			return nil
+		}
+		resolvedRSID, ok := results[0]["resource_server_id"].(string)
+		if !ok {
+			return fmt.Errorf("resource_server_id field is missing or invalid in query result")
+		}
+		resolvedPermission, ok := results[0]["permission"].(string)
+		if !ok {
+			return fmt.Errorf("permission field is missing or invalid in query result")
+		}
+		resourceServerID, permission, found = resolvedRSID, resolvedPermission, true
+		return nil
+	})
+	if err != nil {
+		return "", "", false, err
+	}
+	return resourceServerID, permission, found, nil
 }
 
 // Helper methods

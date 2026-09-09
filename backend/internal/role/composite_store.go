@@ -392,6 +392,13 @@ func (c *compositeRoleStore) DeleteRolePermission(
 	return c.dbStore.DeleteRolePermission(ctx, resourceServerID, permission)
 }
 
+// DeleteRolePermissionForOU removes the permission from the database store only. Declarative role
+// permissions are immutable, so there is nothing to remove from the file store.
+func (c *compositeRoleStore) DeleteRolePermissionForOU(
+	ctx context.Context, ouID, resourceServerID, permission string) (int64, error) {
+	return c.dbStore.DeleteRolePermissionForOU(ctx, ouID, resourceServerID, permission)
+}
+
 // DeleteAssignmentsByOUID deletes ouID's assignments for a role from the database store only.
 // Declarative roles hold no mutable runtime assignments to clean up for a sharee OU.
 func (c *compositeRoleStore) DeleteAssignmentsByOUID(ctx context.Context, id, ouID string) error {

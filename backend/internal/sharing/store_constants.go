@@ -127,9 +127,10 @@ var (
 )
 
 // buildRelevantGrantsQuery constructs a database-specific query returning every grant of
-// resourceType that could plausibly cover any OU in chainOUIDs: an all_roots grant (which can
-// apply to any root, so it is always a candidate) or one whose TARGET_OU_ID matches an element of
-// chainOUIDs. This is a bounded row fetch only — the caller (evaluateChainVisibility in
+// resourceType that could plausibly cover any OU in chainOUIDs: an all_ous grant (which covers
+// every OU, so it is always a candidate), an all_roots grant (which can apply to any root, so it
+// is likewise always a candidate), or one whose TARGET_OU_ID matches an element of chainOUIDs.
+// This is a bounded row fetch only — the caller (evaluateChainVisibility in
 // service.go) does the actual per-resource, hop-by-hop coverage evaluation, including exclusion
 // checks and chain integrity, in memory.
 func buildRelevantGrantsQuery(
@@ -147,11 +148,11 @@ func buildRelevantGrantsQuery(
 	columns := `ID, RESOURCE_TYPE, RESOURCE_ID, OWNING_OU_ID, SHARE_STAGE, TARGET_SCOPE, TARGET_OU_ID, PARENT_GRANT_ID`
 	postgresQuery := fmt.Sprintf(
 		`SELECT %s FROM "RESOURCE_GRANT" WHERE DEPLOYMENT_ID = $1 AND RESOURCE_TYPE = $2 `+
-			`AND (TARGET_SCOPE = 'all_roots' OR TARGET_OU_ID IN (%s))`,
+			`AND (TARGET_SCOPE IN ('all_roots', 'all_ous') OR TARGET_OU_ID IN (%s))`,
 		columns, strings.Join(postgresPlaceholders, ","))
 	sqliteQuery := fmt.Sprintf(
 		`SELECT %s FROM "RESOURCE_GRANT" WHERE DEPLOYMENT_ID = ? AND RESOURCE_TYPE = ? `+
-			`AND (TARGET_SCOPE = 'all_roots' OR TARGET_OU_ID IN (%s))`,
+			`AND (TARGET_SCOPE IN ('all_roots', 'all_ous') OR TARGET_OU_ID IN (%s))`,
 		columns, strings.Join(sqlitePlaceholders, ","))
 
 	query := dbmodel.DBQuery{

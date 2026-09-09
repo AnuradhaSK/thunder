@@ -76,6 +76,11 @@ CREATE INDEX idx_role_assignment_ou ON "ROLE_ASSIGNMENT" (DEPLOYMENT_ID, ROLE_ID
 -- ancestor chain up to that anchor, so newly created child OUs are automatically in scope with no
 -- backfill. 'ou_subtree' differs from 'all_children' only in that its anchor is a named direct child
 -- of the issuing OU rather than the issuing OU itself, and that the anchor is itself in scope.
+-- TARGET_SCOPE='all_ous' is the one deployment-wide scope: an owner-issued grant covering every OU
+-- at every depth, current and future, minus its own exclusion list. It exists because 'all_roots'
+-- covers Root OUs only, so spanning their subtrees would otherwise need one 'all_children' reshare
+-- per Root, which nothing can issue for a Root created later. Reserved for resources the whole
+-- deployment must always see, such as the System resource server.
 CREATE TABLE "RESOURCE_GRANT" (
     DEPLOYMENT_ID   VARCHAR(255) NOT NULL,
     ID              VARCHAR(36) PRIMARY KEY,
@@ -83,7 +88,7 @@ CREATE TABLE "RESOURCE_GRANT" (
     RESOURCE_ID     VARCHAR(36) NOT NULL,
     OWNING_OU_ID    VARCHAR(36) NOT NULL,
     SHARE_STAGE     VARCHAR(7) NOT NULL CHECK (SHARE_STAGE IN ('share', 'reshare')),
-    TARGET_SCOPE    VARCHAR(12) NOT NULL CHECK (TARGET_SCOPE IN ('all_roots', 'root', 'all_children', 'ou', 'ou_subtree')),
+    TARGET_SCOPE    VARCHAR(12) NOT NULL CHECK (TARGET_SCOPE IN ('all_ous', 'all_roots', 'root', 'all_children', 'ou', 'ou_subtree')),
     TARGET_OU_ID    VARCHAR(36),
     PARENT_GRANT_ID VARCHAR(36) REFERENCES "RESOURCE_GRANT" (ID) ON DELETE CASCADE,
     CREATED_AT      TIMESTAMPTZ DEFAULT NOW(),

@@ -265,6 +265,16 @@ func (suite *RoleServiceTestSuite) SetupTest() {
 	suite.mockGroupService = groupmock.NewGroupServiceInterfaceMock(suite.T())
 	suite.mockOUService = oumock.NewOrganizationUnitServiceInterfaceMock(suite.T())
 	suite.mockResourceService = resourcemock.NewResourceServiceInterfaceMock(suite.T())
+	// Permissive default so the many Create/Update tests that don't specifically target the
+	// resource-sharing visibility check keep passing unchanged; tests that do care override this
+	// with their own explicit expectation.
+	suite.mockResourceService.EXPECT().
+		FilterVisiblePermissions(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(
+			_ context.Context, _ string, permissions []string, _ string,
+		) ([]string, *tidcommon.ServiceError) {
+			return permissions, nil
+		}).Maybe()
 	suite.mockEntityTypeService = entitytypemock.NewEntityTypeServiceInterfaceMock(suite.T())
 	suite.sharingService = &fakeSharingService{
 		// Permissive default so the many Create/Update/Delete tests that don't care about the
@@ -2182,6 +2192,36 @@ func (suite *RoleServiceTestSuite) TestCascadeDeleteDependencies_RemovesAllPermi
 	suite.NoError(err)
 	suite.Equal(2, deleted)
 	suite.mockStore.AssertNotCalled(suite.T(), "DeleteRolePermission", mock.Anything, "rs2", "list")
+}
+
+func (suite *RoleServiceTestSuite) TestRevokeRolePermissionForOU_Success() {
+	suite.mockStore.On("DeleteRolePermissionForOU", mock.Anything, "ou1", "rs1", "books:create").
+		Return(int64(2), nil)
+
+	count, err := suite.service.RevokeRolePermissionForOU(context.Background(), "ou1", "rs1", "books:create")
+
+	suite.NoError(err)
+	suite.Equal(2, count)
+}
+
+func (suite *RoleServiceTestSuite) TestRevokeRolePermissionForOU_NoMatchingRoles() {
+	suite.mockStore.On("DeleteRolePermissionForOU", mock.Anything, "ou1", "rs1", "books:create").
+		Return(int64(0), nil)
+
+	count, err := suite.service.RevokeRolePermissionForOU(context.Background(), "ou1", "rs1", "books:create")
+
+	suite.NoError(err)
+	suite.Equal(0, count)
+}
+
+func (suite *RoleServiceTestSuite) TestRevokeRolePermissionForOU_StoreError() {
+	suite.mockStore.On("DeleteRolePermissionForOU", mock.Anything, "ou1", "rs1", "books:create").
+		Return(int64(0), errors.New("db error"))
+
+	count, err := suite.service.RevokeRolePermissionForOU(context.Background(), "ou1", "rs1", "books:create")
+
+	suite.Error(err)
+	suite.Equal(0, count)
 }
 
 func (suite *RoleServiceTestSuite) TestCascadeDeleteDependencies_StoreReadError() {

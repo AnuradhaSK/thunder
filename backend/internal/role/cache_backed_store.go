@@ -182,11 +182,12 @@ func (s *cacheBackedRoleStore) GetReferencedPermissions(ctx context.Context) ([]
 	return s.store.GetReferencedPermissions(ctx)
 }
 
-// DeleteRolePermission strips a permission from every role holding it, so it cannot point-invalidate
-// the way the single-role writes above do: the affected role ids are not known here. A cached
-// RoleWithPermissions carries its permission list, so leaving the cache alone would keep serving the
-// deleted permission. Clearing is the correct trade — this runs only when a resource server,
-// resource or action is deleted, which is rare, while a stale permission is an authorization defect.
+// DeleteRolePermission strips a permission from every role holding it, deployment-wide, then clears
+// the whole cache. Unlike DeleteRolePermissionForOU it has no small, known set of roles to
+// point-invalidate (its caller, CascadeDeleteDependencies, is itself a deployment-wide sweep), and a
+// cached RoleWithPermissions carries its permission list, so leaving the cache alone would keep
+// serving the deleted permission. Clearing is the right trade: this runs only on a resource server,
+// resource or action deletion, which is rare, while a stale permission is an authorization defect.
 func (s *cacheBackedRoleStore) DeleteRolePermission(
 	ctx context.Context, resourceServerID, permission string) (int64, error) {
 	deleted, err := s.store.DeleteRolePermission(ctx, resourceServerID, permission)
@@ -201,6 +202,44 @@ func (s *cacheBackedRoleStore) DeleteRolePermission(
 		}
 	}
 	return deleted, nil
+}
+
+// DeleteRolePermissionForOU deletes the permission from every role owned by ouID, then
+// conservatively invalidates the cached entry for every role owned by ouID (not just the ones that
+// actually held the permission, which the delete's row count alone doesn't identify) — ouID's role
+// count is small enough for this to be cheap, and unsharing is not a hot path.
+func (s *cacheBackedRoleStore) DeleteRolePermissionForOU(
+	ctx context.Context, ouID, resourceServerID, permission string) (int64, error) {
+	deleted, err := s.store.DeleteRolePermissionForOU(ctx, ouID, resourceServerID, permission)
+	if err != nil {
+		return deleted, err
+	}
+	if deleted > 0 {
+		s.invalidateByOUID(ctx, ouID)
+	}
+	return deleted, nil
+}
+
+// invalidateByOUID invalidates the cached RoleWithPermissions entry for every role owned by ouID.
+func (s *cacheBackedRoleStore) invalidateByOUID(ctx context.Context, ouID string) {
+	count, err := s.store.GetRoleListCountByOUID(ctx, ouID)
+	if err != nil {
+		s.logger.Error(ctx, "Failed to count roles for cache invalidation",
+			log.String("ouID", ouID), log.Error(err))
+		return
+	}
+	if count == 0 {
+		return
+	}
+	roles, err := s.store.GetRoleListByOUID(ctx, ouID, count, 0)
+	if err != nil {
+		s.logger.Error(ctx, "Failed to list roles for cache invalidation",
+			log.String("ouID", ouID), log.Error(err))
+		return
+	}
+	for _, role := range roles {
+		s.invalidate(ctx, role.ID)
+	}
 }
 
 func (s *cacheBackedRoleStore) GetAllPermissionsForAssignees(

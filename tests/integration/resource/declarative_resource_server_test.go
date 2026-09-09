@@ -15,6 +15,10 @@ import (
 
 const (
 	// Declarative fixtures loaded from tests/integration/resources/declarative_resources/resource_servers.
+	// declarativeOUID owns decl-rs-1 (resource-declarative-1.yaml's ouId) — a role naming one of
+	// its permissions must itself belong to this OU to pass FilterVisiblePermissions' owner
+	// short-circuit, since decl-rs-1 is never shared to any other OU.
+	declarativeOUID                  = "decl-ou-1"
 	declarativeResourceServerID      = "decl-rs-1"
 	declarativeResourceHandle        = "test-resource"
 	declarativeOUHandleServerID      = "decl-rs-2"

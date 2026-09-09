@@ -280,9 +280,14 @@ type ShareRequest struct {
 	// first time). Set explicitly when a different, already-visible organization unit is sharing
 	// further within its own subtree. Named distinctly from the OUIDs targets below, which are the
 	// organization units being shared *to*.
-	InitiatingOUID string   `json:"initiatingOuId,omitempty" yaml:"initiatingOuId,omitempty"`
-	AllRoots       bool     `json:"allRoots,omitempty"       yaml:"allRoots,omitempty"`
-	RootOUIDs      []string `json:"rootOuIds,omitempty"      yaml:"rootOuIds,omitempty"`
+	InitiatingOUID string `json:"initiatingOuId,omitempty" yaml:"initiatingOuId,omitempty"`
+	// AllOUs shares to every organization unit in the deployment at every depth, current and
+	// future. Owner-only, and mutually exclusive with every other target-scope field. Unlike
+	// AllRoots this reaches descendants too. Reserved for a resource the whole deployment must
+	// always see; ordinary distribution should name its recipients.
+	AllOUs    bool     `json:"allOus,omitempty"    yaml:"allOus,omitempty"`
+	AllRoots  bool     `json:"allRoots,omitempty"  yaml:"allRoots,omitempty"`
+	RootOUIDs []string `json:"rootOuIds,omitempty" yaml:"rootOuIds,omitempty"`
 	// ExcludedRootOUIDs carves these Root OUs (and their subtrees) out of an AllRoots share.
 	// Ignored unless AllRoots is true.
 	ExcludedRootOUIDs []string `json:"excludedRootOuIds,omitempty" yaml:"excludedRootOuIds,omitempty"`
@@ -292,8 +297,9 @@ type ShareRequest struct {
 	// own share call in turn. Each entry decides for itself, via ShareTarget.AllChildren, whether
 	// that child's own subtree comes with it. Ignored when AllChildren is true.
 	OUIDs []ShareTarget `json:"ouIds,omitempty" yaml:"ouIds,omitempty"`
-	// ExcludedOUIDs carves these OUs (and their subtrees) out of an AllChildren share, or out of
-	// any OUIDs entry whose own subtree contains them. Ignored when neither applies.
+	// ExcludedOUIDs carves these OUs (and their subtrees) out of an AllChildren share, out of an
+	// AllOUs share, or out of any OUIDs entry whose own subtree contains them. Ignored when none of
+	// those applies.
 	ExcludedOUIDs []string `json:"excludedOuIds,omitempty" yaml:"excludedOuIds,omitempty"`
 	// EditableFields names the templated fields ("assignments", "assignments.user",
 	// "assignments.group", "assignments.app", "assignments.agent") made editable through this
@@ -311,6 +317,7 @@ type ShareRequest struct {
 // because they are two distinct target scopes (ou and ou_subtree) once stored.
 func (req ShareRequest) ToSharePolicy() sharing.SharePolicy {
 	policy := sharing.SharePolicy{
+		AllOUs:            req.AllOUs,
 		AllRoots:          req.AllRoots,
 		RootOUIDs:         req.RootOUIDs,
 		ExcludedRootOUIDs: req.ExcludedRootOUIDs,
@@ -335,6 +342,7 @@ func (req ShareRequest) ToSharePolicy() sharing.SharePolicy {
 func shareRequestFromReplayableGrant(g sharing.ReplayableGrant) ShareRequest {
 	req := ShareRequest{
 		InitiatingOUID:    g.ActingOUID,
+		AllOUs:            g.Policy.AllOUs,
 		AllRoots:          g.Policy.AllRoots,
 		RootOUIDs:         g.Policy.RootOUIDs,
 		ExcludedRootOUIDs: g.Policy.ExcludedRootOUIDs,

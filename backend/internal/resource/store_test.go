@@ -3770,6 +3770,198 @@ func (suite *ResourceStoreTestSuite) TestValidatePermissions() {
 	}
 }
 
+func (suite *ResourceStoreTestSuite) TestResolvePermissionNode() {
+	testCases := []struct {
+		name         string
+		resServerID  string
+		permission   string
+		setupMocks   func()
+		expectedID   string
+		expectedKind string
+		expectedOK   bool
+		shouldErr    bool
+	}{
+		{
+			name:        "Success_ResourceFound",
+			resServerID: "rs1",
+			permission:  "books",
+			setupMocks: func() {
+				suite.mockDBProvider.On("GetConfigDBClient").Return(suite.mockDBClient, nil)
+				suite.mockDBClient.On("QueryContext", context.Background(),
+					queryResolvePermissionNode, "rs1", "test-deployment", "books").
+					Return([]map[string]interface{}{
+						{"id": "res1", "kind": "resource"},
+					}, nil)
+			},
+			expectedID:   "res1",
+			expectedKind: "resource",
+			expectedOK:   true,
+		},
+		{
+			name:        "Success_ActionFound",
+			resServerID: "rs1",
+			permission:  "books:view",
+			setupMocks: func() {
+				suite.mockDBProvider.On("GetConfigDBClient").Return(suite.mockDBClient, nil)
+				suite.mockDBClient.On("QueryContext", context.Background(),
+					queryResolvePermissionNode, "rs1", "test-deployment", "books:view").
+					Return([]map[string]interface{}{
+						{"id": "act1", "kind": "action"},
+					}, nil)
+			},
+			expectedID:   "act1",
+			expectedKind: "action",
+			expectedOK:   true,
+		},
+		{
+			name:        "Success_NotFound",
+			resServerID: "rs1",
+			permission:  "unknown",
+			setupMocks: func() {
+				suite.mockDBProvider.On("GetConfigDBClient").Return(suite.mockDBClient, nil)
+				suite.mockDBClient.On("QueryContext", context.Background(),
+					queryResolvePermissionNode, "rs1", "test-deployment", "unknown").
+					Return([]map[string]interface{}{}, nil)
+			},
+			expectedOK: false,
+		},
+		{
+			name:        "Error_QueryFails",
+			resServerID: "rs1",
+			permission:  "books",
+			setupMocks: func() {
+				suite.mockDBProvider.On("GetConfigDBClient").Return(suite.mockDBClient, nil)
+				suite.mockDBClient.On("QueryContext", context.Background(),
+					queryResolvePermissionNode, "rs1", "test-deployment", "books").
+					Return(nil, errors.New("db error"))
+			},
+			shouldErr: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		suite.Run(tc.name, func() {
+			suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
+			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
+			suite.store = &resourceStore{
+				dbProvider: suite.mockDBProvider,
+			}
+
+			tc.setupMocks()
+
+			id, kind, found, err := suite.store.ResolvePermissionNode(
+				context.Background(), tc.resServerID, tc.permission,
+			)
+
+			if tc.shouldErr {
+				suite.Error(err)
+				suite.False(found)
+				return
+			}
+			suite.NoError(err)
+			suite.Equal(tc.expectedOK, found)
+			suite.Equal(tc.expectedID, id)
+			suite.Equal(tc.expectedKind, kind)
+		})
+	}
+}
+
+func (suite *ResourceStoreTestSuite) TestResolveNodePermission() {
+	testCases := []struct {
+		name               string
+		kind               string
+		nodeID             string
+		setupMocks         func()
+		expectedRSID       string
+		expectedPermission string
+		expectedOK         bool
+		shouldErr          bool
+	}{
+		{
+			name:   "Success_Resource",
+			kind:   "resource",
+			nodeID: "res1",
+			setupMocks: func() {
+				suite.mockDBProvider.On("GetConfigDBClient").Return(suite.mockDBClient, nil)
+				suite.mockDBClient.On("QueryContext", context.Background(),
+					queryResolveResourceNodePermission, "res1", "test-deployment").
+					Return([]map[string]interface{}{
+						{"resource_server_id": "rs1", "permission": "books"},
+					}, nil)
+			},
+			expectedRSID:       "rs1",
+			expectedPermission: "books",
+			expectedOK:         true,
+		},
+		{
+			name:   "Success_Action",
+			kind:   "action",
+			nodeID: "act1",
+			setupMocks: func() {
+				suite.mockDBProvider.On("GetConfigDBClient").Return(suite.mockDBClient, nil)
+				suite.mockDBClient.On("QueryContext", context.Background(),
+					queryResolveActionNodePermission, "act1", "test-deployment").
+					Return([]map[string]interface{}{
+						{"resource_server_id": "rs1", "permission": "books:view"},
+					}, nil)
+			},
+			expectedRSID:       "rs1",
+			expectedPermission: "books:view",
+			expectedOK:         true,
+		},
+		{
+			name:   "Success_NotFound",
+			kind:   "resource",
+			nodeID: "unknown",
+			setupMocks: func() {
+				suite.mockDBProvider.On("GetConfigDBClient").Return(suite.mockDBClient, nil)
+				suite.mockDBClient.On("QueryContext", context.Background(),
+					queryResolveResourceNodePermission, "unknown", "test-deployment").
+					Return([]map[string]interface{}{}, nil)
+			},
+			expectedOK: false,
+		},
+		{
+			name:   "Error_QueryFails",
+			kind:   "action",
+			nodeID: "act1",
+			setupMocks: func() {
+				suite.mockDBProvider.On("GetConfigDBClient").Return(suite.mockDBClient, nil)
+				suite.mockDBClient.On("QueryContext", context.Background(),
+					queryResolveActionNodePermission, "act1", "test-deployment").
+					Return(nil, errors.New("db error"))
+			},
+			shouldErr: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		suite.Run(tc.name, func() {
+			suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
+			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
+			suite.store = &resourceStore{
+				dbProvider: suite.mockDBProvider,
+			}
+
+			tc.setupMocks()
+
+			resServerID, permission, found, err := suite.store.ResolveNodePermission(
+				context.Background(), tc.kind, tc.nodeID,
+			)
+
+			if tc.shouldErr {
+				suite.Error(err)
+				suite.False(found)
+				return
+			}
+			suite.NoError(err)
+			suite.Equal(tc.expectedOK, found)
+			suite.Equal(tc.expectedRSID, resServerID)
+			suite.Equal(tc.expectedPermission, permission)
+		})
+	}
+}
+
 // TestIsResourceServerDeclarative tests that database store always returns false
 func (suite *ResourceStoreTestSuite) TestIsResourceServerDeclarative() {
 	testCases := []struct {

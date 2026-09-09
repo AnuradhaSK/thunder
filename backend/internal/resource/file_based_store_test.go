@@ -639,3 +639,129 @@ func (s *FileBasedResourceStoreTestSuite) TestCheckResourceServerIdentifierExist
 	assert.NoError(s.T(), err)
 	assert.False(s.T(), exists)
 }
+
+// TestResolvePermissionNode_WithData and TestResolveNodePermission_WithData (below) exercise the
+// same fixture from both directions, since the two methods are inverses of each other.
+func (s *FileBasedResourceStoreTestSuite) TestResolvePermissionNode_WithData() {
+	fileStore, ok := s.store.(*fileBasedResourceStore)
+	assert.True(s.T(), ok)
+
+	rs := &providers.ResourceServer{
+		ID:        "rs-perm",
+		Name:      "Perm Server",
+		OUID:      "ou1",
+		Delimiter: ":",
+		Resources: []providers.Resource{
+			{
+				ID:         "perm-res1",
+				Name:       "Books",
+				Handle:     "books",
+				Permission: "books",
+				Actions: []providers.Action{
+					{ID: "act1", Name: "View", Handle: "view", Permission: "books:view"},
+				},
+			},
+		},
+	}
+
+	err := fileStore.Create("rs-perm", rs)
+	assert.NoError(s.T(), err)
+
+	id, kind, found, err := s.store.ResolvePermissionNode(s.ctx, "rs-perm", "books")
+	assert.NoError(s.T(), err)
+	assert.True(s.T(), found)
+	assert.Equal(s.T(), "perm-res1", id)
+	assert.Equal(s.T(), "resource", kind)
+
+	id, kind, found, err = s.store.ResolvePermissionNode(s.ctx, "rs-perm", "books:view")
+	assert.NoError(s.T(), err)
+	assert.True(s.T(), found)
+	assert.Equal(s.T(), "act1", id)
+	assert.Equal(s.T(), "action", kind)
+
+	resServerID, permission, found, err := s.store.ResolveNodePermission(s.ctx, "resource", "perm-res1")
+	assert.NoError(s.T(), err)
+	assert.True(s.T(), found)
+	assert.Equal(s.T(), "rs-perm", resServerID)
+	assert.Equal(s.T(), "books", permission)
+
+	resServerID, permission, found, err = s.store.ResolveNodePermission(s.ctx, "action", "act1")
+	assert.NoError(s.T(), err)
+	assert.True(s.T(), found)
+	assert.Equal(s.T(), "rs-perm", resServerID)
+	assert.Equal(s.T(), "books:view", permission)
+}
+
+func (s *FileBasedResourceStoreTestSuite) TestResolvePermissionNode_NotFound() {
+	fileStore, ok := s.store.(*fileBasedResourceStore)
+	assert.True(s.T(), ok)
+
+	rs := &providers.ResourceServer{
+		ID:   "rs-perm2",
+		Name: "Perm Server 2",
+		OUID: "ou1",
+	}
+	err := fileStore.Create("rs-perm2", rs)
+	assert.NoError(s.T(), err)
+
+	id, kind, found, err := s.store.ResolvePermissionNode(s.ctx, "rs-perm2", "unknown")
+	assert.NoError(s.T(), err)
+	assert.False(s.T(), found)
+	assert.Empty(s.T(), id)
+	assert.Empty(s.T(), kind)
+}
+
+func (s *FileBasedResourceStoreTestSuite) TestResolvePermissionNode_ResourceServerNotFound() {
+	id, kind, found, err := s.store.ResolvePermissionNode(s.ctx, "nonexistent-rs", "books")
+	assert.NoError(s.T(), err)
+	assert.False(s.T(), found)
+	assert.Empty(s.T(), id)
+	assert.Empty(s.T(), kind)
+}
+
+func (s *FileBasedResourceStoreTestSuite) TestResolveNodePermission_NotFound() {
+	resServerID, permission, found, err := s.store.ResolveNodePermission(s.ctx, "resource", "nonexistent")
+	assert.NoError(s.T(), err)
+	assert.False(s.T(), found)
+	assert.Empty(s.T(), resServerID)
+	assert.Empty(s.T(), permission)
+}
+
+func (s *FileBasedResourceStoreTestSuite) TestGetResourceServerListByOUID_FiltersByOU() {
+	fileStore, ok := s.store.(*fileBasedResourceStore)
+	assert.True(s.T(), ok)
+
+	assert.NoError(s.T(), fileStore.Create("rs-ou-a", &providers.ResourceServer{
+		ID: "rs-ou-a", Name: "A Server", OUID: "ou-a", Delimiter: ":",
+	}))
+	assert.NoError(s.T(), fileStore.Create("rs-ou-b", &providers.ResourceServer{
+		ID: "rs-ou-b", Name: "B Server", OUID: "ou-b", Delimiter: ":",
+	}))
+
+	count, err := s.store.GetResourceServerListCountByOUID(s.ctx, "ou-a")
+	assert.NoError(s.T(), err)
+	assert.Equal(s.T(), 1, count)
+
+	servers, err := s.store.GetResourceServerListByOUID(s.ctx, "ou-a", 10, 0)
+	assert.NoError(s.T(), err)
+	assert.Len(s.T(), servers, 1)
+	assert.Equal(s.T(), "rs-ou-a", servers[0].ID)
+
+	// An OU that owns nothing here must come back empty, not with everything.
+	servers, err = s.store.GetResourceServerListByOUID(s.ctx, "ou-unrelated", 10, 0)
+	assert.NoError(s.T(), err)
+	assert.Empty(s.T(), servers)
+}
+
+func (s *FileBasedResourceStoreTestSuite) TestGetResourceServerListByOUID_PaginatesBeyondEnd() {
+	fileStore, ok := s.store.(*fileBasedResourceStore)
+	assert.True(s.T(), ok)
+
+	assert.NoError(s.T(), fileStore.Create("rs-page", &providers.ResourceServer{
+		ID: "rs-page", Name: "Page Server", OUID: "ou-page", Delimiter: ":",
+	}))
+
+	servers, err := s.store.GetResourceServerListByOUID(s.ctx, "ou-page", 10, 5)
+	assert.NoError(s.T(), err)
+	assert.Empty(s.T(), servers)
+}

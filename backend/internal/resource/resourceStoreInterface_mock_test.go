@@ -1762,6 +1762,86 @@ func (_c *resourceStoreInterfaceMock_GetResourceServerList_Call) RunAndReturn(ru
 	return _c
 }
 
+// GetResourceServerListByOUID provides a mock function for the type resourceStoreInterfaceMock
+func (_mock *resourceStoreInterfaceMock) GetResourceServerListByOUID(ctx context.Context, ouID string, limit int, offset int) ([]providers.ResourceServer, error) {
+	ret := _mock.Called(ctx, ouID, limit, offset)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetResourceServerListByOUID")
+	}
+
+	var r0 []providers.ResourceServer
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, int, int) ([]providers.ResourceServer, error)); ok {
+		return returnFunc(ctx, ouID, limit, offset)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, int, int) []providers.ResourceServer); ok {
+		r0 = returnFunc(ctx, ouID, limit, offset)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]providers.ResourceServer)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, int, int) error); ok {
+		r1 = returnFunc(ctx, ouID, limit, offset)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// resourceStoreInterfaceMock_GetResourceServerListByOUID_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetResourceServerListByOUID'
+type resourceStoreInterfaceMock_GetResourceServerListByOUID_Call struct {
+	*mock.Call
+}
+
+// GetResourceServerListByOUID is a helper method to define mock.On call
+//   - ctx context.Context
+//   - ouID string
+//   - limit int
+//   - offset int
+func (_e *resourceStoreInterfaceMock_Expecter) GetResourceServerListByOUID(ctx interface{}, ouID interface{}, limit interface{}, offset interface{}) *resourceStoreInterfaceMock_GetResourceServerListByOUID_Call {
+	return &resourceStoreInterfaceMock_GetResourceServerListByOUID_Call{Call: _e.mock.On("GetResourceServerListByOUID", ctx, ouID, limit, offset)}
+}
+
+func (_c *resourceStoreInterfaceMock_GetResourceServerListByOUID_Call) Run(run func(ctx context.Context, ouID string, limit int, offset int)) *resourceStoreInterfaceMock_GetResourceServerListByOUID_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 int
+		if args[2] != nil {
+			arg2 = args[2].(int)
+		}
+		var arg3 int
+		if args[3] != nil {
+			arg3 = args[3].(int)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+			arg3,
+		)
+	})
+	return _c
+}
+
+func (_c *resourceStoreInterfaceMock_GetResourceServerListByOUID_Call) Return(resourceServers []providers.ResourceServer, err error) *resourceStoreInterfaceMock_GetResourceServerListByOUID_Call {
+	_c.Call.Return(resourceServers, err)
+	return _c
+}
+
+func (_c *resourceStoreInterfaceMock_GetResourceServerListByOUID_Call) RunAndReturn(run func(ctx context.Context, ouID string, limit int, offset int) ([]providers.ResourceServer, error)) *resourceStoreInterfaceMock_GetResourceServerListByOUID_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetResourceServerListCount provides a mock function for the type resourceStoreInterfaceMock
 func (_mock *resourceStoreInterfaceMock) GetResourceServerListCount(ctx context.Context) (int, error) {
 	ret := _mock.Called(ctx)
@@ -1818,6 +1898,72 @@ func (_c *resourceStoreInterfaceMock_GetResourceServerListCount_Call) Return(n i
 }
 
 func (_c *resourceStoreInterfaceMock_GetResourceServerListCount_Call) RunAndReturn(run func(ctx context.Context) (int, error)) *resourceStoreInterfaceMock_GetResourceServerListCount_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// GetResourceServerListCountByOUID provides a mock function for the type resourceStoreInterfaceMock
+func (_mock *resourceStoreInterfaceMock) GetResourceServerListCountByOUID(ctx context.Context, ouID string) (int, error) {
+	ret := _mock.Called(ctx, ouID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetResourceServerListCountByOUID")
+	}
+
+	var r0 int
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) (int, error)); ok {
+		return returnFunc(ctx, ouID)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) int); ok {
+		r0 = returnFunc(ctx, ouID)
+	} else {
+		r0 = ret.Get(0).(int)
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string) error); ok {
+		r1 = returnFunc(ctx, ouID)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// resourceStoreInterfaceMock_GetResourceServerListCountByOUID_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetResourceServerListCountByOUID'
+type resourceStoreInterfaceMock_GetResourceServerListCountByOUID_Call struct {
+	*mock.Call
+}
+
+// GetResourceServerListCountByOUID is a helper method to define mock.On call
+//   - ctx context.Context
+//   - ouID string
+func (_e *resourceStoreInterfaceMock_Expecter) GetResourceServerListCountByOUID(ctx interface{}, ouID interface{}) *resourceStoreInterfaceMock_GetResourceServerListCountByOUID_Call {
+	return &resourceStoreInterfaceMock_GetResourceServerListCountByOUID_Call{Call: _e.mock.On("GetResourceServerListCountByOUID", ctx, ouID)}
+}
+
+func (_c *resourceStoreInterfaceMock_GetResourceServerListCountByOUID_Call) Run(run func(ctx context.Context, ouID string)) *resourceStoreInterfaceMock_GetResourceServerListCountByOUID_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *resourceStoreInterfaceMock_GetResourceServerListCountByOUID_Call) Return(n int, err error) *resourceStoreInterfaceMock_GetResourceServerListCountByOUID_Call {
+	_c.Call.Return(n, err)
+	return _c
+}
+
+func (_c *resourceStoreInterfaceMock_GetResourceServerListCountByOUID_Call) RunAndReturn(run func(ctx context.Context, ouID string) (int, error)) *resourceStoreInterfaceMock_GetResourceServerListCountByOUID_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -1947,6 +2093,174 @@ func (_c *resourceStoreInterfaceMock_IsResourceServerDeclarative_Call) Return(b 
 }
 
 func (_c *resourceStoreInterfaceMock_IsResourceServerDeclarative_Call) RunAndReturn(run func(id string) bool) *resourceStoreInterfaceMock_IsResourceServerDeclarative_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// ResolveNodePermission provides a mock function for the type resourceStoreInterfaceMock
+func (_mock *resourceStoreInterfaceMock) ResolveNodePermission(ctx context.Context, kind string, nodeID string) (string, string, bool, error) {
+	ret := _mock.Called(ctx, kind, nodeID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ResolveNodePermission")
+	}
+
+	var r0 string
+	var r1 string
+	var r2 bool
+	var r3 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) (string, string, bool, error)); ok {
+		return returnFunc(ctx, kind, nodeID)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) string); ok {
+		r0 = returnFunc(ctx, kind, nodeID)
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string) string); ok {
+		r1 = returnFunc(ctx, kind, nodeID)
+	} else {
+		r1 = ret.Get(1).(string)
+	}
+	if returnFunc, ok := ret.Get(2).(func(context.Context, string, string) bool); ok {
+		r2 = returnFunc(ctx, kind, nodeID)
+	} else {
+		r2 = ret.Get(2).(bool)
+	}
+	if returnFunc, ok := ret.Get(3).(func(context.Context, string, string) error); ok {
+		r3 = returnFunc(ctx, kind, nodeID)
+	} else {
+		r3 = ret.Error(3)
+	}
+	return r0, r1, r2, r3
+}
+
+// resourceStoreInterfaceMock_ResolveNodePermission_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ResolveNodePermission'
+type resourceStoreInterfaceMock_ResolveNodePermission_Call struct {
+	*mock.Call
+}
+
+// ResolveNodePermission is a helper method to define mock.On call
+//   - ctx context.Context
+//   - kind string
+//   - nodeID string
+func (_e *resourceStoreInterfaceMock_Expecter) ResolveNodePermission(ctx interface{}, kind interface{}, nodeID interface{}) *resourceStoreInterfaceMock_ResolveNodePermission_Call {
+	return &resourceStoreInterfaceMock_ResolveNodePermission_Call{Call: _e.mock.On("ResolveNodePermission", ctx, kind, nodeID)}
+}
+
+func (_c *resourceStoreInterfaceMock_ResolveNodePermission_Call) Run(run func(ctx context.Context, kind string, nodeID string)) *resourceStoreInterfaceMock_ResolveNodePermission_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 string
+		if args[2] != nil {
+			arg2 = args[2].(string)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
+	})
+	return _c
+}
+
+func (_c *resourceStoreInterfaceMock_ResolveNodePermission_Call) Return(resourceServerID string, permission string, found bool, err error) *resourceStoreInterfaceMock_ResolveNodePermission_Call {
+	_c.Call.Return(resourceServerID, permission, found, err)
+	return _c
+}
+
+func (_c *resourceStoreInterfaceMock_ResolveNodePermission_Call) RunAndReturn(run func(ctx context.Context, kind string, nodeID string) (string, string, bool, error)) *resourceStoreInterfaceMock_ResolveNodePermission_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// ResolvePermissionNode provides a mock function for the type resourceStoreInterfaceMock
+func (_mock *resourceStoreInterfaceMock) ResolvePermissionNode(ctx context.Context, resServerID string, permission string) (string, string, bool, error) {
+	ret := _mock.Called(ctx, resServerID, permission)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ResolvePermissionNode")
+	}
+
+	var r0 string
+	var r1 string
+	var r2 bool
+	var r3 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) (string, string, bool, error)); ok {
+		return returnFunc(ctx, resServerID, permission)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) string); ok {
+		r0 = returnFunc(ctx, resServerID, permission)
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string) string); ok {
+		r1 = returnFunc(ctx, resServerID, permission)
+	} else {
+		r1 = ret.Get(1).(string)
+	}
+	if returnFunc, ok := ret.Get(2).(func(context.Context, string, string) bool); ok {
+		r2 = returnFunc(ctx, resServerID, permission)
+	} else {
+		r2 = ret.Get(2).(bool)
+	}
+	if returnFunc, ok := ret.Get(3).(func(context.Context, string, string) error); ok {
+		r3 = returnFunc(ctx, resServerID, permission)
+	} else {
+		r3 = ret.Error(3)
+	}
+	return r0, r1, r2, r3
+}
+
+// resourceStoreInterfaceMock_ResolvePermissionNode_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ResolvePermissionNode'
+type resourceStoreInterfaceMock_ResolvePermissionNode_Call struct {
+	*mock.Call
+}
+
+// ResolvePermissionNode is a helper method to define mock.On call
+//   - ctx context.Context
+//   - resServerID string
+//   - permission string
+func (_e *resourceStoreInterfaceMock_Expecter) ResolvePermissionNode(ctx interface{}, resServerID interface{}, permission interface{}) *resourceStoreInterfaceMock_ResolvePermissionNode_Call {
+	return &resourceStoreInterfaceMock_ResolvePermissionNode_Call{Call: _e.mock.On("ResolvePermissionNode", ctx, resServerID, permission)}
+}
+
+func (_c *resourceStoreInterfaceMock_ResolvePermissionNode_Call) Run(run func(ctx context.Context, resServerID string, permission string)) *resourceStoreInterfaceMock_ResolvePermissionNode_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 string
+		if args[2] != nil {
+			arg2 = args[2].(string)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
+	})
+	return _c
+}
+
+func (_c *resourceStoreInterfaceMock_ResolvePermissionNode_Call) Return(id string, kind string, found bool, err error) *resourceStoreInterfaceMock_ResolvePermissionNode_Call {
+	_c.Call.Return(id, kind, found, err)
+	return _c
+}
+
+func (_c *resourceStoreInterfaceMock_ResolvePermissionNode_Call) RunAndReturn(run func(ctx context.Context, resServerID string, permission string) (string, string, bool, error)) *resourceStoreInterfaceMock_ResolvePermissionNode_Call {
 	_c.Call.Return(run)
 	return _c
 }

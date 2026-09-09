@@ -85,6 +85,19 @@ var (
 			`WHERE RESOURCE_SERVER_ID = $1 AND PERMISSION = $2 AND DEPLOYMENT_ID = $3`,
 	}
 
+	// queryDeleteRolePermissionByValueForOU deletes a single permission, but only from roles owned
+	// by ouID — used when the permission is unshared from that OU specifically, leaving roles owned
+	// by other OUs (which may still have their own, independent visibility of it) untouched.
+	// DEPLOYMENT_ID is passed twice ($3 and $5), once per clause, rather than reusing a single
+	// placeholder number across both, to avoid depending on the SQLite driver's placeholder-reuse
+	// behavior (see the comment on buildAllPermissionsForAssigneesQuery for that subtlety).
+	queryDeleteRolePermissionByValueForOU = dbmodel.DBQuery{
+		ID: "RLQ-ROLE_MGT-31",
+		Query: `DELETE FROM "ROLE_PERMISSION" ` +
+			`WHERE RESOURCE_SERVER_ID = $1 AND PERMISSION = $2 AND DEPLOYMENT_ID = $3 ` +
+			`AND ROLE_ID IN (SELECT ID FROM "ROLE" WHERE OU_ID = $4 AND DEPLOYMENT_ID = $5)`,
+	}
+
 	// queryCreateRoleAssignment creates a new role assignment scoped to the OU making it (the
 	// role's own OU for its own assignments, or a sharee OU's ID when shared).
 	queryCreateRoleAssignment = dbmodel.DBQuery{

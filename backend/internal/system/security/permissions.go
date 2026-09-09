@@ -153,6 +153,14 @@ type SystemPermissions struct {
 	// caller holding the root permission remains unrestricted, as with every other resource type.
 	Roles     string
 	RolesView string
+	// ResourceServers grants full access to the Resource Management API (resource servers,
+	// resources, actions, and their grants); ResourceServersView grants read-only access.
+	// Same pattern as Roles/RolesView above — a caller without the root permission is confined to
+	// its own OU on every path (see internal/resource's requireOwnOUScope/RequireVisibility and
+	// sharing.RequireOwnership(ForDeletion) use). A caller holding the root permission remains
+	// unrestricted, as with every other resource type.
+	ResourceServers     string
+	ResourceServersView string
 }
 
 // sysPerms holds the active system permissions, initialized by InitSystemPermissions.
@@ -175,19 +183,21 @@ func buildPermission(parts ...string) string {
 // This function must be called once at startup before any service or middleware uses permissions.
 func InitSystemPermissions(handle string) {
 	p := &SystemPermissions{
-		Root:          buildPermission(handle, "system"),
-		OU:            buildPermission(handle, "system", "ou"),
-		OUView:        buildPermission(handle, "system", "ou", "view"),
-		User:          buildPermission(handle, "system", "user"),
-		UserView:      buildPermission(handle, "system", "user", "view"),
-		Group:         buildPermission(handle, "system", "group"),
-		GroupView:     buildPermission(handle, "system", "group", "view"),
-		UserType:      buildPermission(handle, "system", "usertype"),
-		UserTypeView:  buildPermission(handle, "system", "usertype", "view"),
-		AgentType:     buildPermission(handle, "system", "agenttype"),
-		AgentTypeView: buildPermission(handle, "system", "agenttype", "view"),
-		Roles:         buildPermission(handle, "system", "roles"),
-		RolesView:     buildPermission(handle, "system", "roles", "view"),
+		Root:                buildPermission(handle, "system"),
+		OU:                  buildPermission(handle, "system", "ou"),
+		OUView:              buildPermission(handle, "system", "ou", "view"),
+		User:                buildPermission(handle, "system", "user"),
+		UserView:            buildPermission(handle, "system", "user", "view"),
+		Group:               buildPermission(handle, "system", "group"),
+		GroupView:           buildPermission(handle, "system", "group", "view"),
+		UserType:            buildPermission(handle, "system", "usertype"),
+		UserTypeView:        buildPermission(handle, "system", "usertype", "view"),
+		AgentType:           buildPermission(handle, "system", "agenttype"),
+		AgentTypeView:       buildPermission(handle, "system", "agenttype", "view"),
+		Roles:               buildPermission(handle, "system", "roles"),
+		RolesView:           buildPermission(handle, "system", "roles", "view"),
+		ResourceServers:     buildPermission(handle, "system", "resource-servers"),
+		ResourceServersView: buildPermission(handle, "system", "resource-servers", "view"),
 	}
 	sysPerms = p
 
@@ -287,6 +297,16 @@ func InitSystemPermissions(handle string) {
 		{"PUT /roles/**", p.Roles},
 		{"POST /roles/**", p.Roles},
 		{"DELETE /roles/**", p.Roles},
+
+		// Resource Management APIs (resource servers, resources, actions, grants) —
+		// view/manage split, same pattern as Role above; internal/resource itself confines a
+		// caller without the root permission to its own OU (or a shared one) on every path.
+		{"GET /resource-servers", p.ResourceServersView},
+		{"POST /resource-servers", p.ResourceServers},
+		{"GET /resource-servers/**", p.ResourceServersView},
+		{"PUT /resource-servers/**", p.ResourceServers},
+		{"POST /resource-servers/**", p.ResourceServers},
+		{"DELETE /resource-servers/**", p.ResourceServers},
 
 		// Import APIs.
 		{"POST /import", p.Root},

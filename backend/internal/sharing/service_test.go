@@ -1695,6 +1695,22 @@ func (suite *ShareDeclarativeTestSuite) TestOwnerCanShareADeclarativeResourceVia
 	suite.Len(grants, 1)
 }
 
+// --- Deployment-wide mode (TargetScopeAllOUs) ---
+
+func (suite *ServiceTestSuite) TestShare_AllOUs_Success() {
+	suite.svc.RegisterResourceType(&fakeDeclaration{resourceType: testResourceType})
+	suite.mockStore.On("CreateGrant", mock.Anything, mock.MatchedBy(func(g Grant) bool {
+		return g.ResourceType == testResourceType && g.ResourceID == "rs1" && g.OwningOUID == "ou1" &&
+			g.Stage == StageShare && g.TargetScope == TargetScopeAllOUs && g.TargetOUID == ""
+	})).Return(nil)
+
+	grants, svcErr := suite.svc.Share(
+		context.Background(), testResourceType, "rs1", "ou1", "ou1", SharePolicy{AllOUs: true})
+
+	suite.Nil(svcErr)
+	suite.Len(grants, 1)
+}
+
 // --- ou_subtree: share one named branch, whole ---
 
 // SubtreeShareTestSuite covers TargetScopeOUSubtree, which grants a named direct child together
@@ -1841,6 +1857,34 @@ func (suite *SubtreeShareTestSuite) TestRejectsAnExclusionOutsideTheActingSubtre
 	suite.Equal(ErrorInvalidTargetOU.Code, svcErr.Code)
 }
 
+// A non-root owner may share deployment-wide: unlike AllRoots there is no cross-tree restriction
+// to apply, because the grant spans every tree by construction.
+func (suite *ServiceTestSuite) TestShare_AllOUs_NonRootOwnerAllowed() {
+	suite.svc.RegisterResourceType(&fakeDeclaration{resourceType: testResourceType})
+	suite.resolver.ancestors["child-owner"] = []string{"root1"}
+	suite.mockStore.On("CreateGrant", mock.Anything, mock.MatchedBy(func(g Grant) bool {
+		return g.TargetScope == TargetScopeAllOUs
+	})).Return(nil)
+
+	grants, svcErr := suite.svc.Share(context.Background(), testResourceType, "rs1",
+		"child-owner", "child-owner", SharePolicy{AllOUs: true})
+
+	suite.Nil(svcErr)
+	suite.Len(grants, 1)
+}
+
+// Deployment-wide distribution is the owner's decision alone; a sharee resharing what it received
+// may never escalate to every OU.
+func (suite *ServiceTestSuite) TestShare_AllOUs_RejectsNonOwnerActingOU() {
+	suite.svc.RegisterResourceType(&fakeDeclaration{resourceType: testResourceType})
+
+	_, svcErr := suite.svc.Share(context.Background(), testResourceType, "rs1", testOwningOU, "sharee-ou",
+		SharePolicy{AllOUs: true})
+
+	suite.NotNil(svcErr)
+	suite.Equal(ErrorInvalidTargetOU.Code, svcErr.Code)
+}
+
 // Export round-trips the scope, so a subtree grant survives declarative export/import unchanged.
 func (suite *SubtreeShareTestSuite) TestPolicyFromGrantRoundTripsTheScope() {
 	policy := policyFromGrant(subtreeGrant("grandchild1"))
@@ -1867,4 +1911,123 @@ func (suite *SubtreeShareTestSuite) TestResolveGrantOUIDsIncludesTheAnchor() {
 
 	suite.Nil(svcErr)
 	suite.Equal([]string{testChildOU, "grandchild1"}, ouIDs)
+}
+
+func (suite *ServiceTestSuite) TestShare_AllOUs_RejectsCombinationWithOtherModes() {
+	suite.svc.RegisterResourceType(&fakeDeclaration{resourceType: testResourceType})
+
+	for _, policy := range []SharePolicy{
+		{AllOUs: true, AllRoots: true},
+		{AllOUs: true, AllChildren: true},
+		{AllOUs: true, RootOUIDs: []string{"root1"}},
+		{AllOUs: true, OUIDs: []string{"child1"}},
+	} {
+		_, svcErr := suite.svc.Share(
+			context.Background(), testResourceType, "rs1", testOwningOU, testOwningOU, policy)
+		suite.Require().NotNil(svcErr)
+		suite.Equal(ErrorInvalidRequestFormat.Code, svcErr.Code)
+	}
+}
+
+// The whole point of the scope: a deeply nested OU in a completely unrelated tree is visible from
+// the single grant, with no per-root reshare and no hop-by-hop chain.
+func (suite *ServiceTestSuite) TestIsShared_DeepDescendantVisibleViaAllOUs() {
+	suite.resolver.ancestors["grandchild"] = []string{"child1", "root-other"}
+	suite.resolver.ancestors["child1"] = []string{"root-other"}
+	suite.mockStore.On("ListGrantsForResource", mock.Anything, testResourceType, "rs1").
+		Return([]Grant{{OwningOUID: testOwningOU, Stage: StageShare, TargetScope: TargetScopeAllOUs}}, nil)
+
+	visible, svcErr := suite.svc.IsShared(context.Background(), testResourceType, "rs1", "grandchild")
+
+	suite.Nil(svcErr)
+	suite.True(visible)
+}
+
+func (suite *ServiceTestSuite) TestIsShared_RootVisibleViaAllOUs() {
+	suite.mockStore.On("ListGrantsForResource", mock.Anything, testResourceType, "rs1").
+		Return([]Grant{{OwningOUID: testOwningOU, Stage: StageShare, TargetScope: TargetScopeAllOUs}}, nil)
+
+	visible, svcErr := suite.svc.IsShared(context.Background(), testResourceType, "rs1", "root-other")
+
+	suite.Nil(svcErr)
+	suite.True(visible)
+}
+
+// Excluding an OU must cut off its whole subtree, not just the OU itself.
+func (suite *ServiceTestSuite) TestIsShared_AllOUs_ExclusionCutsOffSubtree() {
+	suite.resolver.ancestors["grandchild"] = []string{"child1", "root-other"}
+	suite.resolver.ancestors["child1"] = []string{"root-other"}
+	suite.mockStore.On("ListGrantsForResource", mock.Anything, testResourceType, "rs1").
+		Return([]Grant{{
+			OwningOUID: testOwningOU, Stage: StageShare, TargetScope: TargetScopeAllOUs,
+			ExcludedOUIDs: []string{"child1"},
+		}}, nil)
+
+	// child1 itself is excluded.
+	visible, svcErr := suite.svc.IsShared(context.Background(), testResourceType, "rs1", "child1")
+	suite.Nil(svcErr)
+	suite.False(visible)
+
+	// ...and so is everything beneath it.
+	visible, svcErr = suite.svc.IsShared(context.Background(), testResourceType, "rs1", "grandchild")
+	suite.Nil(svcErr)
+	suite.False(visible)
+
+	// A sibling tree is untouched by the exclusion.
+	visible, svcErr = suite.svc.IsShared(context.Background(), testResourceType, "rs1", "root-elsewhere")
+	suite.Nil(svcErr)
+	suite.True(visible)
+}
+
+// A reshare-stage all_ous row must never be honored: only an owner-issued share-stage grant
+// confers deployment-wide visibility, so a forged or migrated reshare row cannot escalate.
+func (suite *ServiceTestSuite) TestIsShared_AllOUs_IgnoresReshareStage() {
+	suite.resolver.ancestors["child1"] = []string{"root-other"}
+	suite.mockStore.On("ListGrantsForResource", mock.Anything, testResourceType, "rs1").
+		Return([]Grant{{
+			OwningOUID: testOwningOU, Stage: StageReshare, TargetScope: TargetScopeAllOUs,
+		}}, nil)
+
+	visible, svcErr := suite.svc.IsShared(context.Background(), testResourceType, "rs1", "child1")
+
+	suite.Nil(svcErr)
+	suite.False(visible)
+}
+
+// A narrower grant covering the same OU must remain the recorded nearest grant, since editability
+// resolution treats it as authoritative. The all_ous grant is only a fallback.
+func (suite *ServiceTestSuite) TestIsShared_NarrowerGrantWinsOverAllOUs() {
+	suite.resolver.ancestors["child1"] = []string{"root1"}
+	narrower := Grant{
+		ID: "narrow", OwningOUID: testOwningOU, Stage: StageReshare,
+		TargetScope: TargetScopeAllChildren, TargetOUID: "root1",
+		EditableFields: []string{"assignments"},
+	}
+	// evaluateChainVisibility is exercised directly: this is about which grant is recorded as
+	// nearest, which is pure chain logic with no store involvement.
+	visible, owningOUID, nearest := evaluateChainVisibility(
+		[]string{"root1", "child1"},
+		[]Grant{
+			{ID: "wide", OwningOUID: testOwningOU, Stage: StageShare, TargetScope: TargetScopeAllOUs},
+			{ID: "root", OwningOUID: testOwningOU, Stage: StageShare,
+				TargetScope: TargetScopeRoot, TargetOUID: "root1"},
+			narrower,
+		})
+
+	suite.True(visible)
+	suite.Equal(testOwningOU, owningOUID)
+	suite.Require().NotNil(nearest)
+	suite.Equal("narrow", nearest.ID, "the specific reshare must win over the deployment-wide fallback")
+}
+
+// policyFromGrant must round-trip an all_ous grant so ExportGrants replay reproduces it.
+func (suite *ServiceTestSuite) TestPolicyFromGrant_AllOUsRoundTrips() {
+	policy := policyFromGrant(Grant{
+		Stage: StageShare, TargetScope: TargetScopeAllOUs, ExcludedOUIDs: []string{"ou-x"},
+	})
+
+	suite.True(policy.AllOUs)
+	suite.Equal([]string{"ou-x"}, policy.ExcludedOUIDs)
+	suite.False(policy.AllRoots)
+	suite.False(policy.AllChildren)
 }

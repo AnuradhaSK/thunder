@@ -1316,6 +1316,36 @@ func CreateRole(role Role) (string, error) {
 	return createdRole.ID, nil
 }
 
+// GetRole fetches a role by ID, including its currently stored permissions.
+func GetRole(roleID string) (Role, error) {
+	req, err := http.NewRequest("GET", TestServerURL+"/roles/"+roleID, nil)
+	if err != nil {
+		return Role{}, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	client := GetHTTPClient()
+	resp, err := client.Do(req)
+	if err != nil {
+		return Role{}, fmt.Errorf("failed to get role: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		var errResp ErrorResponse
+		_ = json.Unmarshal(respBody, &errResp)
+		return Role{}, fmt.Errorf("failed to get role, status %d: %s - %s", resp.StatusCode, errResp.Code, errResp.Message)
+	}
+
+	var role Role
+	if err := json.Unmarshal(respBody, &role); err != nil {
+		return Role{}, fmt.Errorf("failed to unmarshal role response: %w", err)
+	}
+
+	return role, nil
+}
+
 // DeleteRole deletes a role by ID
 func DeleteRole(roleID string) error {
 	client := GetHTTPClient()
@@ -1421,6 +1451,176 @@ func UnshareRole(roleID, grantID string) error {
 		return fmt.Errorf("expected status 204 or 200, got %d. Response: %s", resp.StatusCode, string(bodyBytes))
 	}
 	return nil
+}
+
+// ResourceGrant represents a single grant over a resource server, resource, or action,
+// as returned by POST/GET .../grants. NodeType/NodeID identify which node in the tree this
+// particular grant covers, which matters because a single cascade share (see
+// creates grants across several nodes at once.
+type ResourceGrant struct {
+	ID            string   `json:"id"`
+	NodeType      string   `json:"nodeType"`
+	NodeID        string   `json:"nodeId"`
+	Stage         string   `json:"stage"`
+	TargetScope   string   `json:"targetScope"`
+	TargetOUID    string   `json:"targetOuId,omitempty"`
+	OwningOUID    string   `json:"owningOuId"`
+	ExcludedOUIDs []string `json:"excludedOuIds,omitempty"`
+}
+
+// resourceGrantListResponse represents the response body of every resource-server/resource/
+// action grants POST or GET.
+type resourceGrantListResponse struct {
+	Grants []ResourceGrant `json:"grants"`
+}
+
+// shareResourceNode issues POST <nodeURL>/grants with the given request body and returns
+// every grant the call created (a cascade share fans out across several nodes at once).
+func shareResourceNode(nodeURL string, body map[string]interface{}) ([]ResourceGrant, error) {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal share request: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", nodeURL+"/grants", bytes.NewReader(payload))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := GetHTTPClient()
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to share: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusCreated {
+		var errResp ErrorResponse
+		_ = json.Unmarshal(respBody, &errResp)
+		return nil, fmt.Errorf("failed to share, status %d: %s - %s", resp.StatusCode, errResp.Code, errResp.Message)
+	}
+
+	var grants resourceGrantListResponse
+	if err := json.Unmarshal(respBody, &grants); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal grants response: %w", err)
+	}
+	return grants.Grants, nil
+}
+
+// listResourceNodeGrants issues GET <nodeURL>/grants and returns the node's own grants
+// (not any cascade descendant's grants — those are only visible via the descendant's own call).
+func listResourceNodeGrants(nodeURL string) ([]ResourceGrant, error) {
+	req, err := http.NewRequest("GET", nodeURL+"/grants", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	client := GetHTTPClient()
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list grants: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		var errResp ErrorResponse
+		_ = json.Unmarshal(respBody, &errResp)
+		return nil, fmt.Errorf("failed to list grants, status %d: %s - %s", resp.StatusCode, errResp.Code, errResp.Message)
+	}
+
+	var grants resourceGrantListResponse
+	if err := json.Unmarshal(respBody, &grants); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal grants response: %w", err)
+	}
+	return grants.Grants, nil
+}
+
+// unshareResourceNode issues DELETE <nodeURL>/grants/{grantId}.
+func unshareResourceNode(nodeURL, grantID string) error {
+	req, err := http.NewRequest("DELETE", nodeURL+"/grants/"+grantID, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	client := GetHTTPClient()
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to unshare: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("expected status 204 or 200, got %d. Response: %s", resp.StatusCode, string(bodyBytes))
+	}
+	return nil
+}
+
+// ShareResourceServer shares a resource server via POST /resource-servers/{id}/grants, which
+// by default also cascades to every resource/action currently under it (pass "excludedNodeIds" in
+// body to withhold specific descendants). Returns every grant the call created.
+func ShareResourceServer(rsID string, body map[string]interface{}) ([]ResourceGrant, error) {
+	return shareResourceNode(fmt.Sprintf("%s/resource-servers/%s", TestServerURL, rsID), body)
+}
+
+// ListResourceServerGrants lists a resource server's own grants, not its cascade
+// descendants' grants.
+func ListResourceServerGrants(rsID string) ([]ResourceGrant, error) {
+	return listResourceNodeGrants(fmt.Sprintf("%s/resource-servers/%s", TestServerURL, rsID))
+}
+
+// UnshareResourceServerGrant revokes a resource server's grant, cascading to every
+// descendant grant created alongside it by the same cascade share.
+func UnshareResourceServerGrant(rsID, grantID string) error {
+	return unshareResourceNode(fmt.Sprintf("%s/resource-servers/%s", TestServerURL, rsID), grantID)
+}
+
+// ShareResource shares a resource via POST .../resources/{id}/grants, cascading by default
+// to its own sub-resources/actions.
+func ShareResource(rsID, resourceID string, body map[string]interface{}) ([]ResourceGrant, error) {
+	return shareResourceNode(
+		fmt.Sprintf("%s/resource-servers/%s/resources/%s", TestServerURL, rsID, resourceID), body)
+}
+
+// ListResourceGrants lists a resource's own grants.
+func ListResourceGrants(rsID, resourceID string) ([]ResourceGrant, error) {
+	return listResourceNodeGrants(
+		fmt.Sprintf("%s/resource-servers/%s/resources/%s", TestServerURL, rsID, resourceID))
+}
+
+// UnshareResourceGrant revokes a resource's grant, cascading to its descendants.
+func UnshareResourceGrant(rsID, resourceID, grantID string) error {
+	return unshareResourceNode(
+		fmt.Sprintf("%s/resource-servers/%s/resources/%s", TestServerURL, rsID, resourceID), grantID)
+}
+
+// actionShareURL builds the grants base URL for an action, which lives at one of two route
+// shapes: nested under a resource (resourceID non-empty) or attached directly to the resource
+// server (resourceID empty).
+func actionShareURL(rsID, resourceID, actionID string) string {
+	if resourceID == "" {
+		return fmt.Sprintf("%s/resource-servers/%s/actions/%s", TestServerURL, rsID, actionID)
+	}
+	return fmt.Sprintf("%s/resource-servers/%s/resources/%s/actions/%s", TestServerURL, rsID, resourceID, actionID)
+}
+
+// ShareAction shares an action — a leaf, so the share never cascades. resourceID is empty for a
+// resource-server-level action, or the owning resource's ID for a resource-nested action.
+func ShareAction(rsID, resourceID, actionID string, body map[string]interface{}) ([]ResourceGrant, error) {
+	return shareResourceNode(actionShareURL(rsID, resourceID, actionID), body)
+}
+
+// ListActionGrants lists an action's own grants.
+func ListActionGrants(rsID, resourceID, actionID string) ([]ResourceGrant, error) {
+	return listResourceNodeGrants(actionShareURL(rsID, resourceID, actionID))
+}
+
+// UnshareActionGrant revokes an action's grant.
+func UnshareActionGrant(rsID, resourceID, actionID, grantID string) error {
+	return unshareResourceNode(actionShareURL(rsID, resourceID, actionID), grantID)
 }
 
 // AssignmentListResponse represents the paginated list of assignments

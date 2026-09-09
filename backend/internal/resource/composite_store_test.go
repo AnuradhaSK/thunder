@@ -1184,3 +1184,172 @@ func (s *CompositeResourceStoreTestSuite) TestMergeAndDeduplicateResourceServers
 	assert.Len(s.T(), result, 1)
 	assert.True(s.T(), result[0].IsReadOnly, "File resource server should have IsReadOnly=true")
 }
+
+// ResolvePermissionNode tests
+
+func (s *CompositeResourceStoreTestSuite) TestResolvePermissionNode_FoundInDB() {
+	s.dbStoreMock.On("ResolvePermissionNode", mock.Anything, "rs1", "books.view").
+		Return("action-1", "action", true, nil)
+
+	id, kind, found, err := s.compositeStore.ResolvePermissionNode(s.ctx, "rs1", "books.view")
+
+	assert.NoError(s.T(), err)
+	assert.True(s.T(), found)
+	assert.Equal(s.T(), "action-1", id)
+	assert.Equal(s.T(), "action", kind)
+	s.dbStoreMock.AssertExpectations(s.T())
+	s.fileStoreMock.AssertNotCalled(s.T(), "ResolvePermissionNode", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func (s *CompositeResourceStoreTestSuite) TestResolvePermissionNode_FallsBackToFileStore() {
+	s.dbStoreMock.On("ResolvePermissionNode", mock.Anything, "rs1", "books.view").
+		Return("", "", false, nil)
+	s.fileStoreMock.On("ResolvePermissionNode", mock.Anything, "rs1", "books.view").
+		Return("resolved-resource-1", "resource", true, nil)
+
+	id, kind, found, err := s.compositeStore.ResolvePermissionNode(s.ctx, "rs1", "books.view")
+
+	assert.NoError(s.T(), err)
+	assert.True(s.T(), found)
+	assert.Equal(s.T(), "resolved-resource-1", id)
+	assert.Equal(s.T(), "resource", kind)
+}
+
+func (s *CompositeResourceStoreTestSuite) TestResolvePermissionNode_NotFoundInEither() {
+	s.dbStoreMock.On("ResolvePermissionNode", mock.Anything, "rs1", "unknown").
+		Return("", "", false, nil)
+	s.fileStoreMock.On("ResolvePermissionNode", mock.Anything, "rs1", "unknown").
+		Return("", "", false, nil)
+
+	id, kind, found, err := s.compositeStore.ResolvePermissionNode(s.ctx, "rs1", "unknown")
+
+	assert.NoError(s.T(), err)
+	assert.False(s.T(), found)
+	assert.Empty(s.T(), id)
+	assert.Empty(s.T(), kind)
+}
+
+func (s *CompositeResourceStoreTestSuite) TestResolvePermissionNode_DBError() {
+	dbErr := errors.New("db error")
+	s.dbStoreMock.On("ResolvePermissionNode", mock.Anything, "rs1", "books.view").
+		Return("", "", false, dbErr)
+
+	id, kind, found, err := s.compositeStore.ResolvePermissionNode(s.ctx, "rs1", "books.view")
+
+	assert.Error(s.T(), err)
+	assert.False(s.T(), found)
+	assert.Empty(s.T(), id)
+	assert.Empty(s.T(), kind)
+	s.fileStoreMock.AssertNotCalled(s.T(), "ResolvePermissionNode", mock.Anything, mock.Anything, mock.Anything)
+}
+
+// ResolveNodePermission tests
+
+func (s *CompositeResourceStoreTestSuite) TestResolveNodePermission_FoundInDB() {
+	s.dbStoreMock.On("ResolveNodePermission", mock.Anything, "resource", "res1").
+		Return("rs1", "books", true, nil)
+
+	resServerID, permission, found, err := s.compositeStore.ResolveNodePermission(s.ctx, "resource", "res1")
+
+	assert.NoError(s.T(), err)
+	assert.True(s.T(), found)
+	assert.Equal(s.T(), "rs1", resServerID)
+	assert.Equal(s.T(), "books", permission)
+	s.fileStoreMock.AssertNotCalled(s.T(), "ResolveNodePermission", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func (s *CompositeResourceStoreTestSuite) TestResolveNodePermission_FallsBackToFileStore() {
+	s.dbStoreMock.On("ResolveNodePermission", mock.Anything, "action", "act1").
+		Return("", "", false, nil)
+	s.fileStoreMock.On("ResolveNodePermission", mock.Anything, "action", "act1").
+		Return("rs1", "books:view", true, nil)
+
+	resServerID, permission, found, err := s.compositeStore.ResolveNodePermission(s.ctx, "action", "act1")
+
+	assert.NoError(s.T(), err)
+	assert.True(s.T(), found)
+	assert.Equal(s.T(), "rs1", resServerID)
+	assert.Equal(s.T(), "books:view", permission)
+}
+
+func (s *CompositeResourceStoreTestSuite) TestResolveNodePermission_NotFoundInEither() {
+	s.dbStoreMock.On("ResolveNodePermission", mock.Anything, "resource", "unknown").
+		Return("", "", false, nil)
+	s.fileStoreMock.On("ResolveNodePermission", mock.Anything, "resource", "unknown").
+		Return("", "", false, nil)
+
+	resServerID, permission, found, err := s.compositeStore.ResolveNodePermission(s.ctx, "resource", "unknown")
+
+	assert.NoError(s.T(), err)
+	assert.False(s.T(), found)
+	assert.Empty(s.T(), resServerID)
+	assert.Empty(s.T(), permission)
+}
+
+func (s *CompositeResourceStoreTestSuite) TestResolveNodePermission_DBError() {
+	dbErr := errors.New("db error")
+	s.dbStoreMock.On("ResolveNodePermission", mock.Anything, "resource", "res1").
+		Return("", "", false, dbErr)
+
+	resServerID, permission, found, err := s.compositeStore.ResolveNodePermission(s.ctx, "resource", "res1")
+
+	assert.Error(s.T(), err)
+	assert.False(s.T(), found)
+	assert.Empty(s.T(), resServerID)
+	assert.Empty(s.T(), permission)
+	s.fileStoreMock.AssertNotCalled(s.T(), "ResolveNodePermission", mock.Anything, mock.Anything, mock.Anything)
+}
+
+// OU-scoped resource server listing tests
+
+func (s *CompositeResourceStoreTestSuite) TestGetResourceServerListByOUID_MergesBothStores() {
+	s.dbStoreMock.On("GetResourceServerListCountByOUID", s.ctx, "ou-1").Return(1, nil)
+	s.fileStoreMock.On("GetResourceServerListCountByOUID", s.ctx, "ou-1").Return(1, nil)
+	s.dbStoreMock.On("GetResourceServerListByOUID", s.ctx, "ou-1", 1, 0).
+		Return([]providers.ResourceServer{{ID: "rs-db", OUID: "ou-1"}}, nil)
+	s.fileStoreMock.On("GetResourceServerListByOUID", s.ctx, "ou-1", 1, 0).
+		Return([]providers.ResourceServer{{ID: "rs-file", OUID: "ou-1"}}, nil)
+
+	result, err := s.compositeStore.GetResourceServerListByOUID(s.ctx, "ou-1", 10, 0)
+
+	assert.NoError(s.T(), err)
+	assert.Len(s.T(), result, 2)
+}
+
+func (s *CompositeResourceStoreTestSuite) TestGetResourceServerListByOUID_EmptyShortCircuits() {
+	s.dbStoreMock.On("GetResourceServerListCountByOUID", s.ctx, "ou-1").Return(0, nil)
+	s.fileStoreMock.On("GetResourceServerListCountByOUID", s.ctx, "ou-1").Return(0, nil)
+
+	result, err := s.compositeStore.GetResourceServerListByOUID(s.ctx, "ou-1", 10, 0)
+
+	assert.NoError(s.T(), err)
+	assert.Empty(s.T(), result)
+	s.dbStoreMock.AssertNotCalled(s.T(), "GetResourceServerListByOUID",
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+func (s *CompositeResourceStoreTestSuite) TestGetResourceServerListCountByOUID_Deduplicates() {
+	// The same ID present in both stores must be counted once, matching the unfiltered listing's
+	// own dedup behavior.
+	s.dbStoreMock.On("GetResourceServerListCountByOUID", s.ctx, "ou-1").Return(1, nil)
+	s.fileStoreMock.On("GetResourceServerListCountByOUID", s.ctx, "ou-1").Return(1, nil)
+	s.dbStoreMock.On("GetResourceServerListByOUID", s.ctx, "ou-1", 1, 0).
+		Return([]providers.ResourceServer{{ID: "rs-both", OUID: "ou-1"}}, nil)
+	s.fileStoreMock.On("GetResourceServerListByOUID", s.ctx, "ou-1", 1, 0).
+		Return([]providers.ResourceServer{{ID: "rs-both", OUID: "ou-1"}}, nil)
+
+	count, err := s.compositeStore.GetResourceServerListCountByOUID(s.ctx, "ou-1")
+
+	assert.NoError(s.T(), err)
+	assert.Equal(s.T(), 1, count)
+}
+
+func (s *CompositeResourceStoreTestSuite) TestGetResourceServerListByOUID_DBErrorPropagates() {
+	s.dbStoreMock.On("GetResourceServerListCountByOUID", s.ctx, "ou-1").
+		Return(0, errors.New("db error"))
+
+	result, err := s.compositeStore.GetResourceServerListByOUID(s.ctx, "ou-1", 10, 0)
+
+	assert.Error(s.T(), err)
+	assert.Nil(s.T(), result)
+}

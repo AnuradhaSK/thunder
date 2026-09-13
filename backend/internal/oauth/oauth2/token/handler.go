@@ -99,6 +99,9 @@ func (th *tokenHandler) HandleTokenRequest(w http.ResponseWriter, r *http.Reques
 		Audiences:          r.Form[constants.RequestParamAudience],
 		AuthReqID:          r.FormValue(constants.RequestParamAuthReqID),
 		Assertion:          r.FormValue(constants.RequestParamAssertion),
+		// Empty unless the request came in on the /ou/{ouId} variant of this endpoint, which names
+		// the organization unit the token is being requested against.
+		AccessingOUID: r.PathValue(constants.PathParamOUID),
 	}
 
 	// Delegate all business logic to the token service.

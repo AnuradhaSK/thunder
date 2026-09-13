@@ -5,14 +5,12 @@ package resource
 
 import (
 	"context"
-	"errors"
 
 	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 
 	"github.com/thunder-id/thunderid/internal/sharing"
 	"github.com/thunder-id/thunderid/internal/system/log"
-	"github.com/thunder-id/thunderid/internal/system/security"
 )
 
 // resourceTreeNode identifies one node (a resource or an action) in a resource server's tree, for
@@ -64,65 +62,51 @@ func (rs *resourceService) onNodeUnshared(ctx context.Context, kind, nodeID, ouI
 	return nil
 }
 
-// FilterVisiblePermissions implements ResourceServiceInterface. See its doc comment and
-// for the algorithm and why the deployment
-// root permission is exempted rather than routed through sharing visibility.
-func (rs *resourceService) FilterVisiblePermissions(
-	ctx context.Context, resourceServerID string, permissions []string, ouID string,
+// appendPermissionsHiddenFromOU is the organization-unit half of ValidatePermissions (§4.4): it
+// adds to invalid every permission that exists on the resource server but that ouID cannot see.
+// permissions holds the candidates already checked for existence, invalid the ones that failed that
+// check. The deployment root permission never reaches here; ValidatePermissions holds it back.
+func (rs *resourceService) appendPermissionsHiddenFromOU(
+	ctx context.Context, resourceServer providers.ResourceServer, permissions, invalid []string, ouID string,
 ) ([]string, *tidcommon.ServiceError) {
-	if len(permissions) == 0 {
-		return []string{}, nil
-	}
-
-	// Step 1: the deployment root permission is a bypass, not a grant (§4.4) — it is kept
-	// unconditionally and never subjected to the checks below.
-	rootPermission := security.GetSystemRootPermission()
-	visible := make([]string, 0, len(permissions))
-	remaining := make([]string, 0, len(permissions))
-	for _, p := range permissions {
-		if p == rootPermission {
-			visible = append(visible, p)
-			continue
-		}
-		remaining = append(remaining, p)
-	}
-	if len(remaining) == 0 {
-		return visible, nil
-	}
-
-	resourceServer, err := rs.resourceStore.GetResourceServer(ctx, resourceServerID)
-	if err != nil {
-		if errors.Is(err, errResourceServerNotFound) {
-			return visible, nil
-		}
-		rs.logger.Error(ctx, "Failed to load resource server for permission visibility check",
-			log.String("resourceServerId", resourceServerID), log.Error(err))
-		return nil, &tidcommon.InternalServerError
-	}
-
-	// Step 2: owner short-circuit.
+	// The organization unit that owns the resource server sees everything beneath it.
 	if resourceServer.OUID == ouID {
-		return append(visible, remaining...), nil
+		return invalid, nil
 	}
 
-	// Step 3: server-level gate.
-	shared, svcErr := rs.sharingService.IsShared(ctx, resourceServerSharingType, resourceServerID, ouID)
+	invalidSet := make(map[string]struct{}, len(invalid))
+	for _, permission := range invalid {
+		invalidSet[permission] = struct{}{}
+	}
+
+	// Nothing under a resource server that was never granted to the organization unit is visible.
+	shared, svcErr := rs.sharingService.IsShared(ctx, resourceServerSharingType, resourceServer.ID, ouID)
 	if svcErr != nil {
 		return nil, svcErr
 	}
 	if !shared {
-		return visible, nil
+		for _, permission := range permissions {
+			if _, already := invalidSet[permission]; !already {
+				invalid = append(invalid, permission)
+			}
+		}
+		return invalid, nil
 	}
 
-	// Step 4: per-permission node check.
-	for _, p := range remaining {
-		nodeID, kind, found, err := rs.resourceStore.ResolvePermissionNode(ctx, resourceServerID, p)
+	// The resource server is granted, so each permission's own node has to be granted as well.
+	for _, permission := range permissions {
+		if _, already := invalidSet[permission]; already {
+			continue
+		}
+		nodeID, kind, found, err := rs.resourceStore.ResolvePermissionNode(ctx, resourceServer.ID, permission)
 		if err != nil {
 			rs.logger.Error(ctx, "Failed to resolve permission node",
-				log.String("resourceServerId", resourceServerID), log.String("permission", p), log.Error(err))
+				log.String("resourceServerId", resourceServer.ID),
+				log.String("permission", permission), log.Error(err))
 			return nil, &tidcommon.InternalServerError
 		}
 		if !found {
+			invalid = append(invalid, permission)
 			continue
 		}
 		nodeType := resourceNodeSharingType
@@ -133,12 +117,12 @@ func (rs *resourceService) FilterVisiblePermissions(
 		if svcErr != nil {
 			return nil, svcErr
 		}
-		if nodeShared {
-			visible = append(visible, p)
+		if !nodeShared {
+			invalid = append(invalid, permission)
 		}
 	}
 
-	return visible, nil
+	return invalid, nil
 }
 
 // inheritGrants replays every grant recorded for (parentType, parentID) onto
@@ -190,9 +174,9 @@ func (rs *resourceService) shareResourceTree(
 	if svcErr != nil {
 		return nil, svcErr
 	}
-	excluded := make(map[string]struct{}, len(req.ExcludedNodeIDs))
-	for _, id := range req.ExcludedNodeIDs {
-		excluded[id] = struct{}{}
+	excluded, svcErr := rs.expandExcludedNodes(ctx, resourceServerID, req.ExcludedNodeIDs)
+	if svcErr != nil {
+		return nil, svcErr
 	}
 	for _, d := range descendants {
 		if _, skip := excluded[d.id]; skip {
@@ -206,6 +190,33 @@ func (rs *resourceService) shareResourceTree(
 	}
 
 	return result, nil
+}
+
+// expandExcludedNodes turns the caller's excluded node ids into the full set of nodes to withhold,
+// by adding every descendant of each excluded node.
+//
+// Excluding a node has to exclude its subtree, because visibility is resolved per node: a
+// permission names an action, and ValidatePermissions looks that action up directly. Withholding
+// a resource while still granting the actions beneath it would leave every one of its permissions
+// visible, which is the opposite of what excluding it asked for. Actions are leaves, so only
+// excluded resources expand.
+func (rs *resourceService) expandExcludedNodes(
+	ctx context.Context, resourceServerID string, excludedNodeIDs []string,
+) (map[string]struct{}, *tidcommon.ServiceError) {
+	excluded := make(map[string]struct{}, len(excludedNodeIDs))
+	for _, id := range excludedNodeIDs {
+		excluded[id] = struct{}{}
+	}
+	for _, id := range excludedNodeIDs {
+		descendants, svcErr := rs.descendantsOf(ctx, resourceServerID, resourceNodeSharingType, id)
+		if svcErr != nil {
+			return nil, svcErr
+		}
+		for _, d := range descendants {
+			excluded[d.id] = struct{}{}
+		}
+	}
+	return excluded, nil
 }
 
 // unshareResourceTree revokes grantID (recorded against (nodeType, nodeID)) and, when cascade is

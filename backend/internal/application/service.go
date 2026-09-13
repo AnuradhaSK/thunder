@@ -20,6 +20,7 @@ import (
 	oauthutils "github.com/thunder-id/thunderid/internal/oauth/oauth2/utils"
 	oupkg "github.com/thunder-id/thunderid/internal/ou"
 	"github.com/thunder-id/thunderid/internal/serverconfig"
+	"github.com/thunder-id/thunderid/internal/sharing"
 	"github.com/thunder-id/thunderid/internal/system/config"
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	"github.com/thunder-id/thunderid/internal/system/cors"
@@ -39,6 +40,10 @@ type ApplicationServiceInterface interface {
 	ValidateApplication(ctx context.Context, app *model.ApplicationDTO) (
 		*model.ApplicationProcessedDTO, *providers.InboundAuthConfigWithSecret, *tidcommon.ServiceError)
 	GetApplicationList(ctx context.Context) (*model.ApplicationListResponse, *tidcommon.ServiceError)
+	// IsApplicationGrantedToOU reports whether the application has been granted to ouID through
+	// the sharing framework. The owning organization unit is not special-cased here; see the
+	// implementation.
+	IsApplicationGrantedToOU(ctx context.Context, appID, ouID string) (bool, *tidcommon.ServiceError)
 	GetOAuthApplication(
 		ctx context.Context, clientID string) (*providers.OAuthClient, *tidcommon.ServiceError)
 	GetApplication(ctx context.Context, appID string) (*providers.Application, *tidcommon.ServiceError)
@@ -74,6 +79,7 @@ type applicationService struct {
 	dependencyRegistry   resourcedependency.Registry
 	serverConfigService  serverconfig.ServerConfigService
 	resolveLifetime      artifactLifetimeResolver
+	sharingService       sharing.ServiceInterface
 }
 
 // newApplicationService creates a new instance of ApplicationService.
@@ -85,6 +91,7 @@ func newApplicationService(
 	cryptoSvc providers.RuntimeCryptoProvider,
 	serverConfigSvc serverconfig.ServerConfigService,
 	artifactLifetime artifactLifetimeResolver,
+	sharingService sharing.ServiceInterface,
 ) ApplicationServiceInterface {
 	return &applicationService{
 		logger:               log.GetLogger().With(log.String(log.LoggerKeyComponentName, "ApplicationService")),
@@ -95,6 +102,7 @@ func newApplicationService(
 		cryptoSvc:            cryptoSvc,
 		serverConfigService:  serverConfigSvc,
 		resolveLifetime:      artifactLifetime,
+		sharingService:       sharingService,
 	}
 }
 
@@ -2479,4 +2487,17 @@ func (as *applicationService) syncPasskeyOriginsToCORS(ctx context.Context, orig
 		as.logger.Warn(ctx, "Failed to update CORS config with passkey allowed origins",
 			log.String("error", svcErr.ErrorDescription.DefaultValue))
 	}
+}
+
+// IsApplicationGrantedToOU reports whether the application has been granted to ouID through the
+// sharing framework. It deliberately does not special-case the application's own owning
+// organization unit: the caller holds that already and short-circuits on it, which keeps this a
+// single sharing lookup with no application fetch on the token path.
+func (as *applicationService) IsApplicationGrantedToOU(
+	ctx context.Context, appID, ouID string,
+) (bool, *tidcommon.ServiceError) {
+	if appID == "" || ouID == "" || as.sharingService == nil {
+		return false, nil
+	}
+	return as.sharingService.IsShared(ctx, applicationSharingType, appID, ouID)
 }

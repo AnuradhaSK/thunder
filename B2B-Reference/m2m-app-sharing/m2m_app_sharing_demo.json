@@ -1,0 +1,1987 @@
+{
+	"info": {
+		"_postman_id": "c7d2e9a1-5b3f-4c8e-9a10-m2m-app-sharing",
+		"name": "ThunderID - M2M Application Sharing Across Organization Units",
+		"description": "End-to-end demo of a machine-to-machine service that serves many organization units from one credential pair, without being visible inside any of them.\n\nA token is requested against a named organization unit via POST /ou/{ouId}/oauth2/token. Three separate organization units are involved in answering that request:\n\n- the accessing OU decides whether the application may be used at all (its grant),\n- the application's own owning OU decides what the application is entitled to (its roles and group memberships),\n- the accessing OU then narrows what the token may actually carry (its resource grants).\n\nOmitting the /ou/{ouId} prefix keeps the pre-existing behaviour exactly: no grant is consulted, no scope filtering happens, and the claims stay with the application's owner.\n\nApplication sharing is declarative-only by design; there is no REST API for it. Run the setup guide in README.md before this collection.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"auth": {
+		"type": "bearer",
+		"bearer": [
+			{
+				"key": "token",
+				"value": "{{accessToken}}",
+				"type": "string"
+			}
+		]
+	},
+	"item": [
+		{
+			"name": "00 - Setup",
+			"description": "Obtains the admin token every management request in this collection uses, and confirms the declaratively defined organization units and M2M applications are present. Application grants have no REST API by design, so those three applications must come from declarative YAML: see the README's setup guide. Run this folder first.",
+			"item": [
+				{
+					"name": "Get Admin Access Token",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/oauth2/token",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"oauth2",
+								"token"
+							]
+						},
+						"description": "Obtains a system-scoped management token via client_credentials. Fill clientId/clientSecret in the environment first. This is the collection's own admin access, unrelated to the M2M service credentials exercised throughout the rest of the collection.",
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "grant_type",
+									"value": "client_credentials",
+									"type": "text"
+								},
+								{
+									"key": "scope",
+									"value": "system",
+									"type": "text"
+								},
+								{
+									"key": "resource",
+									"value": "https://localhost:8090/mcp",
+									"type": "text"
+								}
+							]
+						},
+						"auth": {
+							"type": "basic",
+							"basic": [
+								{
+									"key": "username",
+									"value": "{{clientId}}",
+									"type": "string"
+								},
+								{
+									"key": "password",
+									"value": "{{clientSecret}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"pm.collectionVariables.set('accessToken', pm.response.json().access_token);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Preflight: Declarative Organization Units Exist",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/organization-units?limit=100",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"organization-units"
+							],
+							"query": [
+								{
+									"key": "limit",
+									"value": "100"
+								}
+							]
+						},
+						"description": "Fails fast with a pointer to the setup guide if the declarative OU tree is missing. Every later folder addresses these organization units by the ids the YAML pins."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"const handles = pm.response.json().organizationUnits.map(function (o) { return o.id; });",
+									"pm.test('The declarative M2M organization unit tree is loaded', function () {",
+									"    ['decl-m2m-root', 'decl-m2m-child-a', 'decl-m2m-child-b'].forEach(function (id) {",
+									"        pm.expect(handles, 'missing ' + id + ': see the README setup guide').to.include(id);",
+									"    });",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Preflight: Declarative M2M Applications Exist",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/applications?limit=100",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"applications"
+							],
+							"query": [
+								{
+									"key": "limit",
+									"value": "100"
+								}
+							]
+						},
+						"description": "Confirms the three M2M service applications loaded. Each carries a different grants: block (allOus, allChildren, and a selective ouIds list), which is what folders 02 to 04 exercise."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"const ids = pm.response.json().applications.map(function (a) { return a.id; });",
+									"pm.test('The declarative M2M applications are loaded', function () {",
+									"    ['decl-m2m-all-ous', 'decl-m2m-subtree', 'decl-m2m-selective'].forEach(function (id) {",
+									"        pm.expect(ids, 'missing ' + id + ': see the README setup guide').to.include(id);",
+									"    });",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				}
+			]
+		},
+		{
+			"name": "01 - Baseline: No Accessing Organization Unit",
+			"description": "The bare token endpoint is untouched by this feature. Without an /ou/{ouId} prefix nothing about issuance changes: no grant is consulted, and the organization unit claims stay with the application's own owner.",
+			"item": [
+				{
+					"name": "Token Without OU Prefix",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/oauth2/token",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"oauth2",
+								"token"
+							]
+						},
+						"description": "The selectively granted application is used deliberately: on the bare endpoint its narrow grant is irrelevant, because no grant is consulted at all.",
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "grant_type",
+									"value": "client_credentials",
+									"type": "text"
+								}
+							]
+						},
+						"auth": {
+							"type": "basic",
+							"basic": [
+								{
+									"key": "username",
+									"value": "{{selectiveClientId}}",
+									"type": "string"
+								},
+								{
+									"key": "password",
+									"value": "{{selectiveClientSecret}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"const decodeClaims = function (token) {",
+									"    const payload = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
+									"    return JSON.parse(atob(payload));",
+									"};",
+									"const claims = decodeClaims(pm.response.json().access_token);",
+									"pm.test('Claims stay with the application owner', function () {",
+									"    pm.expect(claims.ouId).to.eql('decl-m2m-root');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				}
+			]
+		},
+		{
+			"name": "02 - allOus Grant: Every Organization Unit",
+			"description": "decl-m2m-all-ous declares `grants: [- allOus: true]`. One credential pair serves the whole tenant base, and each token states which organization it was issued for.",
+			"item": [
+				{
+					"name": "Token for Owner (decl-m2m-root)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/ou/decl-m2m-root/oauth2/token",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"ou",
+								"decl-m2m-root",
+								"oauth2",
+								"token"
+							]
+						},
+						"description": "An allOus grant covers every organization unit in the deployment, at every depth, current and future, so it reaches an unrelated tree as readily as the owner's own children.",
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "grant_type",
+									"value": "client_credentials",
+									"type": "text"
+								}
+							]
+						},
+						"auth": {
+							"type": "basic",
+							"basic": [
+								{
+									"key": "username",
+									"value": "{{allOusClientId}}",
+									"type": "string"
+								},
+								{
+									"key": "password",
+									"value": "{{allOusClientSecret}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"const decodeClaims = function (token) {",
+									"    const payload = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
+									"    return JSON.parse(atob(payload));",
+									"};",
+									"const claims = decodeClaims(pm.response.json().access_token);",
+									"pm.test('The token names decl-m2m-root as the organization it was issued for', function () {",
+									"    pm.expect(claims.ouId).to.eql('decl-m2m-root');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Token for Child A (decl-m2m-child-a)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/ou/decl-m2m-child-a/oauth2/token",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"ou",
+								"decl-m2m-child-a",
+								"oauth2",
+								"token"
+							]
+						},
+						"description": "An allOus grant covers every organization unit in the deployment, at every depth, current and future, so it reaches an unrelated tree as readily as the owner's own children.",
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "grant_type",
+									"value": "client_credentials",
+									"type": "text"
+								}
+							]
+						},
+						"auth": {
+							"type": "basic",
+							"basic": [
+								{
+									"key": "username",
+									"value": "{{allOusClientId}}",
+									"type": "string"
+								},
+								{
+									"key": "password",
+									"value": "{{allOusClientSecret}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"const decodeClaims = function (token) {",
+									"    const payload = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
+									"    return JSON.parse(atob(payload));",
+									"};",
+									"const claims = decodeClaims(pm.response.json().access_token);",
+									"pm.test('The token names decl-m2m-child-a as the organization it was issued for', function () {",
+									"    pm.expect(claims.ouId).to.eql('decl-m2m-child-a');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Token for Child B (decl-m2m-child-b)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/ou/decl-m2m-child-b/oauth2/token",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"ou",
+								"decl-m2m-child-b",
+								"oauth2",
+								"token"
+							]
+						},
+						"description": "An allOus grant covers every organization unit in the deployment, at every depth, current and future, so it reaches an unrelated tree as readily as the owner's own children.",
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "grant_type",
+									"value": "client_credentials",
+									"type": "text"
+								}
+							]
+						},
+						"auth": {
+							"type": "basic",
+							"basic": [
+								{
+									"key": "username",
+									"value": "{{allOusClientId}}",
+									"type": "string"
+								},
+								{
+									"key": "password",
+									"value": "{{allOusClientSecret}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"const decodeClaims = function (token) {",
+									"    const payload = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
+									"    return JSON.parse(atob(payload));",
+									"};",
+									"const claims = decodeClaims(pm.response.json().access_token);",
+									"pm.test('The token names decl-m2m-child-b as the organization it was issued for', function () {",
+									"    pm.expect(claims.ouId).to.eql('decl-m2m-child-b');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Token for Unrelated Tree (decl-ou-1)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/ou/decl-ou-1/oauth2/token",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"ou",
+								"decl-ou-1",
+								"oauth2",
+								"token"
+							]
+						},
+						"description": "An allOus grant covers every organization unit in the deployment, at every depth, current and future, so it reaches an unrelated tree as readily as the owner's own children.",
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "grant_type",
+									"value": "client_credentials",
+									"type": "text"
+								}
+							]
+						},
+						"auth": {
+							"type": "basic",
+							"basic": [
+								{
+									"key": "username",
+									"value": "{{allOusClientId}}",
+									"type": "string"
+								},
+								{
+									"key": "password",
+									"value": "{{allOusClientSecret}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"const decodeClaims = function (token) {",
+									"    const payload = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
+									"    return JSON.parse(atob(payload));",
+									"};",
+									"const claims = decodeClaims(pm.response.json().access_token);",
+									"pm.test('The token names decl-ou-1 as the organization it was issued for', function () {",
+									"    pm.expect(claims.ouId).to.eql('decl-ou-1');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				}
+			]
+		},
+		{
+			"name": "03 - allChildren Grant: The Owning Subtree",
+			"description": "decl-m2m-subtree declares `grants: [- allChildren: true]`: every organization unit beneath its owner, any depth, including ones created later. It stops at the subtree boundary.",
+			"item": [
+				{
+					"name": "Token for Child A (In Subtree)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/ou/decl-m2m-child-a/oauth2/token",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"ou",
+								"decl-m2m-child-a",
+								"oauth2",
+								"token"
+							]
+						},
+						"description": "A child of the owning organization unit is covered by the blanket subtree grant.",
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "grant_type",
+									"value": "client_credentials",
+									"type": "text"
+								}
+							]
+						},
+						"auth": {
+							"type": "basic",
+							"basic": [
+								{
+									"key": "username",
+									"value": "{{subtreeClientId}}",
+									"type": "string"
+								},
+								{
+									"key": "password",
+									"value": "{{subtreeClientSecret}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Token for Child B (In Subtree)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/ou/decl-m2m-child-b/oauth2/token",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"ou",
+								"decl-m2m-child-b",
+								"oauth2",
+								"token"
+							]
+						},
+						"description": "A second child, to show allChildren is a blanket scope rather than an enumerated list.",
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "grant_type",
+									"value": "client_credentials",
+									"type": "text"
+								}
+							]
+						},
+						"auth": {
+							"type": "basic",
+							"basic": [
+								{
+									"key": "username",
+									"value": "{{subtreeClientId}}",
+									"type": "string"
+								},
+								{
+									"key": "password",
+									"value": "{{subtreeClientSecret}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "NEGATIVE: Token for an Unrelated Tree",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/ou/decl-ou-1/oauth2/token",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"ou",
+								"decl-ou-1",
+								"oauth2",
+								"token"
+							]
+						},
+						"description": "allChildren never leaves the owning organization unit's own subtree, so an organization unit in a different tree is refused even though the application is granted outward generally.",
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "grant_type",
+									"value": "client_credentials",
+									"type": "text"
+								}
+							]
+						},
+						"auth": {
+							"type": "basic",
+							"basic": [
+								{
+									"key": "username",
+									"value": "{{subtreeClientId}}",
+									"type": "string"
+								},
+								{
+									"key": "password",
+									"value": "{{subtreeClientSecret}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 400', function () {",
+									"    pm.response.to.have.status(400);",
+									"});",
+									"pm.test('Refused as unauthorized_client', function () {",
+									"    pm.expect(pm.response.json().error).to.eql('unauthorized_client');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				}
+			]
+		},
+		{
+			"name": "04 - Selective Grant: Named Organization Units Only",
+			"description": "decl-m2m-selective declares `grants: [- ouIds: [decl-m2m-child-a]]`. This is the case the whole feature exists for: two sibling organization units in the same subtree, only one of which the service may serve.",
+			"item": [
+				{
+					"name": "Token for Child A (Named in the Grant)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/ou/decl-m2m-child-a/oauth2/token",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"ou",
+								"decl-m2m-child-a",
+								"oauth2",
+								"token"
+							]
+						},
+						"description": "The one organization unit the grant names.",
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "grant_type",
+									"value": "client_credentials",
+									"type": "text"
+								}
+							]
+						},
+						"auth": {
+							"type": "basic",
+							"basic": [
+								{
+									"key": "username",
+									"value": "{{selectiveClientId}}",
+									"type": "string"
+								},
+								{
+									"key": "password",
+									"value": "{{selectiveClientSecret}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "NEGATIVE: Token for Child B (Sibling, Not Named)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/ou/decl-m2m-child-b/oauth2/token",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"ou",
+								"decl-m2m-child-b",
+								"oauth2",
+								"token"
+							]
+						},
+						"description": "Child B sits in the same subtree as child A and differs only in not being named by the grant. Being a sibling of a granted organization unit confers nothing.",
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "grant_type",
+									"value": "client_credentials",
+									"type": "text"
+								}
+							]
+						},
+						"auth": {
+							"type": "basic",
+							"basic": [
+								{
+									"key": "username",
+									"value": "{{selectiveClientId}}",
+									"type": "string"
+								},
+								{
+									"key": "password",
+									"value": "{{selectiveClientSecret}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 400', function () {",
+									"    pm.response.to.have.status(400);",
+									"});",
+									"pm.test('Refused as unauthorized_client', function () {",
+									"    pm.expect(pm.response.json().error).to.eql('unauthorized_client');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Owner Needs No Grant of Its Own",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/ou/decl-m2m-root/oauth2/token",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"ou",
+								"decl-m2m-root",
+								"oauth2",
+								"token"
+							]
+						},
+						"description": "The owning organization unit may always name itself, without appearing in any grant.",
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "grant_type",
+									"value": "client_credentials",
+									"type": "text"
+								}
+							]
+						},
+						"auth": {
+							"type": "basic",
+							"basic": [
+								{
+									"key": "username",
+									"value": "{{selectiveClientId}}",
+									"type": "string"
+								},
+								{
+									"key": "password",
+									"value": "{{selectiveClientSecret}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				}
+			]
+		},
+		{
+			"name": "05 - Negative: Unresolvable and Unauthenticated",
+			"description": "Failure modes that are not about grants: an organization unit id that resolves to nothing, and a bad client secret. The accessing organization unit is resolved before its grant is consulted, so an unknown id is refused even under a blanket allOus grant, which would otherwise match any string.",
+			"item": [
+				{
+					"name": "NEGATIVE: Unknown OU Under a Selective Grant",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/ou/no-such-ou/oauth2/token",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"ou",
+								"no-such-ou",
+								"oauth2",
+								"token"
+							]
+						},
+						"description": "An organization unit the application has no grant for, which also happens not to exist.",
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "grant_type",
+									"value": "client_credentials",
+									"type": "text"
+								}
+							]
+						},
+						"auth": {
+							"type": "basic",
+							"basic": [
+								{
+									"key": "username",
+									"value": "{{selectiveClientId}}",
+									"type": "string"
+								},
+								{
+									"key": "password",
+									"value": "{{selectiveClientSecret}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 400', function () {",
+									"    pm.response.to.have.status(400);",
+									"});",
+									"pm.test('Refused as unauthorized_client', function () {",
+									"    pm.expect(pm.response.json().error).to.eql('unauthorized_client');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "NEGATIVE: Unknown OU Under an allOus Grant",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/ou/no-such-ou/oauth2/token",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"ou",
+								"no-such-ou",
+								"oauth2",
+								"token"
+							]
+						},
+						"description": "The interesting half: allOus means every organization unit in the deployment, and a grant check alone can never reject an id that names none of them. Resolving the organization unit before consulting the grant is what makes this a clean refusal rather than a 500.",
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "grant_type",
+									"value": "client_credentials",
+									"type": "text"
+								}
+							]
+						},
+						"auth": {
+							"type": "basic",
+							"basic": [
+								{
+									"key": "username",
+									"value": "{{allOusClientId}}",
+									"type": "string"
+								},
+								{
+									"key": "password",
+									"value": "{{allOusClientSecret}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 400', function () {",
+									"    pm.response.to.have.status(400);",
+									"});",
+									"pm.test('Refused as unauthorized_client', function () {",
+									"    pm.expect(pm.response.json().error).to.eql('unauthorized_client');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "NEGATIVE: Wrong Client Secret",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/ou/decl-m2m-child-a/oauth2/token",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"ou",
+								"decl-m2m-child-a",
+								"oauth2",
+								"token"
+							]
+						},
+						"description": "Client authentication runs before any organization unit logic, so a bad secret fails as invalid_client regardless of how well granted the application is.",
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "grant_type",
+									"value": "client_credentials",
+									"type": "text"
+								}
+							]
+						},
+						"auth": {
+							"type": "basic",
+							"basic": [
+								{
+									"key": "username",
+									"value": "{{allOusClientId}}",
+									"type": "string"
+								},
+								{
+									"key": "password",
+									"value": "definitely-not-the-secret",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 401', function () {",
+									"    pm.response.to.have.status(401);",
+									"});",
+									"pm.test('Refused as invalid_client', function () {",
+									"    pm.expect(pm.response.json().error).to.eql('invalid_client');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				}
+			]
+		},
+		{
+			"name": "06 - Scope Filtering by the Accessing Organization Unit",
+			"description": "Builds a resource server with two resources, entitles the service to all of it through a role in its own organization unit, then grants the server to a child while withholding one resource. The same credential then yields different scopes depending on which organization unit the token is requested against. Everything here is API-creatable; only the application grants are declarative.",
+			"item": [
+				{
+					"name": "Create Resource Server (Owned by Root)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers"
+							]
+						},
+						"description": "A resource server owned by the same organization unit that owns the M2M applications. Its permissions are what the scope filter will later narrow.",
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"M2M Scope Filter RS\",\n  \"identifier\": \"{{scopeRsIdentifier}}\",\n  \"ouId\": \"decl-m2m-root\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 201', function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"pm.collectionVariables.set('scopeRsId', pm.response.json().id);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Create 'books' Resource",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{scopeRsId}}/resources",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{scopeRsId}}",
+								"resources"
+							]
+						},
+						"description": "The resource that will remain visible to the child organization unit.",
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Books\",\n  \"handle\": \"books\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 201', function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"pm.collectionVariables.set('booksResourceId', pm.response.json().id);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Create 'books:read' Action",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{scopeRsId}}/resources/{{booksResourceId}}/actions",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{scopeRsId}}",
+								"resources",
+								"{{booksResourceId}}",
+								"actions"
+							]
+						},
+						"description": "Its id is captured so cleanup can delete it before its parent resource.",
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Read\",\n  \"handle\": \"read\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 201', function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"pm.collectionVariables.set('booksReadActionId', pm.response.json().id);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Create 'books:create' Action",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{scopeRsId}}/resources/{{booksResourceId}}/actions",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{scopeRsId}}",
+								"resources",
+								"{{booksResourceId}}",
+								"actions"
+							]
+						},
+						"description": "Its id is captured so cleanup can delete it before its parent resource.",
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Create\",\n  \"handle\": \"create\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 201', function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"pm.collectionVariables.set('booksCreateActionId', pm.response.json().id);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Create 'orders' Resource (To Be Withheld)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{scopeRsId}}/resources",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{scopeRsId}}",
+								"resources"
+							]
+						},
+						"description": "The resource deliberately excluded from the child's grant in a moment.",
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Orders\",\n  \"handle\": \"orders\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 201', function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"pm.collectionVariables.set('ordersResourceId', pm.response.json().id);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Create 'orders:read' Action",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{scopeRsId}}/resources/{{ordersResourceId}}/actions",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{scopeRsId}}",
+								"resources",
+								"{{ordersResourceId}}",
+								"actions"
+							]
+						},
+						"description": "Its id is captured so cleanup can delete it before its parent resource.",
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Read\",\n  \"handle\": \"read\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 201', function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"pm.collectionVariables.set('ordersReadActionId', pm.response.json().id);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Create Role in the Owning OU, Assigned to the Service",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/roles",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"roles"
+							]
+						},
+						"description": "The application's entitlement lives in its own owning organization unit. This role carries every permission and is assigned directly to the subtree-granted application. Nothing about it varies per accessing organization unit.",
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"M2M Scope Filter Role\",\n  \"ouId\": \"decl-m2m-root\",\n  \"permissions\": [\n    {\n      \"resourceServerId\": \"{{scopeRsId}}\",\n      \"permissions\": [\n        \"books:read\",\n        \"books:create\",\n        \"orders:read\"\n      ]\n    }\n  ],\n  \"assignments\": [\n    {\n      \"id\": \"decl-m2m-subtree\",\n      \"type\": \"app\"\n    }\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 201', function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"pm.collectionVariables.set('scopeRoleId', pm.response.json().id);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Grant Resource Server to Child A, Excluding 'orders'",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{scopeRsId}}/grants",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{scopeRsId}}",
+								"grants"
+							]
+						},
+						"description": "Sharing a resource server cascades to every resource and action beneath it. excludedNodeIds withholds the orders resource, and withholding a resource withholds its whole subtree: its actions are excluded with it, otherwise every permission it defines would remain visible.",
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"ouIds\": [\n    \"decl-m2m-child-a\"\n  ],\n  \"excludedNodeIds\": [\n    \"{{ordersResourceId}}\"\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 201', function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"const grants = pm.response.json().grants;",
+									"pm.test('Cascade covers the server, books, and books two actions only', function () {",
+									"    pm.expect(grants.length).to.eql(4);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Scopes for the Owner (Everything the Role Grants)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/ou/decl-m2m-root/oauth2/token",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"ou",
+								"decl-m2m-root",
+								"oauth2",
+								"token"
+							]
+						},
+						"description": "The baseline. Against its own organization unit the application carries every permission its role grants, because the owner sees its own resource server whole.",
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "grant_type",
+									"value": "client_credentials",
+									"type": "text"
+								},
+								{
+									"key": "scope",
+									"value": "books:read books:create orders:read",
+									"type": "text"
+								},
+								{
+									"key": "resource",
+									"value": "{{scopeRsIdentifier}}",
+									"type": "text"
+								}
+							]
+						},
+						"auth": {
+							"type": "basic",
+							"basic": [
+								{
+									"key": "username",
+									"value": "{{subtreeClientId}}",
+									"type": "string"
+								},
+								{
+									"key": "password",
+									"value": "{{subtreeClientSecret}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"const granted = pm.response.json().scope.split(' ').sort();",
+									"pm.test('All three scopes are issued', function () {",
+									"    pm.expect(granted).to.eql(['books:create', 'books:read', 'orders:read']);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Scopes for Child A (Narrowed to What Was Granted)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/ou/decl-m2m-child-a/oauth2/token",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"ou",
+								"decl-m2m-child-a",
+								"oauth2",
+								"token"
+							]
+						},
+						"description": "The point of the feature. Same credential, same role, same requested scopes: the token is narrower because the child was never granted the orders resource. Entitlement is resolved from the application's owning organization unit; what the token may carry is then filtered by what the accessing organization unit can actually see.",
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "grant_type",
+									"value": "client_credentials",
+									"type": "text"
+								},
+								{
+									"key": "scope",
+									"value": "books:read books:create orders:read",
+									"type": "text"
+								},
+								{
+									"key": "resource",
+									"value": "{{scopeRsIdentifier}}",
+									"type": "text"
+								}
+							]
+						},
+						"auth": {
+							"type": "basic",
+							"basic": [
+								{
+									"key": "username",
+									"value": "{{subtreeClientId}}",
+									"type": "string"
+								},
+								{
+									"key": "password",
+									"value": "{{subtreeClientSecret}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"const granted = pm.response.json().scope.split(' ').sort();",
+									"pm.test('orders:read is filtered out, books scopes survive', function () {",
+									"    pm.expect(granted).to.eql(['books:create', 'books:read']);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				},
+				{
+					"name": "Scopes Without an OU Prefix (Unfiltered)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/oauth2/token",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"oauth2",
+								"token"
+							]
+						},
+						"description": "Scope filtering engages only when an accessing organization unit is named.",
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "grant_type",
+									"value": "client_credentials",
+									"type": "text"
+								},
+								{
+									"key": "scope",
+									"value": "books:read books:create orders:read",
+									"type": "text"
+								},
+								{
+									"key": "resource",
+									"value": "{{scopeRsIdentifier}}",
+									"type": "text"
+								}
+							]
+						},
+						"auth": {
+							"type": "basic",
+							"basic": [
+								{
+									"key": "username",
+									"value": "{{subtreeClientId}}",
+									"type": "string"
+								},
+								{
+									"key": "password",
+									"value": "{{subtreeClientSecret}}",
+									"type": "string"
+								}
+							]
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"const granted = pm.response.json().scope.split(' ').sort();",
+									"pm.test('All three scopes are issued', function () {",
+									"    pm.expect(granted).to.eql(['books:create', 'books:read', 'orders:read']);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					]
+				}
+			]
+		},
+		{
+			"name": "07 - Cleanup",
+			"description": "Removes what folder 06 created. The declarative organization units and applications are not removed: they come from YAML and are recreated on every start.",
+			"item": [
+				{
+					"name": "Delete Role",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/roles/{{scopeRoleId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"roles",
+								"{{scopeRoleId}}"
+							]
+						},
+						"description": "Removed first: while it exists it is the only thing referencing the resource server's permissions."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Deleted', function () {",
+									"    pm.expect([204, 404]).to.include(pm.response.code);",
+									"});"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Delete 'books:read' Action",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{scopeRsId}}/resources/{{booksResourceId}}/actions/{{booksReadActionId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{scopeRsId}}",
+								"resources",
+								"{{booksResourceId}}",
+								"actions",
+								"{{booksReadActionId}}"
+							]
+						},
+						"description": ""
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Deleted', function () {",
+									"    pm.expect([204, 404]).to.include(pm.response.code);",
+									"});"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Delete 'books:create' Action",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{scopeRsId}}/resources/{{booksResourceId}}/actions/{{booksCreateActionId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{scopeRsId}}",
+								"resources",
+								"{{booksResourceId}}",
+								"actions",
+								"{{booksCreateActionId}}"
+							]
+						},
+						"description": ""
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Deleted', function () {",
+									"    pm.expect([204, 404]).to.include(pm.response.code);",
+									"});"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Delete 'orders:read' Action",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{scopeRsId}}/resources/{{ordersResourceId}}/actions/{{ordersReadActionId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{scopeRsId}}",
+								"resources",
+								"{{ordersResourceId}}",
+								"actions",
+								"{{ordersReadActionId}}"
+							]
+						},
+						"description": ""
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Deleted', function () {",
+									"    pm.expect([204, 404]).to.include(pm.response.code);",
+									"});"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Delete 'books' Resource",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{scopeRsId}}/resources/{{booksResourceId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{scopeRsId}}",
+								"resources",
+								"{{booksResourceId}}"
+							]
+						},
+						"description": "Deletable only once its actions are gone."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Deleted', function () {",
+									"    pm.expect([204, 404]).to.include(pm.response.code);",
+									"});"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Delete 'orders' Resource",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{scopeRsId}}/resources/{{ordersResourceId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{scopeRsId}}",
+								"resources",
+								"{{ordersResourceId}}"
+							]
+						},
+						"description": ""
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Deleted', function () {",
+									"    pm.expect([204, 404]).to.include(pm.response.code);",
+									"});"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Delete Resource Server",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/resource-servers/{{scopeRsId}}",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"resource-servers",
+								"{{scopeRsId}}"
+							]
+						},
+						"description": "Deletable only once its resources are gone. Its grants are removed with it."
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Deleted', function () {",
+									"    pm.expect([204, 404]).to.include(pm.response.code);",
+									"});"
+								]
+							}
+						}
+					]
+				}
+			]
+		}
+	],
+	"variable": [
+		{
+			"key": "scheme",
+			"value": "https"
+		},
+		{
+			"key": "host",
+			"value": "localhost"
+		},
+		{
+			"key": "port",
+			"value": "8090"
+		},
+		{
+			"key": "baseUrl",
+			"value": "{{scheme}}://{{host}}:{{port}}"
+		},
+		{
+			"key": "clientId",
+			"value": ""
+		},
+		{
+			"key": "clientSecret",
+			"value": ""
+		},
+		{
+			"key": "accessToken",
+			"value": ""
+		},
+		{
+			"key": "allOusClientId",
+			"value": "decl-m2m-all-ous-client"
+		},
+		{
+			"key": "allOusClientSecret",
+			"value": "decl-m2m-all-ous-secret"
+		},
+		{
+			"key": "subtreeClientId",
+			"value": "decl-m2m-subtree-client"
+		},
+		{
+			"key": "subtreeClientSecret",
+			"value": "decl-m2m-subtree-secret"
+		},
+		{
+			"key": "selectiveClientId",
+			"value": "decl-m2m-selective-client"
+		},
+		{
+			"key": "selectiveClientSecret",
+			"value": "decl-m2m-selective-secret"
+		},
+		{
+			"key": "scopeRsIdentifier",
+			"value": "https://m2m-scope-filter.example.com"
+		},
+		{
+			"key": "scopeRsId",
+			"value": ""
+		},
+		{
+			"key": "booksResourceId",
+			"value": ""
+		},
+		{
+			"key": "ordersResourceId",
+			"value": ""
+		},
+		{
+			"key": "scopeRoleId",
+			"value": ""
+		},
+		{
+			"key": "booksReadActionId",
+			"value": ""
+		},
+		{
+			"key": "booksCreateActionId",
+			"value": ""
+		},
+		{
+			"key": "ordersReadActionId",
+			"value": ""
+		}
+	]
+}

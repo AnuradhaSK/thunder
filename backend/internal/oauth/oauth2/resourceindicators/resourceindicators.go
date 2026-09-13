@@ -192,7 +192,7 @@ func ComputeRSValidScopes(
 		return rsValidScopes, nil
 	}
 	for _, rs := range resolvedRSes {
-		invalid, valErr := resourceService.ValidatePermissions(ctx, rs.ID, requestedScopes)
+		invalid, valErr := resourceService.ValidatePermissions(ctx, rs.ID, requestedScopes, "")
 		if valErr != nil {
 			return nil, &model.ErrorResponse{
 				Error:            constants.ErrorServerError,
@@ -217,16 +217,21 @@ func ComputeRSValidScopes(
 // DownscopeToResourceServer returns the subset of scopes that are defined as permissions on the
 // given resource server (RFC 6749 §3.3). Scopes not defined on the RS are dropped. Order of the
 // input scopes is preserved. When scopes is empty it is returned unchanged.
+//
+// ouID names the organization unit the token is being issued for, and additionally drops scopes
+// that organization unit cannot see on the resource server; pass "" to downscope against the
+// resource server alone.
 func DownscopeToResourceServer(
 	ctx context.Context,
 	resourceService providers.ResourceServerProvider,
 	resourceServerID string,
 	scopes []string,
+	ouID string,
 ) ([]string, *model.ErrorResponse) {
 	if len(scopes) == 0 {
 		return scopes, nil
 	}
-	invalid, svcErr := resourceService.ValidatePermissions(ctx, resourceServerID, scopes)
+	invalid, svcErr := resourceService.ValidatePermissions(ctx, resourceServerID, scopes, ouID)
 	if svcErr != nil {
 		return nil, &model.ErrorResponse{
 			Error:            constants.ErrorServerError,

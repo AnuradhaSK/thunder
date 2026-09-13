@@ -265,17 +265,27 @@ func (e *applicationExporter) GetResourceRulesForResource(resource interface{}) 
 
 // makeAppDeclarativeConfig creates the declarative loader config for loading application
 // identity data into the entity file store.
-func makeAppDeclarativeConfig(appService ApplicationServiceInterface) entity.DeclarativeLoaderConfig {
+func makeAppDeclarativeConfig(
+	appService ApplicationServiceInterface, collect func(pendingAppGrant),
+) entity.DeclarativeLoaderConfig {
 	return entity.DeclarativeLoaderConfig{
 		Directory: "applications",
 		Category:  providers.EntityCategoryApp,
-		Parser:    makeAppEntityParser(appService),
+		Parser:    makeAppEntityParser(appService, collect),
 	}
+}
+
+// pendingAppGrant is one declaratively-declared application grant, captured while parsing and
+// replayed after the whole batch has loaded.
+type pendingAppGrant struct {
+	appID   string
+	ownerOU string
+	grants  []ShareRequest
 }
 
 // makeAppEntityParser creates a parser that converts application YAML into an entity.
 func makeAppEntityParser(
-	appService ApplicationServiceInterface,
+	appService ApplicationServiceInterface, collect func(pendingAppGrant),
 ) func(data []byte) (*providers.Entity, json.RawMessage, json.RawMessage, error) {
 	return func(data []byte) (*providers.Entity, json.RawMessage, json.RawMessage, error) {
 		if appService == nil {
@@ -318,6 +328,24 @@ func makeAppEntityParser(
 			State:            providers.EntityStateActive,
 			OUID:             appDTO.OUID,
 			SystemAttributes: sysAttrsJSON,
+		}
+
+		// The application model carries no grants field, so the block is decoded from the same
+		// document separately (mirroring how the importer handles resource server grants).
+		if collect != nil {
+			var sharingBlock struct {
+				Grants []ShareRequest `yaml:"grants,omitempty"`
+			}
+			if err := yaml.Unmarshal(data, &sharingBlock); err != nil {
+				return nil, nil, nil, fmt.Errorf("failed to parse application grants: %w", err)
+			}
+			if len(sharingBlock.Grants) > 0 {
+				collect(pendingAppGrant{
+					appID:   appDTO.ID,
+					ownerOU: appDTO.OUID,
+					grants:  sharingBlock.Grants,
+				})
+			}
 		}
 
 		return e, nil, sysCredsJSON, nil

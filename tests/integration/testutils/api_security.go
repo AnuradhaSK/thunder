@@ -104,6 +104,13 @@ func isPublicEndpoint(path string) bool {
 		"/error",
 	}
 
+	// The OU-scoped form of the OAuth2 endpoints, /ou/{ouId}/oauth2/..., is public for the same
+	// reason the bare form is: the caller authenticates as an OAuth client. Injecting the admin
+	// bearer here would overwrite that client authentication.
+	if strings.HasPrefix(path, "/ou/") && strings.Contains(path, "/oauth2/") {
+		return true
+	}
+
 	for _, prefix := range publicPrefixes {
 		if strings.HasPrefix(path, prefix) {
 			return true

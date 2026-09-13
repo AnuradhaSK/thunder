@@ -722,9 +722,15 @@ sequenceDiagram
 ```
 
 Every step above corresponds to a request in
-`samples/api/postman/role-sharing/role_sharing_demo.json`, which exercises this exact flow (plus
+`B2B-Reference/role-sharing/role_sharing_demo.json`, which exercises this exact flow (plus
 exclusion policies, grant-scoped editability with scope-down-only reshare, and negative/
 authorization cases) against a live ThunderID instance.
+
+Two sibling collections cover the rest of the family: `B2B-Reference/resource-sharing` for sharing
+the permission catalog itself, and `B2B-Reference/m2m-app-sharing` for a machine-to-machine service
+that serves many organization units from one credential pair via `POST /ou/{ouId}/oauth2/token`.
+That last one is designed in `B2B-Reference/B2B_M2M_APP_SHARING_DESIGN.md`, which traces where each
+of the three organization units involved in such a request is consulted.
 
 ## 12. Export/Import and Declarative-YAML Grant Round-Tripping
 

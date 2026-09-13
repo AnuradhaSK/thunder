@@ -1,0 +1,50 @@
+{
+  "id": "c7d2e9a1-5b3f-4c8e-9a10-m2m-app-sharing-env",
+  "name": "ThunderID - M2M Application Sharing Demo",
+  "values": [
+    {
+      "key": "scheme",
+      "value": "https",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "host",
+      "value": "localhost",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "port",
+      "value": "8090",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "baseUrl",
+      "value": "{{scheme}}://{{host}}:{{port}}",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "clientId",
+      "value": "",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "clientSecret",
+      "value": "",
+      "type": "secret",
+      "enabled": true
+    },
+    {
+      "key": "accessToken",
+      "value": "",
+      "type": "secret",
+      "enabled": true
+    }
+  ],
+  "_postman_variable_scope": "environment",
+  "_postman_exported_using": "Postman/11.81.4"
+}

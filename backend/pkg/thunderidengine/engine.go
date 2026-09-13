@@ -225,6 +225,9 @@ func New(mux *http.ServeMux, opts ...Option) *Engine {
 	_, err = oauth.Initialize(mux, engineCtx.actorProvider, authnProviderManager, engineCtx.jwtService,
 		engineCtx.jweService, engineCtx.flowExecService, engineCtx.observabilitySvc, engineCtx.runtimeCryptoSvc,
 		engineCtx.ouProvider, engineCtx.attributeCacheService, engineCtx.authzProvider, engineCtx.resourceProvider,
+		// The embedded engine hosts no application management service, so no application can be
+		// granted to another organization unit; an OU-scoped token request is refused.
+		nil,
 		engineCtx.i18nProvider, engineCtx.idpProvider, engineCtx.dpopVerifier, engineCtx.runtimeStoreProvider,
 		engineCtx.transactioner, revocationEnforcer, revocationService,
 		// The embedded engine has no SSO session store, so prompt=none keeps answering

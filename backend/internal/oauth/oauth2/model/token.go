@@ -24,7 +24,11 @@ type TokenRequest struct {
 	RequestedTokenType string   `json:"requested_token_type,omitempty"`
 	Audiences          []string `json:"audiences,omitempty"`
 	AuthReqID          string   `json:"auth_req_id,omitempty"`
-	Assertion          string   `json:"assertion,omitempty"`
+	// AccessingOUID is the organization unit the token is being requested against, taken from the
+	// optional /ou/{ouId} path prefix on the token endpoint. Empty means the request did not name
+	// one, in which case issuance behaves exactly as it did before the prefix existed.
+	AccessingOUID string `json:"-"`
+	Assertion     string `json:"assertion,omitempty"`
 }
 
 // TokenResponse represents the OAuth2 token response.

@@ -80,9 +80,7 @@ tags:
   - name: Resource sharing
     description: |
       Resource servers, resources, and actions can be shared to other organization units (OUs),
-      reusing the same generic sharing framework that powers Role sharing. See
- for the
-      full design.
+      reusing the same generic sharing framework that powers Role sharing.
 
       **Three sharing-framework resource types, one per tree level.** A resource server, a
       resource, and an action are each shared independently through their own

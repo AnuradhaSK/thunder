@@ -9,6 +9,7 @@ import (
 
 	oauthconfig "github.com/thunder-id/thunderid/internal/oauth/config"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/clientauth"
+	"github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/discovery"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/dpop"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/granthandlers"
@@ -66,11 +67,14 @@ func registerRoutes(
 		jtiStore, issuer, leeway)
 	handler := clientAuthMiddleware(http.HandlerFunc(tokenHandler.HandleTokenRequest))
 
-	pattern, wrappedHandler := middleware.WithCORS(
+	// Both patterns run the identical chain. The /ou/{ouId} variant only differs in that
+	// r.PathValue("ouId") is populated, which the handler copies onto the token request; issuance on
+	// the bare path is therefore unchanged.
+	for _, route := range []string{
 		"POST /oauth2/token",
-		handler.ServeHTTP,
-		corsOpts,
-	)
-
-	mux.HandleFunc(pattern, wrappedHandler)
+		"POST /ou/{" + constants.PathParamOUID + "}/oauth2/token",
+	} {
+		pattern, wrappedHandler := middleware.WithCORS(route, handler.ServeHTTP, corsOpts)
+		mux.HandleFunc(pattern, wrappedHandler)
+	}
 }

@@ -139,8 +139,16 @@ type ResourceServerProvider interface {
 		ctx context.Context, id string,
 	) (*ResourceServer, *common.ServiceError)
 	ValidatePermissions(
-		ctx context.Context, resourceServerID string, permissions []string,
+		ctx context.Context, resourceServerID string, permissions []string, ouID string,
 	) ([]string, *common.ServiceError)
+}
+
+// ApplicationOUAccessProvider reports whether an application may be used to obtain a token against
+// a given organization unit. Used by the client credentials grant when a token is requested through
+// /ou/{ouId}/oauth2/token, so an application owned by one organization unit can serve others
+// without being visible inside them.
+type ApplicationOUAccessProvider interface {
+	IsApplicationGrantedToOU(ctx context.Context, appID, ouID string) (bool, *common.ServiceError)
 }
 
 // IDPProvider defines the interface for the identity provider provider.

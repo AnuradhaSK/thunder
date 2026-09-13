@@ -14,6 +14,7 @@ import (
 	"github.com/thunder-id/thunderid/internal/inboundclient"
 	oupkg "github.com/thunder-id/thunderid/internal/ou"
 	"github.com/thunder-id/thunderid/internal/serverconfig"
+	"github.com/thunder-id/thunderid/internal/sharing"
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
 	i18nmgt "github.com/thunder-id/thunderid/internal/system/i18n/mgt"
@@ -32,10 +33,19 @@ func Initialize(
 	cryptoSvc providers.RuntimeCryptoProvider,
 	serverConfigSvc serverconfig.ServerConfigService,
 	artifactLifetime artifactLifetimeResolver,
+	sharingService sharing.ServiceInterface,
 ) (ApplicationServiceInterface, declarativeresource.ResourceExporter, error) {
 	appService := newApplicationService(
 		inboundClient, entityService, ouService, i18nService, cryptoSvc, serverConfigSvc, artifactLifetime,
+		sharingService,
 	)
+
+	// Onboard application onto the generic sharing framework so an application can be granted to
+	// organization units other than its owner. Grants are declarative-only for now: there is no
+	// REST surface for application sharing yet.
+	if sharingService != nil {
+		sharingService.RegisterResourceType(newApplicationTypeDeclaration())
+	}
 
 	if err := entityService.LoadIndexedAttributes(getAppIndexedAttributes()); err != nil {
 		return nil, nil, err
@@ -44,7 +54,15 @@ func Initialize(
 	storeMode := getApplicationStoreMode()
 	// TODO: Revisit once the declarative resource loading pattern is finalized.
 	if storeMode == serverconst.StoreModeComposite || storeMode == serverconst.StoreModeDeclarative {
-		if err := entityService.LoadDeclarativeResources(makeAppDeclarativeConfig(appService)); err != nil {
+		var pendingGrants []pendingAppGrant
+		collect := func(p pendingAppGrant) { pendingGrants = append(pendingGrants, p) }
+		if err := entityService.LoadDeclarativeResources(
+			makeAppDeclarativeConfig(appService, collect)); err != nil {
+			return nil, nil, err
+		}
+		// Replayed only after the whole batch has loaded, so a grant may name an organization unit
+		// whose own declarative document is parsed later than the application's.
+		if err := applyPendingAppGrants(pendingGrants, sharingService); err != nil {
 			return nil, nil, err
 		}
 		if err := inboundClient.LoadDeclarativeResources(

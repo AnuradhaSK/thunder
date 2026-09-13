@@ -23,6 +23,7 @@ type clientCredentialsGrantHandler struct {
 	authzService    providers.AuthorizationProvider
 	actorProvider   providers.ActorProvider
 	resourceService providers.ResourceServerProvider
+	appGrantService providers.ApplicationOUAccessProvider
 }
 
 // newClientCredentialsGrantHandler creates a new instance of ClientCredentialsGrantHandler.
@@ -32,6 +33,7 @@ func newClientCredentialsGrantHandler(
 	authzService providers.AuthorizationProvider,
 	actorProvider providers.ActorProvider,
 	resourceService providers.ResourceServerProvider,
+	appGrantService providers.ApplicationOUAccessProvider,
 ) GrantHandlerInterface {
 	return &clientCredentialsGrantHandler{
 		tokenBuilder:    tokenBuilder,
@@ -39,6 +41,7 @@ func newClientCredentialsGrantHandler(
 		authzService:    authzService,
 		actorProvider:   actorProvider,
 		resourceService: resourceService,
+		appGrantService: appGrantService,
 	}
 }
 
@@ -56,6 +59,74 @@ func (h *clientCredentialsGrantHandler) ValidateGrant(ctx context.Context, token
 		return errResp
 	}
 
+	if errResp := h.validateAccessingOU(ctx, tokenRequest, oauthApp); errResp != nil {
+		return errResp
+	}
+
+	return nil
+}
+
+// validateAccessingOU rejects the request unless the application may be used against the
+// organization unit named on the /ou/{ouId} path. A request that named none is always allowed,
+// which is what keeps the bare /oauth2/token endpoint behaving exactly as before.
+//
+// The failure is unauthorized_client, matching how the token service already reports a client that
+// may not use a given grant type. The client authenticated successfully; it simply has no grant for
+// the organization unit it asked for, so invalid_client would misdescribe it.
+func (h *clientCredentialsGrantHandler) validateAccessingOU(
+	ctx context.Context, tokenRequest *model.TokenRequest, oauthApp *providers.OAuthClient,
+) *model.ErrorResponse {
+	if tokenRequest.AccessingOUID == "" {
+		return nil
+	}
+	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, "ClientCredentialsGrantHandler"))
+
+	// Resolve the named organization unit before anything else. Without this an id that names
+	// nothing would reach the grant check, where an allOus grant blanket-matches it, and then fail
+	// deeper in claim resolution as a 500. It is refused the same way an ungranted one is.
+	if h.ouService != nil {
+		if _, svcErr := h.ouService.GetOrganizationUnit(ctx, tokenRequest.AccessingOUID); svcErr != nil {
+			logger.Debug(ctx, "Token requested against an unresolvable organization unit",
+				log.String("ouID", tokenRequest.AccessingOUID))
+			return &model.ErrorResponse{
+				Error:            constants.ErrorUnauthorizedClient,
+				ErrorDescription: "The client is not authorized for the requested organization unit",
+			}
+		}
+	}
+
+	// The owning organization unit may always name itself; it needs no grant of its own.
+	if oauthApp != nil && oauthApp.OUID == tokenRequest.AccessingOUID {
+		return nil
+	}
+
+	if h.appGrantService == nil || oauthApp == nil {
+		logger.Error(ctx, "Cannot resolve application grants for an OU-scoped token request",
+			log.String("ouID", tokenRequest.AccessingOUID))
+		return &model.ErrorResponse{
+			Error:            constants.ErrorServerError,
+			ErrorDescription: "Failed to generate token",
+		}
+	}
+
+	granted, svcErr := h.appGrantService.IsApplicationGrantedToOU(ctx, oauthApp.ID, tokenRequest.AccessingOUID)
+	if svcErr != nil {
+		logger.Error(ctx, "Failed to resolve application grant for organization unit",
+			log.String("appID", oauthApp.ID), log.String("ouID", tokenRequest.AccessingOUID),
+			log.String("error", svcErr.Error.DefaultValue))
+		return &model.ErrorResponse{
+			Error:            constants.ErrorServerError,
+			ErrorDescription: "Failed to generate token",
+		}
+	}
+	if !granted {
+		logger.Debug(ctx, "Application is not granted to the requested organization unit",
+			log.String("appID", oauthApp.ID), log.String("ouID", tokenRequest.AccessingOUID))
+		return &model.ErrorResponse{
+			Error:            constants.ErrorUnauthorizedClient,
+			ErrorDescription: "The client is not authorized for the requested organization unit",
+		}
+	}
 	return nil
 }
 
@@ -82,8 +153,11 @@ func (h *clientCredentialsGrantHandler) HandleGrant(ctx context.Context, tokenRe
 	if targetRS != nil {
 		audiences = []string{targetRS.Identifier}
 
-		// Downscope requested scopes to permissions defined on the target resource server.
-		scopes, errResp = resourceindicators.DownscopeToResourceServer(ctx, h.resourceService, targetRS.ID, scopes)
+		// Downscope requested scopes to permissions defined on the target resource server. When the
+		// request named an accessing organization unit, this also drops the permissions that
+		// organization unit was never granted, so a token can never carry more than it can see.
+		scopes, errResp = resourceindicators.DownscopeToResourceServer(
+			ctx, h.resourceService, targetRS.ID, scopes, tokenRequest.AccessingOUID)
 		if errResp != nil {
 			return nil, errResp
 		}
@@ -119,11 +193,16 @@ func (h *clientCredentialsGrantHandler) HandleGrant(ctx context.Context, tokenRe
 				}
 			}
 
+			// The evaluation above answers "what is this application entitled to", resolved from
+			// its own owning OU via its direct role assignments and group memberships. That answer
+			// is independent of who the token is for; the accessing organization unit has already
+			// had its say during downscoping, and can only narrow this further.
 			scopes = filterAuthorizedScopes(scopes, authzResp.Evaluations)
 		}
 	}
 
-	clientAttributes, clientAttrErr := tokenservice.BuildClientAttributes(ctx, oauthApp, h.ouService, h.actorProvider)
+	clientAttributes, clientAttrErr := tokenservice.BuildClientAttributes(
+		ctx, oauthApp, h.ouService, h.actorProvider, tokenRequest.AccessingOUID)
 	if clientAttrErr != nil {
 		return nil, &model.ErrorResponse{
 			Error:            constants.ErrorServerError,

@@ -465,88 +465,6 @@ func (_c *ResourceServiceInterfaceMock_DeleteResourceServer_Call) RunAndReturn(r
 	return _c
 }
 
-// FilterVisiblePermissions provides a mock function for the type ResourceServiceInterfaceMock
-func (_mock *ResourceServiceInterfaceMock) FilterVisiblePermissions(ctx context.Context, resourceServerID string, permissions []string, ouID string) ([]string, *common.ServiceError) {
-	ret := _mock.Called(ctx, resourceServerID, permissions, ouID)
-
-	if len(ret) == 0 {
-		panic("no return value specified for FilterVisiblePermissions")
-	}
-
-	var r0 []string
-	var r1 *common.ServiceError
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, []string, string) ([]string, *common.ServiceError)); ok {
-		return returnFunc(ctx, resourceServerID, permissions, ouID)
-	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, []string, string) []string); ok {
-		r0 = returnFunc(ctx, resourceServerID, permissions, ouID)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).([]string)
-		}
-	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, string, []string, string) *common.ServiceError); ok {
-		r1 = returnFunc(ctx, resourceServerID, permissions, ouID)
-	} else {
-		if ret.Get(1) != nil {
-			r1 = ret.Get(1).(*common.ServiceError)
-		}
-	}
-	return r0, r1
-}
-
-// ResourceServiceInterfaceMock_FilterVisiblePermissions_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'FilterVisiblePermissions'
-type ResourceServiceInterfaceMock_FilterVisiblePermissions_Call struct {
-	*mock.Call
-}
-
-// FilterVisiblePermissions is a helper method to define mock.On call
-//   - ctx context.Context
-//   - resourceServerID string
-//   - permissions []string
-//   - ouID string
-func (_e *ResourceServiceInterfaceMock_Expecter) FilterVisiblePermissions(ctx interface{}, resourceServerID interface{}, permissions interface{}, ouID interface{}) *ResourceServiceInterfaceMock_FilterVisiblePermissions_Call {
-	return &ResourceServiceInterfaceMock_FilterVisiblePermissions_Call{Call: _e.mock.On("FilterVisiblePermissions", ctx, resourceServerID, permissions, ouID)}
-}
-
-func (_c *ResourceServiceInterfaceMock_FilterVisiblePermissions_Call) Run(run func(ctx context.Context, resourceServerID string, permissions []string, ouID string)) *ResourceServiceInterfaceMock_FilterVisiblePermissions_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		var arg0 context.Context
-		if args[0] != nil {
-			arg0 = args[0].(context.Context)
-		}
-		var arg1 string
-		if args[1] != nil {
-			arg1 = args[1].(string)
-		}
-		var arg2 []string
-		if args[2] != nil {
-			arg2 = args[2].([]string)
-		}
-		var arg3 string
-		if args[3] != nil {
-			arg3 = args[3].(string)
-		}
-		run(
-			arg0,
-			arg1,
-			arg2,
-			arg3,
-		)
-	})
-	return _c
-}
-
-func (_c *ResourceServiceInterfaceMock_FilterVisiblePermissions_Call) Return(strings []string, serviceError *common.ServiceError) *ResourceServiceInterfaceMock_FilterVisiblePermissions_Call {
-	_c.Call.Return(strings, serviceError)
-	return _c
-}
-
-func (_c *ResourceServiceInterfaceMock_FilterVisiblePermissions_Call) RunAndReturn(run func(ctx context.Context, resourceServerID string, permissions []string, ouID string) ([]string, *common.ServiceError)) *ResourceServiceInterfaceMock_FilterVisiblePermissions_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
 // GetAction provides a mock function for the type ResourceServiceInterfaceMock
 func (_mock *ResourceServiceInterfaceMock) GetAction(ctx context.Context, resourceServerID string, resourceID *string, id string) (*providers.Action, *common.ServiceError) {
 	ret := _mock.Called(ctx, resourceServerID, resourceID, id)
@@ -2524,8 +2442,8 @@ func (_c *ResourceServiceInterfaceMock_UpdateResourceServer_Call) RunAndReturn(r
 }
 
 // ValidatePermissions provides a mock function for the type ResourceServiceInterfaceMock
-func (_mock *ResourceServiceInterfaceMock) ValidatePermissions(ctx context.Context, resourceServerID string, permissions []string) ([]string, *common.ServiceError) {
-	ret := _mock.Called(ctx, resourceServerID, permissions)
+func (_mock *ResourceServiceInterfaceMock) ValidatePermissions(ctx context.Context, resourceServerID string, permissions []string, ouID string) ([]string, *common.ServiceError) {
+	ret := _mock.Called(ctx, resourceServerID, permissions, ouID)
 
 	if len(ret) == 0 {
 		panic("no return value specified for ValidatePermissions")
@@ -2533,18 +2451,18 @@ func (_mock *ResourceServiceInterfaceMock) ValidatePermissions(ctx context.Conte
 
 	var r0 []string
 	var r1 *common.ServiceError
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, []string) ([]string, *common.ServiceError)); ok {
-		return returnFunc(ctx, resourceServerID, permissions)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, []string, string) ([]string, *common.ServiceError)); ok {
+		return returnFunc(ctx, resourceServerID, permissions, ouID)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, []string) []string); ok {
-		r0 = returnFunc(ctx, resourceServerID, permissions)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, []string, string) []string); ok {
+		r0 = returnFunc(ctx, resourceServerID, permissions, ouID)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).([]string)
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, string, []string) *common.ServiceError); ok {
-		r1 = returnFunc(ctx, resourceServerID, permissions)
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, []string, string) *common.ServiceError); ok {
+		r1 = returnFunc(ctx, resourceServerID, permissions, ouID)
 	} else {
 		if ret.Get(1) != nil {
 			r1 = ret.Get(1).(*common.ServiceError)
@@ -2562,11 +2480,12 @@ type ResourceServiceInterfaceMock_ValidatePermissions_Call struct {
 //   - ctx context.Context
 //   - resourceServerID string
 //   - permissions []string
-func (_e *ResourceServiceInterfaceMock_Expecter) ValidatePermissions(ctx interface{}, resourceServerID interface{}, permissions interface{}) *ResourceServiceInterfaceMock_ValidatePermissions_Call {
-	return &ResourceServiceInterfaceMock_ValidatePermissions_Call{Call: _e.mock.On("ValidatePermissions", ctx, resourceServerID, permissions)}
+//   - ouID string
+func (_e *ResourceServiceInterfaceMock_Expecter) ValidatePermissions(ctx interface{}, resourceServerID interface{}, permissions interface{}, ouID interface{}) *ResourceServiceInterfaceMock_ValidatePermissions_Call {
+	return &ResourceServiceInterfaceMock_ValidatePermissions_Call{Call: _e.mock.On("ValidatePermissions", ctx, resourceServerID, permissions, ouID)}
 }
 
-func (_c *ResourceServiceInterfaceMock_ValidatePermissions_Call) Run(run func(ctx context.Context, resourceServerID string, permissions []string)) *ResourceServiceInterfaceMock_ValidatePermissions_Call {
+func (_c *ResourceServiceInterfaceMock_ValidatePermissions_Call) Run(run func(ctx context.Context, resourceServerID string, permissions []string, ouID string)) *ResourceServiceInterfaceMock_ValidatePermissions_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 context.Context
 		if args[0] != nil {
@@ -2580,10 +2499,15 @@ func (_c *ResourceServiceInterfaceMock_ValidatePermissions_Call) Run(run func(ct
 		if args[2] != nil {
 			arg2 = args[2].([]string)
 		}
+		var arg3 string
+		if args[3] != nil {
+			arg3 = args[3].(string)
+		}
 		run(
 			arg0,
 			arg1,
 			arg2,
+			arg3,
 		)
 	})
 	return _c
@@ -2594,7 +2518,7 @@ func (_c *ResourceServiceInterfaceMock_ValidatePermissions_Call) Return(strings 
 	return _c
 }
 
-func (_c *ResourceServiceInterfaceMock_ValidatePermissions_Call) RunAndReturn(run func(ctx context.Context, resourceServerID string, permissions []string) ([]string, *common.ServiceError)) *ResourceServiceInterfaceMock_ValidatePermissions_Call {
+func (_c *ResourceServiceInterfaceMock_ValidatePermissions_Call) RunAndReturn(run func(ctx context.Context, resourceServerID string, permissions []string, ouID string) ([]string, *common.ServiceError)) *ResourceServiceInterfaceMock_ValidatePermissions_Call {
 	_c.Call.Return(run)
 	return _c
 }

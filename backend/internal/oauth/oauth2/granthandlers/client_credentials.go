@@ -12,6 +12,7 @@ import (
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/model"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/resourceindicators"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/tokenservice"
+	syscontext "github.com/thunder-id/thunderid/internal/system/context"
 	"github.com/thunder-id/thunderid/internal/system/log"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
@@ -82,8 +83,11 @@ func (h *clientCredentialsGrantHandler) HandleGrant(ctx context.Context, tokenRe
 	if targetRS != nil {
 		audiences = []string{targetRS.Identifier}
 
-		// Downscope requested scopes to permissions defined on the target resource server.
-		scopes, errResp = resourceindicators.DownscopeToResourceServer(ctx, h.resourceService, targetRS.ID, scopes)
+		// Downscope requested scopes to permissions defined on the target resource server. When the
+		// request named an accessing organization unit, this also drops the permissions that
+		// organization unit was never granted, so a token can never carry more than it can see.
+		scopes, errResp = resourceindicators.DownscopeToResourceServer(
+			ctx, h.resourceService, targetRS.ID, scopes, syscontext.GetAccessingOUID(ctx))
 		if errResp != nil {
 			return nil, errResp
 		}
@@ -119,11 +123,16 @@ func (h *clientCredentialsGrantHandler) HandleGrant(ctx context.Context, tokenRe
 				}
 			}
 
+			// The evaluation above answers "what is this application entitled to", resolved from
+			// its own owning OU via its direct role assignments and group memberships. That answer
+			// is independent of who the token is for; the accessing organization unit has already
+			// had its say during downscoping, and can only narrow this further.
 			scopes = filterAuthorizedScopes(scopes, authzResp.Evaluations)
 		}
 	}
 
-	clientAttributes, clientAttrErr := tokenservice.BuildClientAttributes(ctx, oauthApp, h.ouService, h.actorProvider)
+	clientAttributes, clientAttrErr := tokenservice.BuildClientAttributes(
+		ctx, oauthApp, h.ouService, h.actorProvider, syscontext.GetAccessingOUID(ctx))
 	if clientAttrErr != nil {
 		return nil, &model.ErrorResponse{
 			Error:            constants.ErrorServerError,

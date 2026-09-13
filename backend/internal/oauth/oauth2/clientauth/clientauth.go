@@ -22,6 +22,7 @@ import (
 	"github.com/thunder-id/thunderid/internal/system/jose/jwt"
 	"github.com/thunder-id/thunderid/internal/system/log"
 	"github.com/thunder-id/thunderid/internal/system/utils"
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
@@ -120,8 +121,18 @@ func authenticate(
 		return nil, errClientIDMismatch
 	}
 
+	// Resolution is scoped to the organization unit the request named, which the middleware put on
+	// the context: a client that may not be used there does not resolve at all.
 	oauthApp, svcErr := actorProvider.GetOAuthClientByClientID(ctx, clientID)
 	if svcErr != nil {
+		// The client authenticated; it simply has no standing in the organization unit it asked
+		// for. Reporting that as invalid_client would misdescribe it and make it indistinguishable
+		// from a bad secret.
+		if svcErr.Code == tidcommon.ErrorUnauthorized.Code {
+			logger.Debug(ctx, "Client is not authorized for the requested organization unit",
+				log.MaskedString("clientID", clientID))
+			return nil, errClientNotAuthorizedForOU
+		}
 		logger.Error(ctx, "Failed to retrieve OAuth client",
 			log.String("error", svcErr.Error.DefaultValue), log.MaskedString("clientID", clientID))
 		return nil, errInvalidClientCredentials

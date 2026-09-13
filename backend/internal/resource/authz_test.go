@@ -23,8 +23,7 @@ import (
 // ResourceAuthzTestSuite covers the system:resource-servers / system:resource-servers:view OU
 // confinement added in authz.go: a caller holding either scope (but not the root permission) may
 // only act within its own token-issued organization unit, or on a resource shared to it. Mirrors
-// internal/role's own requireOwnOUScope tests. See
-// 's system:resource-servers scope.
+// internal/role's own requireOwnOUScope tests.
 type ResourceAuthzTestSuite struct {
 	suite.Suite
 	mockStore      *resourceStoreInterfaceMock

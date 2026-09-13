@@ -4846,7 +4846,7 @@ func (suite *ResourceServiceTestSuite) TestValidatePermissions() {
 			tc.setupMocks(mockStore)
 
 			// Execute the test
-			invalidPerms, svcErr := svc.ValidatePermissions(testRootContext(), tc.resourceServerID, tc.permissions)
+			invalidPerms, svcErr := svc.ValidatePermissions(testRootContext(), tc.resourceServerID, tc.permissions, "")
 
 			// Assert results
 			if tc.expectedError != nil {

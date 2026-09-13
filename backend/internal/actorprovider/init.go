@@ -13,12 +13,15 @@ import (
 )
 
 // Initialize creates the default ActorProvider backed by inbound-client, entity-provider,
-// authentication provider, and role services.
+// authentication provider, and role services. appOUAccess resolves whether an application has
+// been granted to an organization unit other than its own, and may be nil in a deployment with no
+// application management, in which case no client resolves against a foreign organization unit.
 func Initialize(
 	inboundClient inboundclient.InboundClientServiceInterface,
 	entityProvider entityprovider.EntityProviderInterface,
 	authnProvider providers.AuthnProviderManager,
 	roleService role.RoleServiceInterface,
+	appOUAccess ApplicationOUAccessChecker,
 ) providers.ActorProvider {
-	return newActorProvider(inboundClient, entityProvider, authnProvider, roleService)
+	return newActorProvider(inboundClient, entityProvider, authnProvider, roleService, appOUAccess)
 }

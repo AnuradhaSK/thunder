@@ -884,6 +884,10 @@ func (s *importService) importApplication(
 	if options.IsUpsertEnabled() && req.ID != "" {
 		updated, svcErr := s.applicationService.UpdateApplication(ctx, req.ID, appDTO)
 		if svcErr == nil {
+			if shareErr := s.applyApplicationSharing(ctx, doc, updated.ID, updated.OUID); shareErr != nil {
+				return serviceErrorOutcome(
+					resourceTypeApplication, updated.ID, updated.Name, operationUpdate, shareErr)
+			}
 			return ImportItemOutcome{
 				ResourceType: resourceTypeApplication,
 				ResourceID:   updated.ID,
@@ -950,6 +954,10 @@ func (s *importService) importApplication(
 			Code:         svcErr.Code,
 			Message:      svcErr.Error.DefaultValue,
 		}
+	}
+
+	if shareErr := s.applyApplicationSharing(ctx, doc, created.ID, created.OUID); shareErr != nil {
+		return serviceErrorOutcome(resourceTypeApplication, created.ID, created.Name, operationCreate, shareErr)
 	}
 
 	return ImportItemOutcome{

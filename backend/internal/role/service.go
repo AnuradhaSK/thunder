@@ -667,17 +667,16 @@ func (rs *roleService) GetAuthorizedPermissionsByResourceServer(
 
 	// Role-assignment sharing (above) is only half of the authorization decision for an OU-scoped
 	// caller: the resource server, and whichever resource/action each permission string names,
-	// must also be visible to ouID (owned or shared) — see
-	// Skipped when ouID is empty: that is
+	// must also be visible to ouID (owned or granted). Skipped when ouID is empty: that is
 	// the pre-existing, deliberately unscoped legacy mode (see this method's own ouID doc comment
 	// on RoleServiceInterface), where there is no single acting OU to check visibility against.
 	if ouID != "" && len(authorizedPermissions) > 0 {
-		filtered, svcErr := rs.resourceService.FilterVisiblePermissions(
+		unusable, svcErr := rs.resourceService.ValidatePermissions(
 			ctx, resourceServerID, authorizedPermissions, ouID)
 		if svcErr != nil {
 			return nil, svcErr
 		}
-		authorizedPermissions = filtered
+		authorizedPermissions = removePermissions(authorizedPermissions, unusable)
 	}
 
 	logger.Debug(ctx, "Retrieved authorized permissions",
@@ -901,11 +900,13 @@ func (rs *roleService) validatePermissions(
 			continue
 		}
 
-		// Call resource service to validate permissions
+		// Call resource service to validate permissions. Existence only: the organization unit
+		// check is checkPermissionVisibility's, so that the two report distinct errors.
 		invalidPerms, svcErr := rs.resourceService.ValidatePermissions(
 			ctx,
 			resPerm.ResourceServerID,
 			resPerm.Permissions,
+			"",
 		)
 
 		if svcErr != nil {
@@ -929,9 +930,10 @@ func (rs *roleService) validatePermissions(
 }
 
 // checkPermissionVisibility rejects permissions if any named permission's resource server, or the
-// specific resource/action it names, is not visible (owned or shared) to ouID — the write-time
+// specific resource/action it names, is not visible (owned or granted) to ouID — the write-time
 // counterpart of the check GetAuthorizedPermissionsByResourceServer applies at token-issuance
-// time.
+// time. Existence has already been established by validatePermissions, so anything reported
+// unusable here is unusable because of ouID.
 func (rs *roleService) checkPermissionVisibility(
 	ctx context.Context, ouID string, permissions []ResourcePermissions,
 ) *tidcommon.ServiceError {
@@ -942,19 +944,38 @@ func (rs *roleService) checkPermissionVisibility(
 			continue
 		}
 
-		visible, svcErr := rs.resourceService.FilterVisiblePermissions(
+		unusable, svcErr := rs.resourceService.ValidatePermissions(
 			ctx, resPerm.ResourceServerID, resPerm.Permissions, ouID)
 		if svcErr != nil {
 			return svcErr
 		}
-		if len(visible) != len(resPerm.Permissions) {
+		if len(unusable) > 0 {
 			logger.Debug(ctx, "Requested permission(s) not visible to organization unit",
-				log.String("resourceServerId", resPerm.ResourceServerID), log.String("ouID", ouID))
+				log.String("resourceServerId", resPerm.ResourceServerID), log.String("ouID", ouID),
+				log.Any("permissions", unusable))
 			return &ErrorPermissionNotVisibleToOU
 		}
 	}
 
 	return nil
+}
+
+// removePermissions returns permissions with every entry of remove dropped, preserving order.
+func removePermissions(permissions, remove []string) []string {
+	if len(remove) == 0 {
+		return permissions
+	}
+	removeSet := make(map[string]struct{}, len(remove))
+	for _, permission := range remove {
+		removeSet[permission] = struct{}{}
+	}
+	kept := make([]string, 0, len(permissions))
+	for _, permission := range permissions {
+		if _, dropped := removeSet[permission]; !dropped {
+			kept = append(kept, permission)
+		}
+	}
+	return kept
 }
 
 // isRoleDeclarative checks if a role is defined in declarative configuration.
@@ -1013,7 +1034,7 @@ func (rs *roleService) CascadeDeleteDependencies(
 	deleted := 0
 	for _, resPerm := range referenced {
 		invalid, svcErr := rs.resourceService.ValidatePermissions(
-			ctx, resPerm.ResourceServerID, resPerm.Permissions)
+			ctx, resPerm.ResourceServerID, resPerm.Permissions, "")
 		if svcErr != nil {
 			return deleted, fmt.Errorf("failed to validate permissions of resource server %s: %s",
 				resPerm.ResourceServerID, svcErr.Error.DefaultValue)

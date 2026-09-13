@@ -7,6 +7,7 @@ import (
 	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/thunder-id/thunderid/internal/actorprovider"
 	authnprovidermgr "github.com/thunder-id/thunderid/internal/authnprovider/manager"
+	syscontext "github.com/thunder-id/thunderid/internal/system/context"
 	"github.com/thunder-id/thunderid/tests/mocks/authnprovider/managermock"
 	"github.com/thunder-id/thunderid/tests/mocks/entityprovidermock"
 	"github.com/thunder-id/thunderid/tests/mocks/inboundclientmock"
@@ -39,7 +41,7 @@ func TestClientAuthMiddlewareTestSuite(t *testing.T) {
 }
 
 func (suite *ClientAuthMiddlewareTestSuite) actorProvider() providers.ActorProvider {
-	return actorprovider.Initialize(suite.mockInboundClient, suite.mockEntityProvider, noopAuthnMgr(), nil)
+	return actorprovider.Initialize(suite.mockInboundClient, suite.mockEntityProvider, noopAuthnMgr(), nil, nil)
 }
 
 func (suite *ClientAuthMiddlewareTestSuite) SetupTest() {
@@ -431,4 +433,79 @@ func (suite *ClientAuthMiddlewareTestSuite) TestClientAuthMiddleware_InvalidBasi
 
 	assert.Equal(suite.T(), http.StatusUnauthorized, w.Code)
 	assert.Equal(suite.T(), "Basic", w.Header().Get("WWW-Authenticate"))
+}
+
+// The accessing organization unit is resolved and put on the context by an upstream middleware
+// (see the token package). Client authentication must pass it through untouched: resolution is
+// scoped by it, and everything downstream of client auth reads the same value.
+func (suite *ClientAuthMiddlewareTestSuite) TestClientAuthMiddleware_UsesAccessingOUFromUpstream() {
+	mockApp := &providers.OAuthClient{
+		ClientID:                testClientID,
+		OUID:                    "ou-1",
+		TokenEndpointAuthMethod: providers.TokenEndpointAuthMethodClientSecretPost,
+		GrantTypes:              []providers.GrantType{providers.GrantTypeClientCredentials},
+	}
+	var resolvedWithOUID string
+	suite.mockInboundClient.On("GetOAuthClientByClientID", mock.Anything, testClientID).
+		Run(func(args mock.Arguments) {
+			resolvedWithOUID = syscontext.GetAccessingOUID(args.Get(0).(context.Context))
+		}).
+		Return(mockApp, nil).Once()
+
+	middleware := ClientAuthMiddleware(
+		suite.actorProvider(), suite.mockAuthnProvider, suite.mockJwtService, nil, testIssuer, testLeeway)
+
+	var downstreamOUID string
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		downstreamOUID = syscontext.GetAccessingOUID(r.Context())
+		w.WriteHeader(http.StatusOK)
+	})
+
+	formData := url.Values{}
+	formData.Set("client_id", testClientID)
+	formData.Set("client_secret", testClientSecret)
+	req := httptest.NewRequest("POST", "/ou/ou-1/oauth2/token", strings.NewReader(formData.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	// Stand in for the upstream accessing-OU middleware.
+	req = req.WithContext(syscontext.WithAccessingOUID(req.Context(), "ou-1"))
+	w := httptest.NewRecorder()
+
+	middleware(handler).ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+	assert.Equal(suite.T(), "ou-1", resolvedWithOUID, "client resolution must see the accessing OU")
+	assert.Equal(suite.T(), "ou-1", downstreamOUID, "the handler must see the same accessing OU")
+}
+
+// Nothing upstream set an accessing organization unit, which is the case on every endpoint without
+// the /ou/ prefix, and is what keeps the bare token endpoint behaving as it always has.
+func (suite *ClientAuthMiddlewareTestSuite) TestClientAuthMiddleware_NoAccessingOUWithoutPrefix() {
+	mockApp := &providers.OAuthClient{
+		ClientID:                testClientID,
+		TokenEndpointAuthMethod: providers.TokenEndpointAuthMethodClientSecretPost,
+		GrantTypes:              []providers.GrantType{providers.GrantTypeClientCredentials},
+	}
+	suite.mockInboundClient.On("GetOAuthClientByClientID", mock.Anything, testClientID).
+		Return(mockApp, nil).Once()
+
+	middleware := ClientAuthMiddleware(
+		suite.actorProvider(), suite.mockAuthnProvider, suite.mockJwtService, nil, testIssuer, testLeeway)
+
+	var downstreamOUID string
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		downstreamOUID = syscontext.GetAccessingOUID(r.Context())
+		w.WriteHeader(http.StatusOK)
+	})
+
+	formData := url.Values{}
+	formData.Set("client_id", testClientID)
+	formData.Set("client_secret", testClientSecret)
+	req := httptest.NewRequest("POST", "/oauth2/token", strings.NewReader(formData.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+
+	middleware(handler).ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusOK, w.Code)
+	assert.Empty(suite.T(), downstreamOUID)
 }

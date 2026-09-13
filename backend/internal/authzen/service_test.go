@@ -56,7 +56,8 @@ func (s *ServiceTestSuite) mockValidSubject() {
 }
 
 func (s *ServiceTestSuite) mockValidAction(permission string) {
-	s.resourceMock.On("ValidatePermissions", mock.Anything, testResourceServerID, []string{permission}).
+	s.resourceMock.On("ValidatePermissions",
+		mock.Anything, testResourceServerID, []string{permission}, mock.Anything).
 		Return([]string{}, nil)
 }
 
@@ -340,7 +341,8 @@ func (s *ServiceTestSuite) TestEvaluateAccessInvalidSubjectType() {
 	s.Nil(resp)
 	s.NotNil(svcErr)
 	s.Equal(ErrorInvalidSubject.Code, svcErr.Code)
-	s.resourceMock.AssertNotCalled(s.T(), "ValidatePermissions", mock.Anything, mock.Anything, mock.Anything)
+	s.resourceMock.AssertNotCalled(s.T(), "ValidatePermissions",
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	s.authzMock.AssertNotCalled(s.T(), "EvaluateAccess", mock.Anything, mock.Anything)
 }
 
@@ -353,7 +355,8 @@ func (s *ServiceTestSuite) TestEvaluateAccessInvalidAction() {
 
 	s.mockValidSubject()
 	s.mockResourceServerIdentifier("booking")
-	s.resourceMock.On("ValidatePermissions", mock.Anything, testResourceServerID, []string{"booking:write"}).
+	s.resourceMock.On("ValidatePermissions",
+		mock.Anything, testResourceServerID, []string{"booking:write"}, mock.Anything).
 		Return([]string{"booking:write"}, nil)
 
 	resp, svcErr := s.service.EvaluateAccess(context.Background(), req)
@@ -383,7 +386,8 @@ func (s *ServiceTestSuite) TestEvaluateAccessUnknownResourceReturnsErrorContext(
 	s.NotNil(resp)
 	s.False(resp.Decision)
 	s.assertErrorContextWithMessage(resp.Context, "Resource not found")
-	s.resourceMock.AssertNotCalled(s.T(), "ValidatePermissions", mock.Anything, mock.Anything, mock.Anything)
+	s.resourceMock.AssertNotCalled(s.T(), "ValidatePermissions",
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	s.entityProviderMock.AssertNotCalled(s.T(), "GetTransitiveEntityGroups", mock.Anything)
 	s.authzMock.AssertNotCalled(s.T(), "EvaluateAccess", mock.Anything, mock.Anything)
 }
@@ -467,7 +471,8 @@ func (s *ServiceTestSuite) TestEvaluateAccessBatchInvalidActionReturnsFalse() {
 	}, nil).Once()
 	s.mockResourceServerIdentifier("booking")
 	s.mockValidAction(testBookingReadAction)
-	s.resourceMock.On("ValidatePermissions", mock.Anything, testResourceServerID, []string{"booking:archive"}).
+	s.resourceMock.On("ValidatePermissions",
+		mock.Anything, testResourceServerID, []string{"booking:archive"}, mock.Anything).
 		Return([]string{"booking:archive"}, nil)
 	s.mockValidAction("booking:delete")
 	s.entityProviderMock.On("GetTransitiveEntityGroups", "user1").Return([]providers.EntityGroup{}, nil).Once()
@@ -664,9 +669,11 @@ func (s *ServiceTestSuite) TestEvaluateAccessBatchAllInvalidActionsReturnsFalseW
 		Category: providers.EntityCategoryUser,
 	}, nil).Once()
 	s.mockResourceServerIdentifier("booking")
-	s.resourceMock.On("ValidatePermissions", mock.Anything, testResourceServerID, []string{"booking:archive"}).
+	s.resourceMock.On("ValidatePermissions",
+		mock.Anything, testResourceServerID, []string{"booking:archive"}, mock.Anything).
 		Return([]string{"booking:archive"}, nil)
-	s.resourceMock.On("ValidatePermissions", mock.Anything, testResourceServerID, []string{"booking:export"}).
+	s.resourceMock.On("ValidatePermissions",
+		mock.Anything, testResourceServerID, []string{"booking:export"}, mock.Anything).
 		Return([]string{"booking:export"}, nil)
 
 	resp, svcErr := s.service.EvaluateAccessBatch(context.Background(), req)

@@ -130,17 +130,17 @@ func (ts *RefreshTokenBranchesTestSuite) SetupSuite() {
 	ts.authFlowID = flowID
 
 	rsAID, err := testutils.CreateResourceServerWithActions(testutils.ResourceServer{
-		Name:        "Refresh Token Branches RS A",
-		Identifier:  rtBranchResourceA,
-		OUID:        ts.ouID,
+		Name:       "Refresh Token Branches RS A",
+		Identifier: rtBranchResourceA,
+		OUID:       ts.ouID,
 	}, []testutils.Action{})
 	ts.Require().NoError(err)
 	ts.resourceServerAID = rsAID
 
 	rsBID, err := testutils.CreateResourceServerWithActions(testutils.ResourceServer{
-		Name:        "Refresh Token Branches RS B",
-		Identifier:  rtBranchResourceB,
-		OUID:        ts.ouID,
+		Name:       "Refresh Token Branches RS B",
+		Identifier: rtBranchResourceB,
+		OUID:       ts.ouID,
 	}, []testutils.Action{})
 	ts.Require().NoError(err)
 	ts.resourceServerBID = rsBID

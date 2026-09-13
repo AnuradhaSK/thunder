@@ -24,6 +24,8 @@ func ClientAuthMiddleware(actorProvider providers.ActorProvider,
 	leeway int64) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// The accessing organization unit, when the route has one, was resolved and put on the
+			// context upstream; client resolution below reads it from there.
 			ctx := r.Context()
 			// Authenticate client
 			clientInfo, authErr := authenticate(ctx, r, actorProvider, authnProvider, jwtService,

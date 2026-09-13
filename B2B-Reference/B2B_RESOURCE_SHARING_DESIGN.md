@@ -157,33 +157,55 @@ sharing purposes." This keeps root-vs-children-targeting and the cross-tree rest
 changes to `internal/sharing` itself — the generic engine never needs to know a Resource's OU is
 borrowed from its parent server.
 
-### 4.2 `FilterVisiblePermissions` — the one new resolution method
+### 4.2 `ValidatePermissions` — the existing method, now organization-unit aware
 
-A new method on `ResourceServiceInterface`:
+No new resolution method is introduced. `ResourceServiceInterface.ValidatePermissions` (and its
+`providers.ResourceServerProvider` twin, which is how the OAuth layer reaches it) takes the acting
+organization unit as a parameter:
+
 ```go
-FilterVisiblePermissions(
+ValidatePermissions(
     ctx context.Context, resourceServerID string, permissions []string, ouID string,
 ) ([]string, *tidcommon.ServiceError)
 ```
-This is the single place all resource-tree-sharing knowledge lives — `internal/role` never needs to
-know about resource/action internals, only "is this permission visible to this OU." Algorithm:
 
-1. **Deployment root permission bypass.** The literal deployment root permission string
-   (`security.GetSystemRootPermission()`, e.g. `"system"`) is always kept, unconditionally, and
-   removed from the set evaluated by the remaining steps. **This is a required correction, not an
-   optional refinement** — see §4.4 for why, and why it cannot be handled via a grant.
-2. **Owner short-circuit.** For everything else, if `ouID` owns the resource server
-   (`ResourceServer.OUID == ouID`), keep those permissions unchanged — an owner always sees
-   everything under its own server, matching Role's owner-always-sees-own-resource rule.
-3. **Server-level gate.** Else call `sharingService.IsShared(ctx, resourceServerSharingType,
-   resourceServerID, ouID)`. If false, return an empty list — nothing under an unshared server is
-   visible, full stop, and every other permission-string check is skipped.
-4. **Per-permission node check.** Else, for each permission string, resolve which Resource-or-Action
-   row it names via a new query (`queryResolvePermissionNode`, an exact-match lookup against
-   `RESOURCE.PERMISSION`/`ACTION.PERMISSION` scoped by `RESOURCE_SERVER_ID`, structurally identical
-   to the existing `queryValidatePermissions` but returning the owning row's ID and kind instead of
-   a validity flag), then call `sharingService.IsShared(ctx, resourceNodeSharingType |
-   actionSharingType, nodeID, ouID)` for that row. Keep the permission only if visible.
+It returns the permissions that are **not usable**, which is what the method already meant; the OU
+simply adds a second reason for a permission to be unusable. An empty `ouID` validates against the
+resource server alone, exactly as before, so every caller with no single acting organization unit
+keeps its existing behaviour unchanged.
+
+Folding the check in here rather than beside it is deliberate. "Does this permission exist" and "may
+this organization unit use it" are the same question asked of the same catalog, and a caller that
+asks only the first is a caller that has silently skipped an authorization check. One method means
+that is not expressible: passing an OU is the only way to name one, and passing none is a visible,
+greppable declaration that no OU applies. It also keeps all resource-tree-sharing knowledge in one
+place — `internal/role` and the OAuth grant handlers never need to know about resource/action
+internals.
+
+Algorithm:
+
+1. **Deployment root permission bypass.** When an `ouID` is given, the literal deployment root
+   permission string (`security.GetSystemRootPermission()`, e.g. `"system"`) is never reported
+   unusable, and is removed from the set evaluated by the remaining steps. **This is a required
+   correction, not an optional refinement** — see §4.4 for why, and why it cannot be handled via a
+   grant.
+2. **Existence.** The resource server is loaded, and the store's own permission lookup reports
+   which of the candidates the server does not define. A resource server that does not exist makes
+   every candidate unusable. With no `ouID`, this result is the answer and the steps below are
+   skipped entirely — the sharing service is never consulted.
+3. **Owner short-circuit.** If `ouID` owns the resource server (`ResourceServer.OUID == ouID`), the
+   existence result stands unchanged — an owner always sees everything under its own server,
+   matching Role's owner-always-sees-own-resource rule.
+4. **Server-level gate.** Else call `sharingService.IsShared(ctx, resourceServerSharingType,
+   resourceServerID, ouID)`. If false, every candidate is unusable — nothing under an ungranted
+   server is visible, full stop, and every per-permission check below is skipped.
+5. **Per-permission node check.** Else, for each permission that survived step 2, resolve which
+   Resource-or-Action row it names via a new query (`queryResolvePermissionNode`, an exact-match
+   lookup against `RESOURCE.PERMISSION`/`ACTION.PERMISSION` scoped by `RESOURCE_SERVER_ID`,
+   structurally identical to the existing `queryValidatePermissions` but returning the owning row's
+   ID and kind instead of a validity flag), then call `sharingService.IsShared(ctx,
+   resourceNodeSharingType | actionSharingType, nodeID, ouID)` for that row. The permission is
+   unusable unless that row is granted.
 
 This is a single exact-match `IsShared` call per permission string, point-cached by the existing
 `visibilityCache` already inside `internal/sharing/service.go` — the same cache used by every other
@@ -198,32 +220,34 @@ sequenceDiagram
     participant RBAC as rbacEngine.EvaluateAccessBatch
     participant Role as roleService.GetAuthorizedPermissionsByResourceServer
     participant Store as ROLE_ASSIGNMENT / ROLE_PERMISSION
-    participant Res as resourceService.FilterVisiblePermissions
+    participant Res as resourceService.ValidatePermissions
     participant Sharing as sharingService.IsShared
 
     Client->>RBAC: token request (subject, resourceServerID, ouID, scopes)
     RBAC->>Role: GetAuthorizedPermissionsByResourceServer(..., permissions, ouID)
     Role->>Store: resolve raw authorized permission strings
     Store-->>Role: authorizedPermissions
-    Role->>Res: FilterVisiblePermissions(resourceServerID, authorizedPermissions, ouID)
-    Res->>Res: set aside the literal root permission, if present (always kept, §4.4)
+    Role->>Res: ValidatePermissions(resourceServerID, authorizedPermissions, ouID)
+    Res->>Res: set aside the literal root permission, if present (never unusable, §4.4)
+    Res->>Res: which permissions does the server not define?
     Res->>Sharing: IsShared(resource_server, resourceServerID, ouID)
-    Sharing-->>Res: visible? (cached)
-    loop each remaining permission
+    Sharing-->>Res: granted? (cached)
+    loop each permission the server defines
         Res->>Res: resolve permission -> resource/action row
         Res->>Sharing: IsShared(resource|action, nodeID, ouID)
-        Sharing-->>Res: visible? (cached)
+        Sharing-->>Res: granted? (cached)
     end
-    Res-->>Role: filtered permissions
-    Role-->>RBAC: filtered permissions
-    RBAC-->>Client: authorized scopes (only what's both assigned and shared)
+    Res-->>Role: unusable permissions
+    Role-->>RBAC: authorizedPermissions minus the unusable ones
+    RBAC-->>Client: authorized scopes (only what's both assigned and granted)
 ```
 
 ### 4.3 Two call sites
 
 - **`internal/role/service.go:612` (`GetAuthorizedPermissionsByResourceServer`)** — after resolving
-  `authorizedPermissions` from the store and before returning, filter through
-  `rs.resourceService.FilterVisiblePermissions(ctx, resourceServerID, authorizedPermissions, ouID)`.
+  `authorizedPermissions` from the store and before returning, drop whatever
+  `rs.resourceService.ValidatePermissions(ctx, resourceServerID, authorizedPermissions, ouID)`
+  reports unusable.
   This is the **mandatory** enforcement point per the user's explicit ask: it is the actual
   authorization decision, evaluated fresh on every request, so a resource/action unshared *after* a
   role was created stops being usable immediately, with no stale-permission window.
@@ -238,11 +262,11 @@ sequenceDiagram
     must instead be added after both `RequireOwnership` calls complete (`service.go:501-509`),
     where `role.OUID` is confirmed owned/authorized, using `role.OUID` at that point.
 
-  Both sites add a call to the same underlying check `FilterVisiblePermissions` performs
-  per-resource-server-group, rejecting the write (new error, analogous shape to
-  `ErrorInvalidPermissions`) if any requested permission is not in the filtered result for that
-  role's owning OU. This catches a misconfiguration at grant time rather than only discovering the
-  gap the next time a token is issued.
+  Both sites add an organization-unit-scoped `ValidatePermissions` call per resource-server group,
+  rejecting the write (new error, analogous shape to `ErrorInvalidPermissions`) if it reports any
+  requested permission unusable for that role's owning OU. Existence has already been established by
+  the existing call, so anything it reports is a visibility failure. This catches a misconfiguration
+  at grant time rather than only discovering the gap the next time a token is issued.
 
 ### 4.4 The deployment root permission is a bypass, not a grant
 
@@ -255,7 +279,7 @@ for the bootstrap "System" resource server's own top-level resource (handle `"sy
 very first bootstrap admin, through an ordinary role assignment resolved by the same
 `GetAuthorizedPermissionsByResourceServer` call this design modifies (RBAC evaluation has no
 separate bootstrap bypass path — confirmed in §2). Without an explicit accommodation,
-`FilterVisiblePermissions` would silently strip `"system"` out of any role's authorized permissions
+the organization unit check would silently strip `"system"` out of any role's authorized permissions
 for every OU other than whichever one owns the System resource server (`default`, per the bootstrap
 YAML), breaking root/admin access on upgrade for any multi-OU deployment.
 
@@ -277,8 +301,8 @@ for the bare root permission**, verified against the actual visibility algorithm
   through it would make "root access" conditional on every tenant's own opt-in reshare, which
   inverts what root is supposed to mean.
 
-**The fix**: treat the deployment root permission as a categorical exemption from
-`FilterVisiblePermissions`, exactly mirroring how it already bypasses every other OU-boundary check
+**The fix**: treat the deployment root permission as a categorical exemption from the organization
+unit check, exactly mirroring how it already bypasses every other OU-boundary check
 in this codebase (`requireOwnOUScope`, `sharing.RequireOwnership`/`RequireOwnershipForDeletion`, the
 cross-tree restriction) — root means "no OU boundaries apply," a concept that predates and is
 orthogonal to the sharing framework, not a maximally-shared permission. This is step 1 of §4.2's
@@ -363,7 +387,7 @@ it through `providers.ResourceServerProvider`, and the declarative exporter behi
 root-gated endpoint. Putting `RequireVisibility` inside the service method would reject token
 issuance for any OU requesting a token for a resource server it does not own, which is precisely
 the case this design handles the *other* way, by issuing the token and filtering its permissions
-through `FilterVisiblePermissions` (§4.2). The check therefore sits in
+through `ValidatePermissions` (§4.2). The check therefore sits in
 `HandleResourceServerGetRequest`, immediately after the service call, and `RequireVisibility` is
 exported on `ResourceServiceInterface` (`service.go:113-124`) so the handler layer can apply it.
 `GetResource`/`GetAction` have no such reuse, so their checks stay inline in the service methods
@@ -411,8 +435,8 @@ the System resource server*, which the bootstrap owns under the default OU
 (`backend/cmd/server/bootstrap/01-default-resources.yaml`). So a role in any *other* OU naming one
 of them is caught twice by this design's own checks:
 
-1. **Write time** (§4.3): `checkPermissionVisibility` runs `FilterVisiblePermissions`, whose
-   server-level gate (§4.2 step 3) makes nothing under a resource server visible to an OU that
+1. **Write time** (§4.3): `checkPermissionVisibility` runs an OU-scoped `ValidatePermissions`, whose
+   server-level gate (§4.2 step 4) makes nothing under a resource server visible to an OU that
    neither owns it nor has it shared. The role write is rejected with `ROL-1025`.
 2. **Token issuance** (§4.2): even if the role existed, the same gate drops the permission, so the
    token comes back without it.
@@ -523,9 +547,10 @@ resource/action IDs to leave out of the cascade. This is a resource-package-loca
 - one `action` grant for `view` (same target)
 - **no** grant for `create`
 
-OU-B can now be granted the `view` permission on a role (it passes `FilterVisiblePermissions`'s
-node check for the `view` Action row); granting `create` is rejected at write time (§4.3) and, even
-if it somehow ended up on a role another way, filtered out at every RBAC evaluation (§4.2 step 3).
+OU-B can now be granted the `view` permission on a role (it passes the per-permission node check of
+`ValidatePermissions` for the `view` Action row); granting `create` is rejected at write time
+(§4.3) and, even if it somehow ended up on a role another way, filtered out at every RBAC
+evaluation (§4.2 step 5).
 
 ### 5.2 Auto-inherit on creation
 
@@ -598,7 +623,7 @@ modes (DB, file-based/declarative, composite), mirroring `ResolvePermissionNode`
 resource-server-scoped exact-match lookup (§4.2) but keyed the other direction.
 
 **Crossing into `internal/role` without a cyclic import.** `internal/role` already imports
-`internal/resource` (for `ValidatePermissions`/`FilterVisiblePermissions`), so `internal/resource`
+`internal/resource` (for `ValidatePermissions`), so `internal/resource`
 cannot import `internal/role` back. A new narrow interface, `resource.RolePermissionRevoker`
 (`RevokeRolePermissionForOU(ctx, ouID, resourceServerID, permission string) (int, error)`), is
 defined in `internal/resource` and implemented by `roleService`; `resourceService` gains an
@@ -680,8 +705,8 @@ setting, exclusion lists, the point-invalidated visibility cache, and the entire
 added to `sharing.ServiceInterface`.
 
 **New**: three `ResourceTypeDeclaration`s (the expected, designed-for extension point — exactly how
-Role itself onboarded), `FilterVisiblePermissions` (resource-package-local resolution logic, not a
-sharing-framework method), and two orchestration algorithms (`ShareResourceTree`/`UnshareResourceTree`
+Role itself onboarded), the organization unit half of `ValidatePermissions`
+(resource-package-local resolution logic, not a sharing-framework method), and two orchestration algorithms (`ShareResourceTree`/`UnshareResourceTree`
 cascade, auto-inherit-on-create) that are specific to *tree-shaped* resources. A future resource
 type that isn't tree-shaped (a flat catalog, like Role) would only need the first part — one
 `ResourceTypeDeclaration` and whatever its own permission-resolution path looks like — confirming

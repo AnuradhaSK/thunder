@@ -17,6 +17,11 @@ var publicPaths = []string{
 	"/flow/execute/**",
 	"/flow/meta",
 	"/oauth2/**",
+	// The OU-scoped form of the OAuth2 endpoints, /ou/{ouId}/oauth2/..., is public for exactly the
+	// same reason the bare form is: the caller authenticates as an OAuth client, not with a system
+	// access token. The organization unit named in the path is authorized inside the grant handler
+	// against the application's grants, not here.
+	"/ou/*/oauth2/**",
 	// OpenID4VP wallet- and RP-facing endpoints are public; management endpoints
 	// (e.g. /openid4vp/presentation-definitions) are deliberately excluded.
 	"/openid4vp/request",

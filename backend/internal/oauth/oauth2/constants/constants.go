@@ -59,6 +59,10 @@ const (
 	RequestParamBindingMessage      string = "binding_message"
 	RequestParamRequestedExpiry     string = "requested_expiry"
 	RequestParamAuthReqID           string = "auth_req_id"
+
+	// PathParamOUID is the {ouId} path segment on the /ou/{ouId}/oauth2/token variant of the token
+	// endpoint, naming the organization unit the token is requested against.
+	PathParamOUID string = "ouId"
 )
 
 // OAuth2 HTTP headers.

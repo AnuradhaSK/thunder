@@ -438,7 +438,7 @@ var (
 
 	// queryResolvePermissionNode resolves a single permission string, scoped to one resource
 	// server, to the Resource-or-Action row it names — the ID and its node kind ("resource" or
-	// "action") — for sharing-visibility resolution (see resourceSharing.FilterVisiblePermissions).
+	// "action") — for sharing-visibility resolution (see appendPermissionsHiddenFromOU).
 	// Both RESOURCE.PERMISSION and ACTION.PERMISSION are unique within a resource server (the
 	// handle-uniqueness constraints enforce this at write time), so at most one row is returned.
 	queryResolvePermissionNode = dbmodel.DBQuery{

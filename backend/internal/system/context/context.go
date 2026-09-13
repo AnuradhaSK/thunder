@@ -18,6 +18,9 @@ const (
 
 	// CSPNonceKey is the context key for storing the per-request Content-Security-Policy nonce.
 	CSPNonceKey contextKey = "csp_nonce"
+
+	// AccessingOUIDKey is the context key for the organization unit a request is being made against.
+	AccessingOUIDKey contextKey = "accessing_ou_id"
 )
 
 // ============================================================================
@@ -105,4 +108,28 @@ func WithCSPNonce(ctx context.Context, nonce string) context.Context {
 		ctx = context.Background()
 	}
 	return context.WithValue(ctx, CSPNonceKey, nonce)
+}
+
+// ============================================================================
+// Accessing Organization Unit Functions
+// ============================================================================
+
+// GetAccessingOUID retrieves the organization unit the request is being made against, or "" when
+// the request carried no /ou/{ouId} prefix.
+func GetAccessingOUID(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	ouID, _ := ctx.Value(AccessingOUIDKey).(string)
+	return ouID
+}
+
+// WithAccessingOUID records the organization unit the request is being made against. Set once, at
+// the edge, from the request path; an empty ouID is stored as-is so downstream readers see the
+// same "no organization unit named" answer either way.
+func WithAccessingOUID(ctx context.Context, ouID string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, AccessingOUIDKey, ouID)
 }

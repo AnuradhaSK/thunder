@@ -43,13 +43,16 @@ func testOwnOUContext(ouID string) context.Context {
 	return security.WithSecurityContextTest(context.Background(), authCtx)
 }
 
+// testSharedRSID is the fixture resource server the ValidatePermissions tests below all address.
+const testSharedRSID = "rs1"
+
 // testDescendantResourceID is a fixture resource ID reused across the cascade share/unshare
 // tests in this file to stand in for a resource beneath the resource server being shared.
 const testDescendantResourceID = "resource-node-1"
 
-// SharingServiceTestSuite exercises the resource-tree sharing orchestration in sharing.go:
-// FilterVisiblePermissions (the compound RBAC check), cascade share/unshare, and auto-inherit on
-// creation.
+// SharingServiceTestSuite exercises the resource-tree sharing orchestration in sharing.go: the
+// organization unit half of ValidatePermissions (the compound RBAC check), cascade share/unshare,
+// and auto-inherit on creation.
 type SharingServiceTestSuite struct {
 	suite.Suite
 	mockStore      *resourceStoreInterfaceMock
@@ -80,66 +83,101 @@ func (suite *SharingServiceTestSuite) TearDownTest() {
 	config.ResetServerRuntime()
 }
 
-// --- FilterVisiblePermissions ---
+// --- ValidatePermissions, organization unit half ---
+//
+// These cover ValidatePermissions when an ouID is supplied, which is what replaced the separate
+// visibility-filtering method: the permissions it reports back are the ones the organization unit
+// may not use, whether because they do not exist or because they were never granted to it.
 
-func (suite *SharingServiceTestSuite) TestFilterVisiblePermissions_EmptyInput() {
-	result, svcErr := suite.service.FilterVisiblePermissions(context.Background(), "rs1", []string{}, "ou1")
-	suite.Nil(svcErr)
-	suite.Equal([]string{}, result)
+// expectPermissionsExist mocks the existence half of ValidatePermissions on testSharedRSID as "all
+// of them exist", so a test asserts purely on what the organization unit check adds.
+func (suite *SharingServiceTestSuite) expectPermissionsExist(permissions []string) {
+	suite.mockStore.On("ValidatePermissions", mock.Anything, testSharedRSID, permissions).
+		Return([]string{}, nil)
 }
 
-func (suite *SharingServiceTestSuite) TestFilterVisiblePermissions_RootPermissionAlwaysKept() {
+func (suite *SharingServiceTestSuite) TestValidatePermissions_EmptyInput() {
+	invalid, svcErr := suite.service.ValidatePermissions(context.Background(), "rs1", []string{}, "ou1")
+	suite.Nil(svcErr)
+	suite.Equal([]string{}, invalid)
+}
+
+func (suite *SharingServiceTestSuite) TestValidatePermissions_RootPermissionAlwaysUsable() {
 	root := security.GetSystemRootPermission()
 
 	// No IsShared/store call should be needed: the server is never even looked up when every
 	// requested permission is the bare root permission.
-	result, svcErr := suite.service.FilterVisiblePermissions(
+	invalid, svcErr := suite.service.ValidatePermissions(
 		context.Background(), "rs1", []string{root}, "ou-unrelated",
 	)
 	suite.Nil(svcErr)
-	suite.Equal([]string{root}, result)
+	suite.Equal([]string{}, invalid)
 }
 
-func (suite *SharingServiceTestSuite) TestFilterVisiblePermissions_ResourceServerNotFound() {
+func (suite *SharingServiceTestSuite) TestValidatePermissions_ResourceServerNotFound() {
 	root := security.GetSystemRootPermission()
 	suite.mockStore.On("GetResourceServer", mock.Anything, "rs1").
 		Return(providers.ResourceServer{}, errResourceServerNotFound)
 
-	result, svcErr := suite.service.FilterVisiblePermissions(
+	invalid, svcErr := suite.service.ValidatePermissions(
 		context.Background(), "rs1", []string{root, "perm1"}, "ou1",
 	)
 	suite.Nil(svcErr)
-	// The root permission is still kept (step 1 runs unconditionally); the rest are dropped since
-	// the server that would own them doesn't exist.
-	suite.Equal([]string{root}, result)
+	// The root permission stays usable; the rest are not, since the server that would define them
+	// doesn't exist.
+	suite.Equal([]string{"perm1"}, invalid)
 }
 
-func (suite *SharingServiceTestSuite) TestFilterVisiblePermissions_ResourceServerStoreError() {
+func (suite *SharingServiceTestSuite) TestValidatePermissions_ResourceServerStoreError() {
 	suite.mockStore.On("GetResourceServer", mock.Anything, "rs1").
 		Return(providers.ResourceServer{}, errors.New("db down"))
 
-	result, svcErr := suite.service.FilterVisiblePermissions(
+	invalid, svcErr := suite.service.ValidatePermissions(
 		context.Background(), "rs1", []string{"perm1"}, "ou1",
 	)
-	suite.Nil(result)
+	suite.Nil(invalid)
 	suite.NotNil(svcErr)
 	suite.Equal(tidcommon.InternalServerError.Code, svcErr.Code)
 }
 
-func (suite *SharingServiceTestSuite) TestFilterVisiblePermissions_OwnerSeesEverything() {
+func (suite *SharingServiceTestSuite) TestValidatePermissions_OwnerUsesEverything() {
 	suite.mockStore.On("GetResourceServer", mock.Anything, "rs1").
 		Return(providers.ResourceServer{ID: "rs1", OUID: "ou1"}, nil)
+	suite.expectPermissionsExist([]string{"perm1", "perm2"})
 
-	result, svcErr := suite.service.FilterVisiblePermissions(
+	invalid, svcErr := suite.service.ValidatePermissions(
 		context.Background(), "rs1", []string{"perm1", "perm2"}, "ou1",
 	)
 	suite.Nil(svcErr)
-	suite.ElementsMatch([]string{"perm1", "perm2"}, result)
+	suite.Empty(invalid)
 }
 
-func (suite *SharingServiceTestSuite) TestFilterVisiblePermissions_ServerNotSharedToOU() {
+// No ouID means no organization unit narrowing at all: the store's existence answer is returned
+// verbatim and the sharing service is never consulted. This is the pre-existing behavior every
+// caller that has no single acting organization unit still relies on.
+func (suite *SharingServiceTestSuite) TestValidatePermissions_NoOUSkipsSharingEntirely() {
 	suite.mockStore.On("GetResourceServer", mock.Anything, "rs1").
 		Return(providers.ResourceServer{ID: "rs1", OUID: "owner-ou"}, nil)
+	suite.mockStore.On("ValidatePermissions", mock.Anything, "rs1", []string{"perm1", "gone"}).
+		Return([]string{"gone"}, nil)
+	suite.sharingService.isSharedFunc = func(
+		_ context.Context, _ sharing.ResourceType, _, _ string,
+	) (bool, *tidcommon.ServiceError) {
+		suite.Fail("sharing must not be consulted when no organization unit is given")
+		return false, nil
+	}
+
+	invalid, svcErr := suite.service.ValidatePermissions(
+		context.Background(), "rs1", []string{"perm1", "gone"}, "",
+	)
+	suite.Nil(svcErr)
+	suite.Equal([]string{"gone"}, invalid)
+}
+
+func (suite *SharingServiceTestSuite) TestValidatePermissions_ServerNotGrantedToOU() {
+	suite.mockStore.On("GetResourceServer", mock.Anything, "rs1").
+		Return(providers.ResourceServer{ID: "rs1", OUID: "owner-ou"}, nil)
+	suite.expectPermissionsExist([]string{"perm1"})
 	suite.sharingService.isSharedFunc = func(
 		_ context.Context, resourceType sharing.ResourceType, resourceID, ouID string,
 	) (bool, *tidcommon.ServiceError) {
@@ -149,23 +187,24 @@ func (suite *SharingServiceTestSuite) TestFilterVisiblePermissions_ServerNotShar
 		return false, nil
 	}
 
-	result, svcErr := suite.service.FilterVisiblePermissions(
+	invalid, svcErr := suite.service.ValidatePermissions(
 		context.Background(), "rs1", []string{"perm1"}, "other-ou",
 	)
 	suite.Nil(svcErr)
-	suite.Equal([]string{}, result)
+	suite.Equal([]string{"perm1"}, invalid)
 }
 
-func (suite *SharingServiceTestSuite) TestFilterVisiblePermissions_ServerSharedNodeVisibleAndNot() {
+func (suite *SharingServiceTestSuite) TestValidatePermissions_ServerGrantedNodeVisibleAndNot() {
 	suite.mockStore.On("GetResourceServer", mock.Anything, "rs1").
 		Return(providers.ResourceServer{ID: "rs1", OUID: "owner-ou"}, nil)
+	suite.expectPermissionsExist([]string{"books.view", "books.create"})
 	suite.sharingService.isSharedFunc = func(
 		_ context.Context, resourceType sharing.ResourceType, resourceID, ouID string,
 	) (bool, *tidcommon.ServiceError) {
 		if resourceType == resourceServerSharingType {
 			return true, nil
 		}
-		// Node-level visibility: only the "view" action is shared, "create" is withheld.
+		// Node-level visibility: only the "view" action is granted, "create" is withheld.
 		return resourceID == "action-view", nil
 	}
 	suite.mockStore.On("ResolvePermissionNode", mock.Anything, "rs1", "books.view").
@@ -173,16 +212,39 @@ func (suite *SharingServiceTestSuite) TestFilterVisiblePermissions_ServerSharedN
 	suite.mockStore.On("ResolvePermissionNode", mock.Anything, "rs1", "books.create").
 		Return("action-create", "action", true, nil)
 
-	result, svcErr := suite.service.FilterVisiblePermissions(
+	invalid, svcErr := suite.service.ValidatePermissions(
 		context.Background(), "rs1", []string{"books.view", "books.create"}, "other-ou",
 	)
 	suite.Nil(svcErr)
-	suite.Equal([]string{"books.view"}, result)
+	suite.Equal([]string{"books.create"}, invalid)
 }
 
-func (suite *SharingServiceTestSuite) TestFilterVisiblePermissions_PermissionNodeNotFoundIsSkipped() {
+// A permission the store already rejected must not be reported a second time by the organization
+// unit check, which would make the caller's "how many are unusable" count wrong.
+func (suite *SharingServiceTestSuite) TestValidatePermissions_NonExistentNotReportedTwice() {
 	suite.mockStore.On("GetResourceServer", mock.Anything, "rs1").
 		Return(providers.ResourceServer{ID: "rs1", OUID: "owner-ou"}, nil)
+	suite.mockStore.On("ValidatePermissions", mock.Anything, "rs1", []string{"gone", "withheld"}).
+		Return([]string{"gone"}, nil)
+	suite.sharingService.isSharedFunc = func(
+		_ context.Context, resourceType sharing.ResourceType, _, _ string,
+	) (bool, *tidcommon.ServiceError) {
+		return resourceType == resourceServerSharingType, nil
+	}
+	suite.mockStore.On("ResolvePermissionNode", mock.Anything, "rs1", "withheld").
+		Return("action-withheld", "action", true, nil)
+
+	invalid, svcErr := suite.service.ValidatePermissions(
+		context.Background(), "rs1", []string{"gone", "withheld"}, "other-ou",
+	)
+	suite.Nil(svcErr)
+	suite.Equal([]string{"gone", "withheld"}, invalid)
+}
+
+func (suite *SharingServiceTestSuite) TestValidatePermissions_PermissionNodeNotFoundIsUnusable() {
+	suite.mockStore.On("GetResourceServer", mock.Anything, "rs1").
+		Return(providers.ResourceServer{ID: "rs1", OUID: "owner-ou"}, nil)
+	suite.expectPermissionsExist([]string{"unknown.perm"})
 	suite.sharingService.isSharedFunc = func(
 		_ context.Context, _ sharing.ResourceType, _, _ string,
 	) (bool, *tidcommon.ServiceError) {
@@ -191,16 +253,17 @@ func (suite *SharingServiceTestSuite) TestFilterVisiblePermissions_PermissionNod
 	suite.mockStore.On("ResolvePermissionNode", mock.Anything, "rs1", "unknown.perm").
 		Return("", "", false, nil)
 
-	result, svcErr := suite.service.FilterVisiblePermissions(
+	invalid, svcErr := suite.service.ValidatePermissions(
 		context.Background(), "rs1", []string{"unknown.perm"}, "other-ou",
 	)
 	suite.Nil(svcErr)
-	suite.Equal([]string{}, result)
+	suite.Equal([]string{"unknown.perm"}, invalid)
 }
 
-func (suite *SharingServiceTestSuite) TestFilterVisiblePermissions_ResolvePermissionNodeStoreError() {
+func (suite *SharingServiceTestSuite) TestValidatePermissions_ResolvePermissionNodeStoreError() {
 	suite.mockStore.On("GetResourceServer", mock.Anything, "rs1").
 		Return(providers.ResourceServer{ID: "rs1", OUID: "owner-ou"}, nil)
+	suite.expectPermissionsExist([]string{"books.view"})
 	suite.sharingService.isSharedFunc = func(
 		_ context.Context, _ sharing.ResourceType, _, _ string,
 	) (bool, *tidcommon.ServiceError) {
@@ -209,10 +272,10 @@ func (suite *SharingServiceTestSuite) TestFilterVisiblePermissions_ResolvePermis
 	suite.mockStore.On("ResolvePermissionNode", mock.Anything, "rs1", "books.view").
 		Return("", "", false, errors.New("db down"))
 
-	result, svcErr := suite.service.FilterVisiblePermissions(
+	invalid, svcErr := suite.service.ValidatePermissions(
 		context.Background(), "rs1", []string{"books.view"}, "other-ou",
 	)
-	suite.Nil(result)
+	suite.Nil(invalid)
 	suite.NotNil(svcErr)
 	suite.Equal(tidcommon.InternalServerError.Code, svcErr.Code)
 }

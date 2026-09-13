@@ -12,6 +12,7 @@ import (
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 
 	agentmodel "github.com/thunder-id/thunderid/internal/agent/model"
+	"github.com/thunder-id/thunderid/internal/application"
 	layoutmgt "github.com/thunder-id/thunderid/internal/design/layout/mgt"
 	thememgt "github.com/thunder-id/thunderid/internal/design/theme/mgt"
 	"github.com/thunder-id/thunderid/internal/entitytype"
@@ -69,6 +70,13 @@ type roleDeclarativeYAML struct {
 // field, so the block is decoded from the same node separately rather than widening that model.
 type resourceServerSharingYAML struct {
 	Grants []resource.ShareRequest `yaml:"grants,omitempty"`
+}
+
+// applicationSharingYAML captures just the sharing block of an application document, for the same
+// reason resourceServerSharingYAML does: the application service-layer model carries no grants
+// field, so the block is decoded from the same node separately rather than widening that model.
+type applicationSharingYAML struct {
+	Grants []application.ShareRequest `yaml:"grants,omitempty"`
 }
 
 type userDeclarativeYAML struct {
@@ -588,9 +596,9 @@ func (s *importService) importResourceServer(
 // Cascading is the whole point of going through the resource service rather than calling
 // sharingService.Share directly (which is what the role path does): a resource server has no
 // permission string of its own, its permissions are its resources and actions. A grant on the
-// server row alone satisfies FilterVisiblePermissions' server-level gate but fails the
-// per-permission node check, so every permission the server defines would still be invisible and
-// every role naming one would be rejected with ROL-1025. See §4.6 and §5.1 of
+// server row alone satisfies ValidatePermissions' server-level gate but fails its per-permission
+// node check, so every permission the server defines would still be invisible and every role
+// naming one would be rejected with ROL-1025.
 //
 // Unlike applyRoleSharing this is idempotent: bootstrap and import both run repeatedly against an
 // existing deployment (bootstrap is upsert-based by design), and Share() itself does not dedupe,
@@ -1380,4 +1388,53 @@ func (s *importService) importCredentialConfiguration(
 		return serviceErrorOutcome(resourceTypeCredentialConfiguration, dto.ID, dto.Handle, operationCreate, svcErr)
 	}
 	return successOutcome(resourceTypeCredentialConfiguration, created.ID, created.Handle, operationCreate)
+}
+
+// applyApplicationSharing replays a declaratively-declared application's grants. Granting an
+// application to an organization unit does not expose it there: it only lets that organization unit
+// be named as the accessing OU on /ou/{ouId}/oauth2/token, which is what lets one machine-to-machine
+// credential serve many organizations while staying invisible inside them. A no-op when the document
+// declares none.
+//
+// Unlike a resource server there is no cascade, so this calls sharingService.Share directly rather
+// than going through the application service. Like the resource-server path it is idempotent:
+// bootstrap and import both run repeatedly and Share() does not dedupe, so an already-present grant
+// is skipped rather than appended again.
+func (s *importService) applyApplicationSharing(
+	ctx context.Context, doc parsedDocument, id, ownerOUID string,
+) *tidcommon.ServiceError {
+	var sharingBlock applicationSharingYAML
+	if err := doc.Node.Decode(&sharingBlock); err != nil {
+		return tidcommon.CustomServiceError(tidcommon.InternalServerError,
+			tidcommon.I18nMessage{DefaultValue: "failed to decode application grants: " + err.Error()})
+	}
+	if len(sharingBlock.Grants) == 0 {
+		return nil
+	}
+	if s.sharingService == nil {
+		return tidcommon.CustomServiceError(tidcommon.InternalServerError,
+			tidcommon.I18nMessage{DefaultValue: "sharingService not configured"})
+	}
+
+	existing, svcErr := s.sharingService.ExportGrants(ctx, application.ApplicationSharingResourceType, id)
+	if svcErr != nil {
+		return svcErr
+	}
+
+	for _, grant := range sharingBlock.Grants {
+		actingOUID := grant.OUID
+		if actingOUID == "" {
+			actingOUID = ownerOUID
+		}
+		policy := grant.ToSharePolicy()
+		if replayableGrantPresent(existing, actingOUID, policy) {
+			continue
+		}
+		if _, svcErr := s.sharingService.Share(
+			ctx, application.ApplicationSharingResourceType, id, ownerOUID, actingOUID, policy,
+		); svcErr != nil {
+			return svcErr
+		}
+	}
+	return nil
 }

@@ -433,7 +433,8 @@ func registerServices(mux *http.ServeMux, cacheManager cache.CacheManagerInterfa
 		runtimeCryptoSvc, serverConfigService,
 		func(client *providers.OAuthClient) time.Duration {
 			return tokenservice.ArtifactLifetime(oauthCfg, client)
-		})
+		},
+		sharingService)
 	fatalOnError(ctx, logger, err, "Failed to initialize ApplicationService")
 	// Two-phase initialization: inject the application service into the executors that act on it.
 	fatalOnError(ctx, logger, executor.SetApplicationProvider(execRegistry, applicationService),
@@ -479,7 +480,8 @@ func registerServices(mux *http.ServeMux, cacheManager cache.CacheManagerInterfa
 	// Initialize design resolve service for theme and layout resolution
 	designResolveService := resolve.Initialize(mux, themeMgtService, layoutMgtService, applicationService)
 
-	actorProvider := actorprovider.Initialize(inboundClientService, entityProvider, authnProvider, roleService)
+	actorProvider := actorprovider.Initialize(
+		inboundClientService, entityProvider, authnProvider, roleService, applicationService)
 
 	// Initialize flow metadata service
 	_ = flowmeta.Initialize(mux, actorProvider, ouService, designResolveService, i18nService)

@@ -454,10 +454,11 @@ func BuildClientAttributes(
 	oauthApp *providers.OAuthClient,
 	ouService providers.OrganizationUnitProvider,
 	actorProvider providers.ActorProvider,
+	accessingOUID string,
 ) (map[string]interface{}, error) {
 	claims := make(map[string]interface{})
 
-	ouClaims, err := resolveClientOUAttributes(ctx, oauthApp, ouService)
+	ouClaims, err := resolveClientOUAttributes(ctx, oauthApp, ouService, accessingOUID)
 	if err != nil {
 		return nil, err
 	}
@@ -558,8 +559,19 @@ func resolveClientOUAttributes(
 	ctx context.Context,
 	oauthApp *providers.OAuthClient,
 	ouService providers.OrganizationUnitProvider,
+	accessingOUID string,
 ) (map[string]interface{}, error) {
-	if oauthApp == nil || oauthApp.OUID == "" || ouService == nil {
+	if oauthApp == nil || ouService == nil {
+		return nil, nil
+	}
+
+	// The OU claims name the organization the token is for. That is the accessing OU when the
+	// request named one through /ou/{ouId}, and the application's own owning OU otherwise.
+	ouID := oauthApp.OUID
+	if accessingOUID != "" {
+		ouID = accessingOUID
+	}
+	if ouID == "" {
 		return nil, nil
 	}
 
@@ -571,10 +583,10 @@ func resolveClientOUAttributes(
 		return nil, nil
 	}
 
-	orgUnit, svcErr := ouService.GetOrganizationUnit(ctx, oauthApp.OUID)
+	orgUnit, svcErr := ouService.GetOrganizationUnit(ctx, ouID)
 	if svcErr != nil {
 		return nil, fmt.Errorf("failed to fetch organization unit %s for app %s: %s",
-			oauthApp.OUID, oauthApp.ID, svcErr.Error)
+			ouID, oauthApp.ID, svcErr.Error)
 	}
 
 	claims := make(map[string]interface{})

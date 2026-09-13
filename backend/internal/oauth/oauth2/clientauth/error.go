@@ -52,6 +52,14 @@ var (
 		"Client is not allowed to use the specified authentication method",
 		http.StatusBadRequest,
 	)
+	// errClientNotAuthorizedForOU is returned when a request names an organization unit the client
+	// may not be used in. The client authenticated successfully, so this is unauthorized_client
+	// rather than invalid_client, which would be indistinguishable from a bad secret.
+	errClientNotAuthorizedForOU = newAuthError(
+		constants.ErrorUnauthorizedClient,
+		"The client is not authorized for the requested organization unit",
+		http.StatusBadRequest,
+	)
 	errClientIDMismatch = newAuthError(
 		constants.ErrorInvalidRequest,
 		"client_id in request body does not match client_id from authentication credentials",

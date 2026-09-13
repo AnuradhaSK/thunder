@@ -139,7 +139,7 @@ type ResourceServerProvider interface {
 		ctx context.Context, id string,
 	) (*ResourceServer, *common.ServiceError)
 	ValidatePermissions(
-		ctx context.Context, resourceServerID string, permissions []string,
+		ctx context.Context, resourceServerID string, permissions []string, ouID string,
 	) ([]string, *common.ServiceError)
 }
 

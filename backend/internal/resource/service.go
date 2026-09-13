@@ -99,8 +99,11 @@ type ResourceServiceInterface interface {
 	) (*providers.Action, *tidcommon.ServiceError)
 	DeleteAction(ctx context.Context, resourceServerID string, resourceID *string,
 		id string) *tidcommon.ServiceError
+	// ValidatePermissions returns the subset of permissions that are not usable on the resource
+	// server, which is the empty slice when all of them are. See the identical method on
+	// providers.ResourceServerProvider for the ouID semantics.
 	ValidatePermissions(
-		ctx context.Context, resourceServerID string, permissions []string,
+		ctx context.Context, resourceServerID string, permissions []string, ouID string,
 	) ([]string, *tidcommon.ServiceError)
 
 	// ResolveResourceServerOUHandle resolves ou_handle to an OU ID on the given resource server
@@ -124,20 +127,10 @@ type ResourceServiceInterface interface {
 	// declarative exporter under a root-gated endpoint, and OAuth resource-indicator resolution via
 	// providers.ResourceServerProvider during token issuance) that must never be OU-restricted.
 	// GetResource/GetAction have no such external reuse, so their own OU-visibility check is
-	// applied inline instead — see's
-	// system:resource-servers scope.
+	// applied inline instead.
 	RequireVisibility(
 		ctx context.Context, resourceType sharing.ResourceType, resourceID, owningOUID string,
 	) *tidcommon.ServiceError
-
-	// FilterVisiblePermissions filters permissions (already known to be authorized for the caller
-	// by role-assignment sharing) down to those whose resource server, and whichever resource/action
-	// node they name, are also visible to ouID (owned or shared) — the compound RBAC check described
-	// in The deployment's own root permission is
-	// always kept, unconditionally (§4.4).
-	FilterVisiblePermissions(
-		ctx context.Context, resourceServerID string, permissions []string, ouID string,
-	) ([]string, *tidcommon.ServiceError)
 
 	// ShareResourceServer shares resourceServerID (and, cascading, every resource/action currently
 	// under it, minus req.ExcludedNodeIDs) per req. See §5.1 of the design doc.
@@ -1502,23 +1495,43 @@ func (rs *resourceService) DeleteAction(
 	return nil
 }
 
-// ValidatePermissions checks if permissions exist for a given resource server.
-// Returns array of invalid permissions (empty if all valid).
+// ValidatePermissions checks that permissions exist on the given resource server and, when ouID is
+// set, that the organization unit can see them. Returns array of invalid permissions (empty if all
+// valid).
 func (rs *resourceService) ValidatePermissions(
 	ctx context.Context,
 	resourceServerID string,
 	permissions []string,
+	ouID string,
 ) ([]string, *tidcommon.ServiceError) {
 	rs.logger.Debug(ctx, "Validating permissions",
 		log.String("resourceServerId", resourceServerID),
+		log.String("ouID", ouID),
 		log.Int("permissionCount", len(permissions)))
 
 	if len(permissions) == 0 {
 		return []string{}, nil
 	}
 
+	// The deployment root permission is a bypass rather than a grant: it belongs to no single
+	// organization unit and no resource server defines it, so it is held out of both checks below
+	// whenever an organization unit is in play.
+	candidates := permissions
+	if ouID != "" {
+		rootPermission := security.GetSystemRootPermission()
+		candidates = make([]string, 0, len(permissions))
+		for _, permission := range permissions {
+			if permission != rootPermission {
+				candidates = append(candidates, permission)
+			}
+		}
+		if len(candidates) == 0 {
+			return []string{}, nil
+		}
+	}
+
 	// Validate resource server exists
-	_, err := rs.resourceStore.GetResourceServer(ctx, resourceServerID)
+	resourceServer, err := rs.resourceStore.GetResourceServer(ctx, resourceServerID)
 	if err != nil {
 		if !errors.Is(err, errResourceServerNotFound) {
 			rs.logger.Error(ctx, "Failed to validate resource server existence",
@@ -1529,11 +1542,11 @@ func (rs *resourceService) ValidatePermissions(
 		rs.logger.Debug(ctx, "Resource server not found",
 			log.String("resourceServerId", resourceServerID))
 		// Return all permissions as invalid if resource server doesn't exist
-		return permissions, nil
+		return candidates, nil
 	}
 
 	// Call store to validate permissions
-	invalidPermissions, storeErr := rs.resourceStore.ValidatePermissions(ctx, resourceServerID, permissions)
+	invalidPermissions, storeErr := rs.resourceStore.ValidatePermissions(ctx, resourceServerID, candidates)
 	if storeErr != nil {
 		rs.logger.Error(ctx, "Failed to validate permissions in store",
 			log.String("resourceServerId", resourceServerID),
@@ -1541,7 +1554,10 @@ func (rs *resourceService) ValidatePermissions(
 		return nil, &tidcommon.InternalServerError
 	}
 
-	return invalidPermissions, nil
+	if ouID == "" {
+		return invalidPermissions, nil
+	}
+	return rs.appendPermissionsHiddenFromOU(ctx, resourceServer, candidates, invalidPermissions, ouID)
 }
 
 // ResolveResourceServerOUHandle resolves ou_handle to an OU ID on the given resource server

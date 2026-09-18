@@ -102,6 +102,9 @@ attribute_cache:
   encryption:
     enabled: {{ .Values.configuration.attributeCache.encryption.enabled }}
 
+resource_sharing:
+  allow_child_ou_cross_tree_sharing: {{ .Values.configuration.resourceSharing.allowChildOuCrossTreeSharing }}
+
 database:
   config:
     type: {{ .Values.configuration.database.config.type | quote }}

@@ -281,6 +281,9 @@
     "default_delimiter": ":",
     "store": "composite"
   },
+  "resource_sharing": {
+    "allow_child_ou_cross_tree_sharing": false
+  },
   "organization_unit": {
     "store": "composite"
   },

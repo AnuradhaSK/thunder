@@ -76,11 +76,13 @@ vi.mock('../../../../hooks/useValidationStatus', () => ({
   }),
 }));
 
-// Mock useIdentityProviders + useSMSProviders
+// Mock useIdentityProviders + useSMSProviders + useEmailProviders
 const mockIdentityProviders = vi.fn<() => {data: unknown[]; isLoading: boolean}>();
 const mockSMSProviders = vi.fn<() => {data: unknown[]; isLoading: boolean}>();
+const mockEmailProviders = vi.fn<() => {data?: unknown[]; isLoading: boolean; isError?: boolean}>();
 vi.mock('@thunderid/configure-connections', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@thunderid/configure-connections')>()),
+  useEmailProviders: () => mockEmailProviders(),
   useIdentityProviders: () => mockIdentityProviders(),
   useSMSProviders: () => mockSMSProviders(),
 }));
@@ -125,6 +127,10 @@ describe('ExecutionExtendedProperties', () => {
       isLoading: false,
     });
     mockNotificationTemplates.mockReturnValue(loaded([]));
+    mockEmailProviders.mockReturnValue({
+      data: [],
+      isLoading: false,
+    });
   });
 
   describe('Google Federation Executor', () => {
@@ -950,6 +956,38 @@ describe('ExecutionExtendedProperties', () => {
       render(<ExecutionExtendedProperties resource={resourceWithTemplate} onChange={mockOnChange} />);
 
       expect(screen.getByLabelText('flows:core.executions.email.emailTemplate.label')).toHaveValue('Password Recovery');
+    });
+
+    // A failed read must not tell the user to create providers that may already exist.
+    it('should report a failed provider read instead of the no-providers warning', () => {
+      mockEmailProviders.mockReturnValue({data: undefined, isLoading: false, isError: true});
+      render(<ExecutionExtendedProperties resource={emailResource} onChange={mockOnChange} />);
+
+      expect(screen.getByText('flows:core.executions.email.sender.loadError')).toBeInTheDocument();
+      expect(screen.queryByText('flows:core.executions.email.sender.noSenders')).not.toBeInTheDocument();
+    });
+
+    it('should warn when the provider read succeeds with no providers', () => {
+      render(<ExecutionExtendedProperties resource={emailResource} onChange={mockOnChange} />);
+
+      expect(screen.getByText('flows:core.executions.email.sender.noSenders')).toBeInTheDocument();
+      expect(screen.queryByText('flows:core.executions.email.sender.loadError')).not.toBeInTheDocument();
+    });
+
+    // A failed read must not tell the user to create providers that may already exist.
+    it('should report a failed provider read instead of the no-providers warning', () => {
+      mockEmailProviders.mockReturnValue({data: undefined, isLoading: false, isError: true});
+      render(<ExecutionExtendedProperties resource={emailResource} onChange={mockOnChange} />);
+
+      expect(screen.getByText('flows:core.executions.email.sender.loadError')).toBeInTheDocument();
+      expect(screen.queryByText('flows:core.executions.email.sender.noSenders')).not.toBeInTheDocument();
+    });
+
+    it('should warn when the provider read succeeds with no providers', () => {
+      render(<ExecutionExtendedProperties resource={emailResource} onChange={mockOnChange} />);
+
+      expect(screen.getByText('flows:core.executions.email.sender.noSenders')).toBeInTheDocument();
+      expect(screen.queryByText('flows:core.executions.email.sender.loadError')).not.toBeInTheDocument();
     });
 
     it('should preserve a template handle it does not know about', async () => {

@@ -17,6 +17,7 @@ var publicPaths = []string{
 	"/flow/execute/**",
 	"/flow/meta",
 	"/oauth2/**",
+	"/ou/*/oauth2/token",
 	// OpenID4VP wallet- and RP-facing endpoints are public; management endpoints
 	// (e.g. /openid4vp/presentation-definitions) are deliberately excluded.
 	"/openid4vp/request",

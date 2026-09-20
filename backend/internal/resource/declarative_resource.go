@@ -262,7 +262,7 @@ func seedDeclaredSharingPolicies(
 			continue
 		}
 		for i, declared := range rs.SharingPolicies {
-			req := toSharingPolicyRequest(declared)
+			req := sharing.RequestFromDeclaration(declared)
 			_, svcErr := sharingService.CreateDeclarativePolicy(
 				ctx, ResourceServerSharingType, rs.ID, rs.OUID, req)
 			if svcErr == nil {

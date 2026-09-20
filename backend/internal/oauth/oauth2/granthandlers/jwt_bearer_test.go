@@ -151,7 +151,7 @@ func (suite *JWTBearerGrantHandlerTestSuite) TestHandleGrant_Success() {
 			Scopes: []string{"read", "write"},
 		}, nil)
 	suite.mockResourceService.On("ValidatePermissions", mock.Anything, testJWTBearerDefaultRSID,
-		[]string{"read", "write"}).Return([]string{}, nil)
+		[]string{"read", "write"}, mock.Anything).Return([]string{}, nil)
 	suite.mockTokenBuilder.On("BuildAccessToken", mock.Anything,
 		mock.MatchedBy(func(ctx *tokenservice.AccessTokenBuildContext) bool {
 			return ctx.Subject == testUserID &&
@@ -197,7 +197,7 @@ func (suite *JWTBearerGrantHandlerTestSuite) TestHandleGrant_DPoPProof_Propagate
 			Scopes: []string{"read", "write"},
 		}, nil)
 	suite.mockResourceService.On("ValidatePermissions", mock.Anything, testJWTBearerDefaultRSID,
-		[]string{"read", "write"}).Return([]string{}, nil)
+		[]string{"read", "write"}, mock.Anything).Return([]string{}, nil)
 	suite.mockTokenBuilder.On("BuildAccessToken", mock.Anything,
 		mock.MatchedBy(func(ctx *tokenservice.AccessTokenBuildContext) bool {
 			return ctx.DPoPJkt == "thumbprint-jb"
@@ -309,7 +309,7 @@ func (suite *JWTBearerGrantHandlerTestSuite) TestHandleGrant_ScopeIntersection()
 			Scopes: []string{"read", "write"},
 		}, nil)
 	suite.mockResourceService.On("ValidatePermissions", mock.Anything, testJWTBearerDefaultRSID,
-		[]string{"read"}).Return([]string{}, nil)
+		[]string{"read"}, mock.Anything).Return([]string{}, nil)
 	suite.mockTokenBuilder.On("BuildAccessToken", mock.Anything,
 		mock.MatchedBy(func(ctx *tokenservice.AccessTokenBuildContext) bool {
 			return tokenservice.JoinScopes(ctx.Scopes) == testScopeRead
@@ -349,7 +349,7 @@ func (suite *JWTBearerGrantHandlerTestSuite) TestHandleGrant_EmptyAppScopes_Asse
 			Scopes: []string{"read", "write"},
 		}, nil)
 	suite.mockResourceService.On("ValidatePermissions", mock.Anything, testJWTBearerDefaultRSID,
-		[]string{"read", "write"}).Return([]string{}, nil)
+		[]string{"read", "write"}, mock.Anything).Return([]string{}, nil)
 	suite.mockTokenBuilder.On("BuildAccessToken", mock.Anything,
 		mock.MatchedBy(func(ctx *tokenservice.AccessTokenBuildContext) bool {
 			return tokenservice.JoinScopes(ctx.Scopes) == testScopeReadWrite
@@ -391,7 +391,8 @@ func (suite *JWTBearerGrantHandlerTestSuite) TestHandleGrant_AssertionResource_A
 	suite.mockResourceService.On("GetResourceServerByIdentifier", mock.Anything, testRS01URI).
 		Return(&providers.ResourceServer{ID: testRS01URI, Identifier: testRS01URI}, nil)
 	// RS defines only "read"; "write" is dropped by scope narrowing.
-	suite.mockResourceService.On("ValidatePermissions", mock.Anything, testRS01URI, []string{"read", "write"}).
+	suite.mockResourceService.On("ValidatePermissions", mock.Anything, testRS01URI, []string{"read", "write"},
+		mock.Anything).
 		Return([]string{"write"}, nil)
 	suite.mockTokenBuilder.On("BuildAccessToken", mock.Anything,
 		mock.MatchedBy(func(ctx *tokenservice.AccessTokenBuildContext) bool {
@@ -468,7 +469,8 @@ func (suite *JWTBearerGrantHandlerTestSuite) TestHandleGrant_RequestResourceNarr
 		}, nil)
 	suite.mockResourceService.On("GetResourceServerByIdentifier", mock.Anything, testRS01URI).
 		Return(&providers.ResourceServer{ID: testRS01URI, Identifier: testRS01URI}, nil)
-	suite.mockResourceService.On("ValidatePermissions", mock.Anything, testRS01URI, []string{"read", "write"}).
+	suite.mockResourceService.On("ValidatePermissions", mock.Anything, testRS01URI, []string{"read", "write"},
+		mock.Anything).
 		Return([]string{}, nil)
 	suite.mockTokenBuilder.On("BuildAccessToken", mock.Anything,
 		mock.MatchedBy(func(ctx *tokenservice.AccessTokenBuildContext) bool {
@@ -528,7 +530,7 @@ func (suite *JWTBearerGrantHandlerTestSuite) TestHandleGrant_TokenBuildError() {
 			Scopes: []string{"read"},
 		}, nil)
 	suite.mockResourceService.On("ValidatePermissions", mock.Anything, testJWTBearerDefaultRSID,
-		[]string{"read"}).Return([]string{}, nil)
+		[]string{"read"}, mock.Anything).Return([]string{}, nil)
 	suite.mockTokenBuilder.On("BuildAccessToken", mock.Anything, mock.Anything).
 		Return(nil, errors.New("token generation failed"))
 

@@ -15,6 +15,7 @@ import (
 
 	"github.com/thunder-id/thunderid/internal/sharing"
 	"github.com/thunder-id/thunderid/internal/system/log"
+	"github.com/thunder-id/thunderid/internal/system/security"
 	"github.com/thunder-id/thunderid/internal/system/sysauthz"
 	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
@@ -33,6 +34,27 @@ func (s overlayStub) ResolveOverlayRules(
 	out := s.resolved
 	out.OUID = ouID
 	return out, nil
+}
+
+// fixedServerStore resolves one resource server and nothing else, which is all the permission
+// filter reads.
+type fixedServerStore struct {
+	resourceStoreInterface
+	server providers.ResourceServer
+}
+
+func (s fixedServerStore) GetResourceServer(
+	_ context.Context, _ string,
+) (providers.ResourceServer, error) {
+	return s.server, nil
+}
+
+// Every permission these tests name exists on the server, so the only thing that can make one
+// invalid is the organization unit it is being asked about.
+func (s fixedServerStore) ValidatePermissions(
+	_ context.Context, _ string, _ []string,
+) ([]string, error) {
+	return []string{}, nil
 }
 
 // ownerOnlyService is the resource service the overlay handler needs: it resolves the server so the
@@ -112,8 +134,70 @@ func (suite *SharingVisibilityTestSuite) TestOwnerGetsItsOwnTerms() {
 	suite.Equal(SharingOriginOwned, body.Origin)
 }
 
-// requireVisibleToOU backs reading one server on another organization unit's behalf. The same
-// not-found answer covers both ways of not holding it, so a probe cannot tell them apart.
+// resolveViewingOU settles which organization unit a read is answered as, and is the half that
+// bounds the caller. It narrows and never widens, so naming a unit the caller has no standing over
+// is refused rather than answered.
+func (suite *SharingVisibilityTestSuite) TestResolvingTheViewingOU() {
+	tests := []struct {
+		name      string
+		authz     sysauthz.SystemAuthorizationServiceInterface
+		requested string
+		want      string
+		wantCode  string
+	}{
+		{
+			name:      "a unit the caller stands over is answered as itself",
+			authz:     stubAuthz{ids: []string{viewShareeOU}},
+			requested: viewShareeOU,
+			want:      viewShareeOU,
+		},
+		{
+			name:      "a deployment-wide caller may ask about any unit",
+			authz:     stubAuthz{allAllowed: true},
+			requested: viewShareeOU,
+			want:      viewShareeOU,
+		},
+		{
+			name:      "a unit the caller has no standing over is refused",
+			authz:     stubAuthz{ids: []string{viewOwnerOU}},
+			requested: viewShareeOU,
+			wantCode:  ErrorResourceServerNotFound.Code,
+		},
+		{
+			// A token carrying one organization unit is answered as that one, so a tenant never has
+			// to name itself.
+			name:  "an omitted unit falls back to the caller's own",
+			authz: stubAuthz{ids: []string{viewShareeOU}},
+			want:  viewShareeOU,
+		},
+		{
+			// A deployment-wide caller is bounded by no unit, so there is no single one its answer
+			// could be about.
+			name:     "a deployment-wide caller must name one",
+			authz:    stubAuthz{allAllowed: true},
+			wantCode: ErrorViewingOUIDRequired.Code,
+		},
+	}
+
+	for _, tt := range tests {
+		suite.Run(tt.name, func() {
+			svc := &resourceService{logger: *log.GetLogger(), authzService: tt.authz}
+
+			got, svcErr := svc.resolveViewingOU(context.Background(), tt.requested)
+
+			if tt.wantCode != "" {
+				suite.Require().NotNil(svcErr)
+				suite.Equal(tt.wantCode, svcErr.Code)
+				return
+			}
+			suite.Require().Nil(svcErr)
+			suite.Equal(tt.want, got)
+		})
+	}
+}
+
+// requireVisibleToOU is the other half: whether that organization unit holds the server at all. The
+// same not-found answer covers both ways of not holding it, so a probe cannot tell them apart.
 func (suite *SharingVisibilityTestSuite) TestReadingOnBehalfOfAnOU() {
 	tests := []struct {
 		name    string
@@ -138,13 +222,6 @@ func (suite *SharingVisibilityTestSuite) TestReadingOnBehalfOfAnOU() {
 			name:    "nothing reached it",
 			authz:   stubAuthz{allAllowed: true},
 			shared:  stubSharing{visible: false},
-			ouID:    viewShareeOU,
-			wantErr: true,
-		},
-		{
-			name:    "the caller has no standing over the named unit",
-			authz:   stubAuthz{ids: []string{viewOwnerOU}},
-			shared:  stubSharing{visible: true},
 			ouID:    viewShareeOU,
 			wantErr: true,
 		},
@@ -175,4 +252,94 @@ func (suite *SharingVisibilityTestSuite) TestReadingOnBehalfOfAnOU() {
 			suite.Nil(svcErr)
 		})
 	}
+}
+
+// ValidatePermissions answers for the organization unit a token is for, which has no standing of
+// its own to resolve. A permission the server defines but that unit cannot see is invalid for it,
+// exactly as one the server never defined is: the caller has one list to act on, not two.
+func (suite *SharingVisibilityTestSuite) TestPermissionsHiddenFromAnOUAreInvalid() {
+	withheld := []string{"bookings:refund"}
+
+	tests := []struct {
+		name        string
+		shared      sharing.ServiceInterface
+		ouID        string
+		wantInvalid []string
+	}{
+		{
+			name:        "the owner sees everything its server defines",
+			shared:      stubSharing{visible: false},
+			ouID:        viewOwnerOU,
+			wantInvalid: []string{},
+		},
+		{
+			name:        "an organization unit nothing reached sees none of it",
+			shared:      stubSharing{visible: false},
+			ouID:        viewShareeOU,
+			wantInvalid: []string{"bookings", "bookings:view", "bookings:refund"},
+		},
+		{
+			name:        "a sharee sees what its policy left",
+			shared:      stubSharing{visible: true, rule: sharing.OverlayRule{ExcludedValues: &withheld}},
+			ouID:        viewShareeOU,
+			wantInvalid: []string{"bookings:refund"},
+		},
+		{
+			name:        "without the framework a non-owner sees nothing",
+			shared:      nil,
+			ouID:        viewShareeOU,
+			wantInvalid: []string{"bookings", "bookings:view", "bookings:refund"},
+		},
+	}
+
+	for _, tt := range tests {
+		suite.Run(tt.name, func() {
+			svc := &resourceService{
+				logger:         *log.GetLogger(),
+				sharingService: tt.shared,
+				resourceStore:  fixedServerStore{server: suite.server},
+			}
+
+			invalid, svcErr := svc.ValidatePermissions(context.Background(), viewServerID,
+				[]string{"bookings", "bookings:view", "bookings:refund"}, tt.ouID)
+
+			suite.Require().Nil(svcErr)
+			suite.Equal(tt.wantInvalid, invalid)
+		})
+	}
+}
+
+// Naming no organization unit asks only whether the server defines these paths, which is what every
+// caller but the token path wants and what the bare token endpoint keeps doing.
+func (suite *SharingVisibilityTestSuite) TestNoOUAsksOnlyWhetherTheServerDefinesThem() {
+	svc := &resourceService{
+		logger:         *log.GetLogger(),
+		sharingService: stubSharing{visible: false},
+		resourceStore:  fixedServerStore{server: suite.server},
+	}
+
+	invalid, svcErr := svc.ValidatePermissions(context.Background(), viewServerID,
+		[]string{"bookings", "bookings:view"}, "")
+
+	suite.Require().Nil(svcErr)
+	suite.Empty(invalid, "sharing must not be consulted when no organization unit is named")
+}
+
+// The deployment root permission belongs to no organization unit and no resource server defines it,
+// so the tree filter has no opinion on it and must not drop it.
+func (suite *SharingVisibilityTestSuite) TestRootPermissionSurvivesTheFilter() {
+	withheld := []string{"bookings"}
+	svc := &resourceService{
+		logger:         *log.GetLogger(),
+		sharingService: stubSharing{visible: true, rule: sharing.OverlayRule{ExcludedValues: &withheld}},
+		resourceStore:  fixedServerStore{server: suite.server},
+	}
+	security.InitSystemPermissions("system")
+	root := security.GetSystemRootPermission()
+
+	invalid, svcErr := svc.ValidatePermissions(context.Background(), viewServerID,
+		[]string{root, "bookings:view"}, viewShareeOU)
+
+	suite.Require().Nil(svcErr)
+	suite.Equal([]string{"bookings:view"}, invalid, "only the withheld branch is invalid")
 }

@@ -1020,6 +1020,8 @@ var defaultMessages = map[string]string{
 	"error.resourceservice.sharing_policy_not_found_description": "The resource server has no sharing policy with the specified id",
 	"error.resourceservice.sharing_policy_version_mismatch": "Sharing policy version mismatch",
 	"error.resourceservice.sharing_policy_version_mismatch_description": "The sharing policy changed since it was read; re-read it and retry",
+	"error.resourceservice.viewing_ou_required": "An organization unit must be named",
+	"error.resourceservice.viewing_ou_required_description": "The caller is not bounded to a single organization unit, so the ouId query parameter is required",
 	"error.roleservice.cannot_create_role_in_declarative_only_mode": "Cannot create role in declarative-only mode",
 	"error.roleservice.cannot_create_role_in_declarative_only_mode_description": "Role creation is not allowed when running in declarative-only mode. Roles must be defined in declarative configuration files",
 	"error.roleservice.cannot_modify_declarative_role": "Cannot modify declarative role",

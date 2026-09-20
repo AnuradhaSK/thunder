@@ -100,8 +100,10 @@ type ResourceServiceInterface interface {
 	) (*providers.Action, *tidcommon.ServiceError)
 	DeleteAction(ctx context.Context, resourceServerID string, resourceID *string,
 		id string) *tidcommon.ServiceError
+	// ValidatePermissions returns the permissions of the resource server that are not valid. When
+	// ouID is set, one the organization unit cannot see is invalid for it just as a missing one is.
 	ValidatePermissions(
-		ctx context.Context, resourceServerID string, permissions []string,
+		ctx context.Context, resourceServerID string, permissions []string, ouID string,
 	) ([]string, *tidcommon.ServiceError)
 
 	// ResolveResourceServerOUHandle resolves ou_handle to an OU ID on the given resource server
@@ -1353,10 +1355,15 @@ func (rs *resourceService) DeleteAction(
 
 // ValidatePermissions checks if permissions exist for a given resource server.
 // Returns array of invalid permissions (empty if all valid).
+//
+// ouID answers the question on one organization unit's behalf: a permission the resource server
+// defines but that organization unit cannot see is invalid for it, exactly as one that does not
+// exist is. Pass "" to ask only whether the resource server defines them.
 func (rs *resourceService) ValidatePermissions(
 	ctx context.Context,
 	resourceServerID string,
 	permissions []string,
+	ouID string,
 ) ([]string, *tidcommon.ServiceError) {
 	rs.logger.Debug(ctx, "Validating permissions",
 		log.String("resourceServerId", resourceServerID),
@@ -1367,7 +1374,7 @@ func (rs *resourceService) ValidatePermissions(
 	}
 
 	// Validate resource server exists
-	_, err := rs.resourceStore.GetResourceServer(ctx, resourceServerID)
+	resourceServer, err := rs.resourceStore.GetResourceServer(ctx, resourceServerID)
 	if err != nil {
 		if !errors.Is(err, errResourceServerNotFound) {
 			rs.logger.Error(ctx, "Failed to validate resource server existence",
@@ -1390,7 +1397,7 @@ func (rs *resourceService) ValidatePermissions(
 		return nil, &tidcommon.InternalServerError
 	}
 
-	return invalidPermissions, nil
+	return rs.appendPermissionsHiddenFromOU(ctx, resourceServer, permissions, invalidPermissions, ouID)
 }
 
 // ResolveResourceServerOUHandle resolves ou_handle to an OU ID on the given resource server

@@ -5,7 +5,6 @@ package resource
 
 import (
 	"github.com/thunder-id/thunderid/internal/sharing"
-	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
 // SharingPolicyRequest is the body of a sharing-policy create or update.
@@ -150,44 +149,5 @@ func toSharingOverlayResponse(r sharing.ResolvedOverlay) SharingOverlayResponse 
 		Origin:    origin,
 		PolicyIDs: policyIDs,
 		Rules:     rules,
-	}
-}
-
-// toSharingPolicyRequest converts a declared policy into the framework's request shape.
-//
-// The declarative and API shapes are separate types rather than one shared struct: the resource
-// server model is a provider contract, and coupling it to the sharing package's internals would
-// make every change to one a change to the other.
-func toSharingPolicyRequest(p providers.SharingPolicy) sharing.PolicyRequest {
-	entries := make([]sharing.TargetEntry, 0, len(p.TargetOuScope.OUIDs))
-	for _, e := range p.TargetOuScope.OUIDs {
-		entries = append(entries, sharing.TargetEntry{OUID: e.OUID, AllChildren: e.AllChildren})
-	}
-
-	rules := make(map[string]sharing.OverlayRule, len(p.OverlayRules))
-	for key, r := range p.OverlayRules {
-		rules[key] = sharing.OverlayRule{
-			Editable:       r.Editable,
-			Value:          r.Value,
-			AllowedValues:  r.AllowedValues,
-			ExcludedValues: r.ExcludedValues,
-		}
-	}
-	if len(rules) == 0 {
-		rules = nil
-	}
-
-	return sharing.PolicyRequest{
-		InitiatingOUID: p.InitiatingOuID,
-		TargetOUScope: sharing.TargetOUScope{
-			AllOUs:            p.TargetOuScope.AllOUs,
-			AllRoots:          p.TargetOuScope.AllRoots,
-			RootOUIDs:         p.TargetOuScope.RootOUIDs,
-			ExcludedRootOUIDs: p.TargetOuScope.ExcludedRootOUIDs,
-			AllChildren:       p.TargetOuScope.AllChildren,
-			OUIDs:             entries,
-			ExcludedOUIDs:     p.TargetOuScope.ExcludedOUIDs,
-		},
-		OverlayRules: rules,
 	}
 }

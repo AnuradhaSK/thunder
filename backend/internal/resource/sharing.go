@@ -99,8 +99,11 @@ func (d *resourceServerSharing) ValidateMembers(
 		return nil
 	}
 
+	// No organization unit: the question here is only whether the server defines these paths. Naming
+	// one would ask the framework what that unit can see, from inside the framework's own validation
+	// of the policy that decides it.
 	invalid, svcErr := d.service.ValidatePermissions(
-		security.WithRuntimeContext(ctx), resourceID, members)
+		security.WithRuntimeContext(ctx), resourceID, members, "")
 	if svcErr != nil {
 		return fmt.Errorf("failed to validate permissions: %s", svcErr.Code)
 	}
@@ -135,7 +138,7 @@ func (rs *resourceService) ApplySharingPolicies(
 
 	for _, declared := range policies {
 		_, svcErr := rs.sharingService.CreatePolicy(
-			ctx, ResourceServerSharingType, serverID, server.OUID, toSharingPolicyRequest(declared))
+			ctx, ResourceServerSharingType, serverID, server.OUID, sharing.RequestFromDeclaration(declared))
 		if svcErr == nil {
 			continue
 		}
@@ -148,4 +151,74 @@ func (rs *resourceService) ApplySharingPolicies(
 		return mapSharingError(svcErr)
 	}
 	return nil
+}
+
+// appendPermissionsHiddenFromOU is the organization-unit half of ValidatePermissions: it adds to
+// invalid every permission the resource server defines that ouID cannot see.
+//
+// It answers on that organization unit's behalf rather than the caller's, which is what the token
+// path needs: a client_credentials request carries an application as its subject, not a caller with
+// standing over organization units.
+func (rs *resourceService) appendPermissionsHiddenFromOU(
+	ctx context.Context, server providers.ResourceServer, permissions, invalid []string, ouID string,
+) ([]string, *tidcommon.ServiceError) {
+	// The organization unit owning the resource server sees everything beneath it.
+	if ouID == "" || server.OUID == ouID {
+		return invalid, nil
+	}
+
+	// Already-invalid permissions are skipped rather than reported twice.
+	seen := make(map[string]struct{}, len(invalid))
+	for _, p := range invalid {
+		seen[p] = struct{}{}
+	}
+
+	// Nothing reached this organization unit, so every permission the server defines is hidden from
+	// it. Resolving the tree filter first would reach the same answer one lookup later.
+	if rs.sharingService == nil {
+		return appendUnseen(invalid, seen, permissions, nil), nil
+	}
+	visible, svcErr := rs.sharingService.IsVisible(ctx, ResourceServerSharingType, server.ID, ouID)
+	if svcErr != nil {
+		return nil, mapSharingError(svcErr)
+	}
+	if !visible {
+		return appendUnseen(invalid, seen, permissions, nil), nil
+	}
+
+	filter, svcErr := rs.sharedTreeFilter(ctx, &server, ouID)
+	if svcErr != nil {
+		return nil, svcErr
+	}
+	return appendUnseen(invalid, seen, permissions, filter.permits), nil
+}
+
+// appendUnseen adds every permission that permits rejects, skipping those already reported. A nil
+// permits rejects everything.
+func appendUnseen(
+	invalid []string, seen map[string]struct{}, permissions []string, permits func(string) bool,
+) []string {
+	// The deployment root permission is a bypass rather than a grant: no resource server defines it
+	// and it belongs to no organization unit, so the tree filter has no opinion on it. Read through
+	// the nil-safe accessor, because the direct one panics before system permissions are initialized
+	// and a panic on the token path is a worse failure than not recognizing the bypass.
+	var rootPermission string
+	if sysPerms := security.GetSystemPermissions(); sysPerms != nil {
+		rootPermission = sysPerms.Root
+	}
+
+	for _, permission := range permissions {
+		if _, already := seen[permission]; already {
+			continue
+		}
+		if rootPermission != "" && permission == rootPermission {
+			continue
+		}
+		if permits != nil && permits(permission) {
+			continue
+		}
+		invalid = append(invalid, permission)
+		seen[permission] = struct{}{}
+	}
+	return invalid
 }

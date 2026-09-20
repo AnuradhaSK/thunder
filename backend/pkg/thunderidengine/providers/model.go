@@ -1105,6 +1105,7 @@ type Application struct {
 	InboundAuthProfile `yaml:",inline"`
 	InboundAuthConfig  []InboundAuthConfigWithSecret `yaml:"inboundAuthConfig,omitempty" json:"inboundAuthConfig,omitempty" jsonschema:"Inbound authentication configuration (OAuth2/OIDC settings)."`
 	Metadata           map[string]interface{}        `yaml:"metadata,omitempty" json:"metadata,omitempty" jsonschema:"Generic metadata key-value pairs."`
+	SharingPolicies    []SharingPolicy               `yaml:"sharingPolicies,omitempty" json:"sharingPolicies,omitempty" jsonschema:"Organization units this application may issue tokens for."`
 
 	// EntityCategory is the category of the entity backing this runtime application view (app or
 	// agent). Runtime-only: never serialized on the application API or in declarative resources.

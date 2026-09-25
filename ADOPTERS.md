@@ -4,6 +4,7 @@ If your organization is using ThunderID, or your open source project integrates 
 
 | Organization Name | Link | Date of First Use | Description |
 |---|---|---|---|
+| [OpenChoreo](https://openchoreo.dev) | [Identity configuration](https://openchoreo.dev/docs/platform-engineer-guide/identity-configuration/) | 2025-10 | [CNCF Sandbox](https://www.cncf.io/projects/openchoreo/) developer platform for Kubernetes. OpenChoreo ships ThunderID as its default identity provider, providing OAuth2 and OIDC authentication for its Backstage-powered developer portal, the `occ` CLI, its AI agents, and its MCP servers, along with the platform's users, groups, and client applications. |
 
 ---
 ## Adding Your Organization

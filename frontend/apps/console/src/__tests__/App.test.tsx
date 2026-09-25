@@ -103,6 +103,27 @@ vi.mock('@thunderid/configure-import-export', async (importOriginal) => ({
   ImportExportPage: () => <div data-testid="import-export-page">Import Export Page</div>,
 }));
 
+vi.mock('@thunderid/configure-organization-units', async () => {
+  const {Outlet} = await import('react-router');
+  return {
+    OrganizationUnitProvider: () => <Outlet />,
+    CreateOrganizationUnitPage: () => <div data-testid="create-organization-unit-page">Create OU Page</div>,
+    OrganizationUnitEditPage: ({
+      renderDefaultFlowsSettings,
+    }: {
+      renderDefaultFlowsSettings: (props: Record<string, never>) => React.ReactNode;
+    }) => <div data-testid="organization-unit-edit-page">{renderDefaultFlowsSettings({})}</div>,
+    OrganizationUnitsListPage: () => <div data-testid="organization-units-list-page">Organization Units List</div>,
+  };
+});
+
+vi.mock('@thunderid/configure-flows', () => ({
+  OrganizationUnitDefaultFlowsSettings: () => <div data-testid="ou-default-flows-settings" />,
+  FlowCreatePage: () => <div data-testid="flow-create-page">Flow Create Page</div>,
+  FlowsListPage: () => <div data-testid="flows-list-page">Flows List Page</div>,
+  FlowBuilderPage: () => <div data-testid="flow-builder-page">Flow Builder Page</div>,
+}));
+
 vi.mock('@thunderid/configure-resource-servers', () => ({
   ResourceServersListPage: () => <div data-testid="resource-servers-list-page">Resource Servers List Page</div>,
   ResourceServerEditPage: () => <div data-testid="resource-server-edit-page">Resource Server Edit Page</div>,
@@ -266,6 +287,39 @@ describe('App', () => {
     render(<App />);
     await waitFor(() => {
       expect(screen.getByTestId('trusted-issuer-detail-page')).toBeInTheDocument();
+    });
+  });
+
+  it('loads OrganizationUnitEditPage and its default flows settings at /organization-units/:id', async () => {
+    window.history.pushState({}, '', '/organization-units/ou-1');
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getByTestId('organization-unit-edit-page')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('ou-default-flows-settings')).toBeInTheDocument();
+  });
+
+  it('loads FlowsListPage lazily at /flows', async () => {
+    window.history.pushState({}, '', '/flows');
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getByTestId('flows-list-page')).toBeInTheDocument();
+    });
+  });
+
+  it('loads FlowCreatePage lazily at /flows/create', async () => {
+    window.history.pushState({}, '', '/flows/create');
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getByTestId('flow-create-page')).toBeInTheDocument();
+    });
+  });
+
+  it('loads FlowBuilderPage lazily at /flows/:flowId', async () => {
+    window.history.pushState({}, '', '/flows/flow-1');
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getByTestId('flow-builder-page')).toBeInTheDocument();
     });
   });
 

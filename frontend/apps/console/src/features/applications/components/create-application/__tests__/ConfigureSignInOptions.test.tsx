@@ -46,7 +46,10 @@ vi.mock('@thunderid/configure-connections', async (importOriginal) => ({
   useIdentityProviders: vi.fn(),
   getConnectionIcon: vi.fn(),
 }));
-vi.mock('@/features/flows/api/useGetFlows');
+vi.mock('@thunderid/configure-flows', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@thunderid/configure-flows')>()),
+  useGetFlows: vi.fn(),
+}));
 
 // Mock useGetApplications
 vi.mock('@thunderid/configure-applications', async (importOriginal) => ({
@@ -73,7 +76,7 @@ vi.mock('@thunderid/contexts', async (importOriginal) => {
   };
 });
 
-const {default: useGetFlows} = await import('@/features/flows/api/useGetFlows');
+const {useGetFlows} = await import('@thunderid/configure-flows');
 const {useGetApplications} = await import('@thunderid/configure-applications');
 
 describe('ConfigureSignInOptions', () => {

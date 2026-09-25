@@ -20,6 +20,7 @@ import {
 } from '@thunderid/components';
 import type {Application, OAuth2Config} from '@thunderid/configure-applications';
 import {GatePreview} from '@thunderid/configure-design';
+import {useGetFlowById} from '@thunderid/configure-flows';
 import {useGetOrganizationUnit} from '@thunderid/configure-organization-units';
 import {useConfig} from '@thunderid/contexts';
 import {DefaultTheme, type Theme, useGetTheme} from '@thunderid/design';
@@ -28,7 +29,6 @@ import {Box, Button, Chip, Link, Paper, Stack, Typography, useColorScheme} from 
 import {ArrowRight, ArrowUpRight, Check, Copy, Sparkles} from '@wso2/oxygen-ui-icons-react';
 import {useState, type JSX, type ReactNode} from 'react';
 import {Trans, useTranslation} from 'react-i18next';
-import useGetFlowById from '../../../../flows/api/useGetFlowById';
 import {getIntegrationGuideForTemplate} from '../../../utils/getIntegrationGuidesForTemplate';
 import getPlaygroundsForTemplate from '../../../utils/getPlaygroundsForTemplate';
 import getQuickstartsForTemplate from '../../../utils/getQuickstartsForTemplate';

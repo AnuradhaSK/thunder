@@ -1,12 +1,12 @@
 // Copyright 2025 The ThunderID Authors
 // SPDX-License-Identifier: Apache-2.0
 
+import {type BasicFlowDefinition} from '@thunderid/configure-flows';
 import {alpha, Autocomplete, Box, ButtonBase, Collapse, Divider, TextField, Typography} from '@wso2/oxygen-ui';
 import {ChevronDown, ChevronUp, Workflow} from '@wso2/oxygen-ui-icons-react';
 import type {JSX} from 'react';
 import {useMemo, useState} from 'react';
 import {useTranslation} from 'react-i18next';
-import {type BasicFlowDefinition} from '../../../../flows/models/responses';
 
 /**
  * Props for the FlowsListView component

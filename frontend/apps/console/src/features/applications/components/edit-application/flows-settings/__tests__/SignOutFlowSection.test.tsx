@@ -4,18 +4,22 @@
 import {render, screen, waitFor} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type {Application} from '@thunderid/configure-applications';
+import {useGetFlows} from '@thunderid/configure-flows';
 import {MemoryRouter} from 'react-router';
 import {describe, it, expect, vi, beforeEach} from 'vitest';
-import useGetFlows from '../../../../../flows/api/useGetFlows';
 import SignOutFlowSection from '../SignOutFlowSection';
 
 // Mock the useGetFlows hook
-vi.mock('../../../../../flows/api/useGetFlows');
+vi.mock('@thunderid/configure-flows', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@thunderid/configure-flows')>()),
+  useGetFlows: vi.fn(),
+}));
 
 type MockedUseGetFlows = ReturnType<typeof useGetFlows>;
 
 // Mock the Components
-vi.mock('@thunderid/components', () => ({
+vi.mock('@thunderid/components', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@thunderid/components')>()),
   SettingsCard: ({title, description, children}: {title: string; description: string; children: React.ReactNode}) => (
     <div data-testid="settings-card">
       <div data-testid="card-title">{title}</div>

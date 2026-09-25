@@ -3,12 +3,12 @@
 
 import {useGetApplications} from '@thunderid/configure-applications';
 import {AuthenticatorTypes} from '@thunderid/configure-connections';
+import {type BasicFlowDefinition} from '@thunderid/configure-flows';
 import type {AllowedOriginDraftRow} from '@thunderid/configure-settings';
 import type {LayoutConfig, Theme} from '@thunderid/design';
 import type {PropsWithChildren} from 'react';
 import {useState, useMemo, useCallback} from 'react';
 import ApplicationCreateContext, {type ApplicationCreateContextType} from './ApplicationCreateContext';
-import type {BasicFlowDefinition} from '../../../flows/models/responses';
 import {
   ApplicationCreateFlowSignInApproach,
   ApplicationCreateFlowStep,

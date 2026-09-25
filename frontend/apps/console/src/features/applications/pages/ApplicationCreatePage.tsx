@@ -7,6 +7,16 @@ import type {Application, ApplicationType, OAuth2Config} from '@thunderid/config
 import {AuthenticatorTypes, IdentityProviderTypes, useIdentityProviders} from '@thunderid/configure-connections';
 import {GatePreview, VIEWPORT_WIDTHS, VIEWPORT_HEIGHTS} from '@thunderid/configure-design';
 import {
+  type BasicFlowDefinition,
+  generateFlowGraph,
+  getFlowPromptComponentsSequence,
+  resolveApplicationMeta,
+  resolveTemplatesDeep,
+  useCreateFlow,
+  useDeleteFlow,
+  useGetFlowById,
+} from '@thunderid/configure-flows';
+import {
   OrganizationUnitPickerScreen,
   useGetOrganizationUnit,
   useHasMultipleOUs,
@@ -26,13 +36,6 @@ import {useState, useCallback, useEffect, useMemo, useRef} from 'react';
 import {useTranslation} from 'react-i18next';
 import {useLocation, useNavigate} from 'react-router';
 import RouteConfig from '../../../configs/RouteConfig';
-import useCreateFlow from '../../flows/api/useCreateFlow';
-import useDeleteFlow from '../../flows/api/useDeleteFlow';
-import useGetFlowById from '../../flows/api/useGetFlowById';
-import type {BasicFlowDefinition} from '../../flows/models/responses';
-import {resolveApplicationMeta, resolveTemplatesDeep} from '../../flows/utils/gatePreviewTransforms';
-import generateFlowGraph from '../../flows/utils/generateFlowGraph';
-import getFlowPromptComponentsSequence from '../../flows/utils/getFlowPromptComponentsSequence';
 import useCreateApplication from '../api/useCreateApplication';
 import ConfigureSecuritySettings from '../components/create-application/configure-security-settings/ConfigureSecuritySettings';
 import ConfigureApplicationDetails from '../components/create-application/ConfigureApplicationDetails';

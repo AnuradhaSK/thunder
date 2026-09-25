@@ -43,8 +43,9 @@ vi.mock('@thunderid/design', () => ({
   DefaultTheme: {colorSchemes: {light: {palette: {}}, dark: {palette: {}}}},
 }));
 
-vi.mock('../../../../../flows/api/useGetFlowById', () => ({
-  default: () => ({data: undefined, isLoading: false}),
+vi.mock('@thunderid/configure-flows', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@thunderid/configure-flows')>()),
+  useGetFlowById: () => ({data: undefined, isLoading: false}),
 }));
 
 vi.mock('@thunderid/configure-design', async (importOriginal) => ({

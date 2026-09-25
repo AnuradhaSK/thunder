@@ -8,6 +8,12 @@ import {
   useIdentityProviders,
   type IdentityProvider,
 } from '@thunderid/configure-connections';
+import {
+  type BasicFlowDefinition,
+  findMatchingFlowForIntegrations,
+  FlowType,
+  useGetFlows,
+} from '@thunderid/configure-flows';
 import {Typography, Stack, CircularProgress, Alert, Box, Divider, useTheme} from '@wso2/oxygen-ui';
 import {Lightbulb} from '@wso2/oxygen-ui-icons-react';
 import type {JSX} from 'react';
@@ -17,10 +23,6 @@ import FlowsListView from './FlowsListView';
 import PasswordlessLoginGroup from './PasswordlessLoginGroup';
 import PromptForCredentialsGroup from './PromptForCredentialsGroup';
 import SocialLoginGroup from './SocialLoginGroup';
-import useGetFlows from '../../../../flows/api/useGetFlows';
-import {FlowType} from '../../../../flows/models/flows';
-import {type BasicFlowDefinition} from '../../../../flows/models/responses';
-import findMatchingFlowForIntegrations from '../../../../flows/utils/findMatchingFlowForIntegrations';
 import useApplicationCreateContext from '../../../hooks/useApplicationCreateContext';
 import ConfigureMfaSettings from '../configure-security-settings/ConfigureMfaSettings';
 

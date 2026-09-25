@@ -1,11 +1,11 @@
 // Copyright 2025 The ThunderID Authors
 // SPDX-License-Identifier: Apache-2.0
 
+import {type BasicFlowDefinition} from '@thunderid/configure-flows';
 import type {AllowedOriginDraftRow} from '@thunderid/configure-settings';
 import type {LayoutConfig, Theme} from '@thunderid/design';
 import type {Context} from 'react';
 import {createContext} from 'react';
-import type {BasicFlowDefinition} from '../../../flows/models/responses';
 import type {
   ApplicationCreateFlowSignInApproach,
   ApplicationCreateFlowStep,

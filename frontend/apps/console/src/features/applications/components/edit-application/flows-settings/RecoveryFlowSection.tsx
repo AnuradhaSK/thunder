@@ -3,12 +3,11 @@
 
 import {SettingsCard} from '@thunderid/components';
 import type {Application} from '@thunderid/configure-applications';
+import {FlowType, useGetFlows} from '@thunderid/configure-flows';
 import {Box, Typography, TextField, Autocomplete, CircularProgress, Alert} from '@wso2/oxygen-ui';
 import {useTranslation, Trans} from 'react-i18next';
 import {Link} from 'react-router';
 import RouteConfig from '../../../../../configs/RouteConfig';
-import useGetFlows from '../../../../flows/api/useGetFlows';
-import {FlowType} from '../../../../flows/models/flows';
 
 /**
  * Props for the {@link RecoveryFlowSection} component.

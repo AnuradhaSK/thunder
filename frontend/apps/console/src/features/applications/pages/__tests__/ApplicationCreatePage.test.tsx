@@ -125,26 +125,18 @@ const {mockCreateFlow, mockGenerateFlowGraph, mockDeleteFlow} = vi.hoisted(() =>
   mockDeleteFlow: vi.fn(),
 }));
 
-vi.mock('../../../flows/api/useCreateFlow', () => ({
-  default: () => ({
+vi.mock('@thunderid/configure-flows', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@thunderid/configure-flows')>()),
+  useCreateFlow: () => ({
     mutate: mockCreateFlow,
     isPending: false,
   }),
-}));
-
-vi.mock('../../../flows/api/useDeleteFlow', () => ({
-  default: () => ({
+  useDeleteFlow: () => ({
     mutate: mockDeleteFlow,
     isPending: false,
   }),
-}));
-
-vi.mock('../../../flows/utils/generateFlowGraph', () => ({
-  default: mockGenerateFlowGraph,
-}));
-
-vi.mock('../../../flows/api/useGetFlows', () => ({
-  default: () => ({
+  generateFlowGraph: mockGenerateFlowGraph,
+  useGetFlows: () => ({
     data: {
       flows: [
         {id: 'flow1', name: 'Basic Auth Flow', handle: 'basic-auth'},
@@ -154,10 +146,7 @@ vi.mock('../../../flows/api/useGetFlows', () => ({
     isLoading: false,
     error: null,
   }),
-}));
-
-vi.mock('../../../flows/api/useGetFlowById', () => ({
-  default: () => ({data: undefined, isLoading: false, error: null}),
+  useGetFlowById: () => ({data: undefined, isLoading: false, error: null}),
 }));
 
 // Mock configuration type utility

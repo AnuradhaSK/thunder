@@ -14,7 +14,6 @@ import {lazy, Suspense, type JSX} from 'react';
 import {BrowserRouter, Navigate, Outlet, Route, Routes} from 'react-router';
 import RouteConfig, {ROUTE_SEGMENTS} from './configs/RouteConfig';
 import ApplicationCreateProvider from './features/applications/contexts/ApplicationCreate/ApplicationCreateProvider';
-import OrganizationUnitDefaultFlowsSettings from './features/organization-units/OrganizationUnitDefaultFlowsSettings';
 import WelcomeRedirect from './features/welcome/components/WelcomeRedirect';
 import GetStartedPage from './features/welcome/pages/GetStartedPage';
 import TryoutSecuringAIAgentsPage from './features/welcome/pages/TryoutSecuringAIAgentsPage';
@@ -34,6 +33,9 @@ const OrganizationUnitEditPage = lazy(() =>
 );
 const OrganizationUnitsListPage = lazy(() =>
   import('@thunderid/configure-organization-units').then((m) => ({default: m.OrganizationUnitsListPage})),
+);
+const OrganizationUnitDefaultFlowsSettings = lazy(() =>
+  import('@thunderid/configure-flows').then((m) => ({default: m.OrganizationUnitDefaultFlowsSettings})),
 );
 const TranslationCreatePage = lazy(() =>
   import('@thunderid/configure-translations').then((m) => ({default: m.TranslationCreatePage})),
@@ -79,8 +81,8 @@ const LayoutBuilderPage = lazy(() =>
 );
 const ThemeBuilderPage = lazy(() => import('@thunderid/configure-design').then((m) => ({default: m.ThemeBuilderPage})));
 const ThemeCreatePage = lazy(() => import('@thunderid/configure-design').then((m) => ({default: m.ThemeCreatePage})));
-const FlowCreatePage = lazy(() => import('./features/flows/pages/FlowCreatePage'));
-const FlowsListPage = lazy(() => import('./features/flows/pages/FlowsListPage'));
+const FlowCreatePage = lazy(() => import('@thunderid/configure-flows').then((m) => ({default: m.FlowCreatePage})));
+const FlowsListPage = lazy(() => import('@thunderid/configure-flows').then((m) => ({default: m.FlowsListPage})));
 const CreateGroupPage = lazy(() => import('@thunderid/configure-groups').then((m) => ({default: m.CreateGroupPage})));
 const GroupEditPage = lazy(() => import('@thunderid/configure-groups').then((m) => ({default: m.GroupEditPage})));
 const GroupsListPage = lazy(() => import('@thunderid/configure-groups').then((m) => ({default: m.GroupsListPage})));
@@ -116,7 +118,7 @@ const ConnectionConfigureWizardPage = lazy(() =>
 const ConnectionCreateWizardPage = lazy(() =>
   import('@thunderid/configure-connections').then((m) => ({default: m.ConnectionCreateWizardPage})),
 );
-const FlowBuilderPage = lazy(() => import('./features/flows/pages/FlowBuilderPage'));
+const FlowBuilderPage = lazy(() => import('@thunderid/configure-flows').then((m) => ({default: m.FlowBuilderPage})));
 const CreateRolePage = lazy(() => import('@thunderid/configure-roles').then((m) => ({default: m.CreateRolePage})));
 const RoleEditPage = lazy(() => import('@thunderid/configure-roles').then((m) => ({default: m.RoleEditPage})));
 const RolesListPage = lazy(() => import('@thunderid/configure-roles').then((m) => ({default: m.RolesListPage})));

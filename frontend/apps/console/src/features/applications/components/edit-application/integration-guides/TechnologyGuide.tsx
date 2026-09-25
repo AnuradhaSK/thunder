@@ -1,6 +1,7 @@
 // Copyright 2025 The ThunderID Authors
 // SPDX-License-Identifier: Apache-2.0
 
+import {GradientBorderButton} from '@thunderid/components';
 import {useConfig} from '@thunderid/contexts';
 import {useLogger} from '@thunderid/logger';
 import {Box, Typography, Stack, Card, CardContent, Tooltip} from '@wso2/oxygen-ui';
@@ -11,7 +12,6 @@ import {useTranslation} from 'react-i18next';
 import type {IntegrationGuides} from '../../../models/application-templates';
 import {getIntegrationGuideVariantKey} from '../../../utils/getIntegrationGuidesForTemplate';
 import resolveTemplateLink from '../../../utils/resolveTemplateLink';
-import GradientBorderButton from '../../GradientBorderButton';
 
 /**
  * Props for the {@link TechnologyGuide} component.

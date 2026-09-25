@@ -4,10 +4,9 @@
 import {render, screen} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {AuthenticatorTypes, IdentityProviderTypes, type IdentityProvider} from '@thunderid/configure-connections';
+import {type BasicFlowDefinition, findMatchingFlowForIntegrations} from '@thunderid/configure-flows';
 import {describe, it, expect, beforeEach, vi} from 'vitest';
 import ConfigureSignInOptions, {type ConfigureSignInOptionsProps} from '../ConfigureSignInOptions';
-import type {BasicFlowDefinition} from '@/features/flows/models/responses';
-import findMatchingFlowForIntegrations from '@/features/flows/utils/findMatchingFlowForIntegrations';
 
 // Real @thunderid/configure-connections (imported for AuthenticatorTypes/IdentityProviderTypes below)
 // transitively resolves @thunderid/configure-organization-units' dist build, which fails to resolve
@@ -59,8 +58,10 @@ interface MockFlowsResponse {
   error: Error | null;
 }
 const mockUseGetFlows = vi.fn<() => MockFlowsResponse>();
-vi.mock('@/features/flows/api/useGetFlows', () => ({
-  default: () => mockUseGetFlows(),
+vi.mock('@thunderid/configure-flows', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@thunderid/configure-flows')>()),
+  useGetFlows: () => mockUseGetFlows(),
+  findMatchingFlowForIntegrations: vi.fn(() => null),
 }));
 
 // Mock useApplicationCreateContext - need to mock the correct path used by the component
@@ -89,11 +90,6 @@ vi.mock(
     default: () => <div data-testid="mfa-settings-view" />,
   }),
 );
-
-// Mock findMatchingFlowForIntegrations
-vi.mock('@/features/flows/utils/findMatchingFlowForIntegrations', () => ({
-  default: vi.fn(() => null),
-}));
 
 // Mock child components
 vi.mock('../FlowsListView', () => ({

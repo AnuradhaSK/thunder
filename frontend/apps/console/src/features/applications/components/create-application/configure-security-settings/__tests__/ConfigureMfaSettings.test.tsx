@@ -4,9 +4,9 @@
 import {fireEvent, render, screen, within} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type {ConnectionInstance} from '@thunderid/configure-connections';
+import type {BasicFlowDefinition} from '@thunderid/configure-flows';
 import {describe, it, expect, vi, beforeEach} from 'vitest';
 import ConfigureMfaSettings from '../ConfigureMfaSettings';
-import type {BasicFlowDefinition} from '@/features/flows/models/responses';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({

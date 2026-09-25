@@ -3,9 +3,9 @@
 
 import {fireEvent, render, screen} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type {BasicFlowDefinition} from '@thunderid/configure-flows';
 import {describe, it, expect, beforeEach, vi} from 'vitest';
 import FlowsListView, {type FlowsListViewProps} from '../FlowsListView';
-import {type BasicFlowDefinition} from '@/features/flows/models/responses';
 
 // Mock react-i18next
 vi.mock('react-i18next', () => ({

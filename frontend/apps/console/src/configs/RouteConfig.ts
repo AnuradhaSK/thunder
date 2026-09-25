@@ -4,6 +4,7 @@
 import type {AgentTypeRoutePaths} from '@thunderid/configure-agent-types';
 import type {ConnectionRoutePaths} from '@thunderid/configure-connections';
 import type {DesignRoutePaths} from '@thunderid/configure-design';
+import type {FlowRoutePaths} from '@thunderid/configure-flows';
 import type {GroupRoutePaths} from '@thunderid/configure-groups';
 import type {ImportExportRoutePaths} from '@thunderid/configure-import-export';
 import type {OrganizationUnitRoutePaths} from '@thunderid/configure-organization-units';
@@ -37,11 +38,6 @@ export interface ConsoleRoutePaths {
     list: () => string;
     detail: (id: string) => string;
     create: () => string;
-  };
-  flows: {
-    list: () => string;
-    create: () => string;
-    detail: (flowId: string) => string;
   };
   welcome: {
     root: () => string;
@@ -84,6 +80,7 @@ export type RouteConfig = OrganizationUnitRoutePaths &
   VerifiableCredentialRoutePaths &
   ImportExportRoutePaths &
   DesignRoutePaths &
+  FlowRoutePaths &
   GroupRoutePaths &
   RoleRoutePaths &
   ConsoleRoutePaths;

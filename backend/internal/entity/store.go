@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	authnprovidercm "github.com/thunder-id/thunderid/internal/authnprovider/common"
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	dbmodel "github.com/thunder-id/thunderid/internal/system/database/model"
 	"github.com/thunder-id/thunderid/internal/system/database/provider"
@@ -17,6 +18,13 @@ import (
 	"github.com/thunder-id/thunderid/internal/system/log"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
+
+// indexedAttr is one row destined for ENTITY_IDENTIFIER.
+type indexedAttr struct {
+	name   string
+	value  string
+	source string
+}
 
 // entityStoreInterface defines the interface for entity store operations.
 type entityStoreInterface interface {
@@ -34,9 +42,11 @@ type entityStoreInterface interface {
 	UpdateSystemCredentials(ctx context.Context, entityID string,
 		creds json.RawMessage) error
 	DeleteEntity(ctx context.Context, id string) error
+	LockEntity(ctx context.Context, id string) (providers.Entity, error)
 
 	// Query
 	IdentifyEntity(ctx context.Context, filters map[string]interface{}) (*string, error)
+	ResolveLinkedAccount(ctx context.Context, idpID, sub string) (*string, error)
 	SearchEntities(ctx context.Context, filters map[string]interface{}) ([]providers.Entity, error)
 	GetEntityListCount(ctx context.Context, category string,
 		filters map[string]interface{}) (int, error)
@@ -413,6 +423,9 @@ func (es *entityDBStore) syncAttributeIdentifiers(ctx context.Context, entityID 
 	}
 
 	_, err = dbClient.ExecuteContext(ctx, *query, args...)
+	if provider.IsUniqueIndexViolation(err, linkedIDIndexName, linkedIDIndexColumns) {
+		return ErrLinkedAccountConflict
+	}
 	if err != nil {
 		return fmt.Errorf("failed to batch insert identifiers: %w", err)
 	}
@@ -508,6 +521,52 @@ func (es *entityDBStore) IdentifyEntity(ctx context.Context,
 		return nil, fmt.Errorf("failed to parse id as string")
 	}
 
+	return &entityID, nil
+}
+
+// LockEntity holds the entity's write lock until the surrounding transaction ends and returns the
+// entity as read under that lock.
+func (es *entityDBStore) LockEntity(ctx context.Context, id string) (providers.Entity, error) {
+	dbClient, err := es.dbProvider.GetEntityDBClient()
+	if err != nil {
+		return providers.Entity{}, fmt.Errorf("failed to get database client: %w", err)
+	}
+
+	rowsAffected, err := dbClient.ExecuteContext(ctx, QueryLockEntity, id, es.scope(ctx))
+	if err != nil {
+		return providers.Entity{}, fmt.Errorf("failed to execute query: %w", err)
+	}
+	if rowsAffected == 0 {
+		return providers.Entity{}, ErrEntityNotFound
+	}
+	return es.GetEntity(ctx, id)
+}
+
+// ResolveLinkedAccount resolves the entity linked to a subject at a connection from the identifier
+// index only.
+func (es *entityDBStore) ResolveLinkedAccount(ctx context.Context, idpID, sub string) (*string, error) {
+	dbClient, err := es.dbProvider.GetEntityDBClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database client: %w", err)
+	}
+
+	results, err := dbClient.QueryContext(ctx, QueryResolveIdentifier,
+		linkedIdentifierName(idpID), sub, identifierSourceSystem, es.scope(ctx))
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute query: %w", err)
+	}
+
+	if len(results) == 0 {
+		return nil, ErrEntityNotFound
+	}
+	if len(results) > 1 {
+		return nil, ErrAmbiguousEntity
+	}
+
+	entityID, ok := results[0]["id"].(string)
+	if !ok || entityID == "" {
+		return nil, fmt.Errorf("unexpected type for id: %T", results[0]["id"])
+	}
 	return &entityID, nil
 }
 
@@ -930,15 +989,43 @@ func executeCountQuery(dbClient provider.DBClientInterface, ctx context.Context,
 	return totalCount, nil
 }
 
+// linkedIdentifierName derives the ENTITY_IDENTIFIER name a connection's links are indexed under.
+func linkedIdentifierName(idpID string) string {
+	return fmt.Sprintf("%s.%s", authnprovidercm.SystemAttrLinkedIDs, idpID)
+}
+
+// linkedIdentifierRows converts the linkedIds system attribute into one indexed identifier per
+// subject. Malformed entries are skipped.
+func linkedIdentifierRows(value interface{}) []indexedAttr {
+	byIDP, ok := value.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	var rows []indexedAttr
+	for idpID, subjects := range byIDP {
+		bySub, ok := subjects.(map[string]interface{})
+		if idpID == "" || !ok {
+			continue
+		}
+		for sub := range bySub {
+			if sub == "" {
+				continue
+			}
+			rows = append(rows, indexedAttr{
+				name:   linkedIdentifierName(idpID),
+				value:  sub,
+				source: identifierSourceSystem,
+			})
+		}
+	}
+	return rows
+}
+
 func prepareIdentifierQuery(
 	entityID string, attributes json.RawMessage, systemAttributes json.RawMessage,
 	indexedAttrs map[string]bool, deploymentID string,
 ) (*dbmodel.DBQuery, []interface{}, error) {
-	type indexedAttr struct {
-		name   string
-		value  string
-		source string
-	}
 	var attrEntries, sysEntries []indexedAttr
 
 	// Extract indexed attributes from schema attributes (source = "attribute").
@@ -953,7 +1040,8 @@ func prepareIdentifierQuery(
 				continue
 			}
 			for _, valueStr := range attrValueToStrings(attrValue) {
-				attrEntries = append(attrEntries, indexedAttr{name: attrName, value: valueStr, source: "attribute"})
+				attrEntries = append(attrEntries,
+					indexedAttr{name: attrName, value: valueStr, source: identifierSourceAttribute})
 			}
 		}
 	}
@@ -966,6 +1054,15 @@ func prepareIdentifierQuery(
 			return nil, nil, fmt.Errorf("failed to unmarshal system attributes: %w", err)
 		}
 		for attrName, attrValue := range sysAttrMap {
+			// Linked accounts are server-owned and indexed unconditionally. Gating them on
+			// user.indexed_attributes would let a missing config line silently break sign-in through a link.
+			if attrName == authnprovidercm.SystemAttrLinkedIDs {
+				for _, row := range linkedIdentifierRows(attrValue) {
+					sysNames[row.name] = true
+					sysEntries = append(sysEntries, row)
+				}
+				continue
+			}
 			if !indexedAttrs[attrName] {
 				continue
 			}
@@ -974,7 +1071,8 @@ func prepareIdentifierQuery(
 				sysNames[attrName] = true
 			}
 			for _, valueStr := range values {
-				sysEntries = append(sysEntries, indexedAttr{name: attrName, value: valueStr, source: "system"})
+				sysEntries = append(sysEntries,
+					indexedAttr{name: attrName, value: valueStr, source: identifierSourceSystem})
 			}
 		}
 	}
@@ -1063,9 +1161,17 @@ func attrValueToStrings(value interface{}) []string {
 }
 
 // validateIndexedValueCounts rejects attributes in which an indexed name has more than
-// maxIndexedValuesPerAttribute values to index.
+// maxIndexedValuesPerAttribute values to index. Linked accounts are indexed whatever the
+// configuration, so their subjects are held to the same limit in total across every connection.
 func validateIndexedValueCounts(attrMap map[string]interface{}, indexedAttrs map[string]bool) error {
 	for attrName, attrValue := range attrMap {
+		if attrName == authnprovidercm.SystemAttrLinkedIDs {
+			if len(linkedIdentifierRows(attrValue)) > maxIndexedValuesPerAttribute {
+				return fmt.Errorf("%w: %s holds more than %d links",
+					ErrIndexedValueLimitExceeded, attrName, maxIndexedValuesPerAttribute)
+			}
+			continue
+		}
 		if indexedAttrs[attrName] && len(attrValueToStrings(attrValue)) > maxIndexedValuesPerAttribute {
 			return fmt.Errorf("%w: indexed attribute '%s' has more than %d values",
 				ErrIndexedValueLimitExceeded, attrName, maxIndexedValuesPerAttribute)

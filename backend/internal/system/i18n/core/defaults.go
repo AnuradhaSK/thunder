@@ -308,6 +308,8 @@ var defaultMessages = map[string]string{
 	"error.authnmgrservice.get_entity_reference_client_error_description": "The entity reference fetch was rejected by the provider",
 	"error.authnmgrservice.invalid_request": "Invalid request",
 	"error.authnmgrservice.invalid_request_description": "The authentication request is invalid",
+	"error.authnmgrservice.link_account_failed": "Failed to link account",
+	"error.authnmgrservice.link_account_failed_description": "The account could not be linked to the user",
 	"error.authnmgrservice.subject_not_allowed": "Subject not allowed",
 	"error.authnmgrservice.subject_not_allowed_description": "The authenticated subject is not allowed to sign in to this application",
 	"error.authnmgrservice.user_not_found": "User not found",

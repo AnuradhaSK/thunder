@@ -23,7 +23,12 @@ import (
 //
 // The exporter is what a version is captured through, so a version holds exactly what this plane's
 // export writes: references on a control plane, template placeholders with their values elsewhere.
-func Initialize(mux *http.ServeMux, exporter export.ExportServiceInterface) (ServiceInterface, error) {
+//
+// capture is bound here when given. Only a control plane gives one: its export refers to values the
+// default gateway has to hold, while a plane exporting template placeholders carries the values
+// itself and has nothing to put anywhere.
+func Initialize(mux *http.ServeMux, exporter export.ExportServiceInterface,
+	capture *ValueCapture) (ServiceInterface, error) {
 	var (
 		gatewayStore storeInterface
 		fileStore    *gatewayFileStore
@@ -44,9 +49,13 @@ func Initialize(mux *http.ServeMux, exporter export.ExportServiceInterface) (Ser
 	versions := newVersionService(gatewayStore, newVersionStore(), exporter, newGatewayClient())
 	h := newHandler(service)
 	h.afterDelete = versions.Forget
+	stores := newStoreService(gatewayStore, newGatewayClient())
+	if capture != nil {
+		capture.bind(exporter, gatewayStore, stores)
+	}
 	registerRoutes(mux, h)
 	registerVersionRoutes(mux, newVersionHandler(versions))
-	registerStoreRoutes(mux, newStoreHandler(newStoreService(gatewayStore, newGatewayClient())))
+	registerStoreRoutes(mux, newStoreHandler(stores))
 
 	// A gateway can also be declared in a file rather than registered through the API. The files are
 	// read on every start into the in-memory store, so the file is the whole truth about what it

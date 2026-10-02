@@ -205,7 +205,7 @@ func registerServices(mux *http.ServeMux, cacheManager cache.CacheManagerInterfa
 	entityProvider := entityprovider.InitializeEntityProvider(entityService)
 
 	userService, ouUserResolver, userExporter, err := user.Initialize(
-		mux, entityService, ouService, entityTypeService, ouAuthzService,
+		mux, entityService, ouService, entityTypeService, ouAuthzService, nil,
 	)
 	fatalOnError(ctx, logger, err, "Failed to initialize UserService")
 	exporters = append(exporters, userExporter)
@@ -271,7 +271,7 @@ func registerServices(mux *http.ServeMux, cacheManager cache.CacheManagerInterfa
 	// Register the /connections API as a thin layer over the identity-provider and
 	// notification-sender services.
 	connectionExporter, err := connection.Initialize(
-		mux, idpService, notifSenderMgtSvc, resourceService, authZENPDPService)
+		mux, idpService, notifSenderMgtSvc, resourceService, authZENPDPService, nil)
 	fatalOnError(ctx, logger, err, "Failed to initialize connection declarative resources")
 	exporters = append(exporters, connectionExporter)
 
@@ -463,7 +463,7 @@ func registerServices(mux *http.ServeMux, cacheManager cache.CacheManagerInterfa
 		func(client *providers.OAuthClient) time.Duration {
 			return tokenservice.ArtifactLifetime(oauthCfg, client)
 		},
-		sharingService)
+		sharingService, nil)
 	fatalOnError(ctx, logger, err, "Failed to initialize ApplicationService")
 	// Two-phase initialization: inject the application service into the executors that act on it.
 	fatalOnError(ctx, logger, executor.SetApplicationProvider(execRegistry, applicationService),
@@ -471,7 +471,7 @@ func registerServices(mux *http.ServeMux, cacheManager cache.CacheManagerInterfa
 	exporters = append(exporters, applicationExporter)
 
 	agentService, agentExporter, err := agent.Initialize(mux, entityService, inboundClientService, ouService,
-		roleService, ouAuthzService)
+		roleService, ouAuthzService, nil)
 	fatalOnError(ctx, logger, err, "Failed to initialize AgentService")
 	exporters = append(exporters, agentExporter)
 
@@ -515,7 +515,7 @@ func registerServices(mux *http.ServeMux, cacheManager cache.CacheManagerInterfa
 
 	// The gateways this control plane administers. Registration is bounded by server.max_gateways,
 	// which is one unless a deployment raises it.
-	gatewayService, err := gateway.Initialize(mux, exportService)
+	gatewayService, err := gateway.Initialize(mux, exportService, nil)
 	fatalOnError(ctx, logger, err, "Failed to initialize gateway service")
 
 	// Initialize import service

@@ -137,17 +137,37 @@ func (f *fakeVersionStore) DeleteApplied(_ context.Context, gatewayID string) er
 	return nil
 }
 
-// fakeExporter answers a capture with canned files.
+// fakeExporter answers a capture with canned files, and a value capture with canned values.
 type fakeExporter struct {
 	response *export.ExportResponse
 	err      *tidcommon.ServiceError
 	asked    *export.ExportRequest
+
+	variables map[string]string
+	secrets   map[string]string
+	valuesErr error
+	// valuesOf records the resource type and resource each value capture asked about.
+	valuesOf []valuesRequest
+	// valuesCtxDone records whether a value capture asked with a context that was already done.
+	valuesCtxDone bool
+}
+
+type valuesRequest struct {
+	resourceType string
+	resource     interface{}
 }
 
 func (f *fakeExporter) ExportResources(_ context.Context,
 	request *export.ExportRequest) (*export.ExportResponse, *tidcommon.ServiceError) {
 	f.asked = request
 	return f.response, f.err
+}
+
+func (f *fakeExporter) PlaceholderValues(ctx context.Context, resourceType string,
+	resource interface{}) (map[string]string, map[string]string, error) {
+	f.valuesOf = append(f.valuesOf, valuesRequest{resourceType: resourceType, resource: resource})
+	f.valuesCtxDone = f.valuesCtxDone || ctx.Err() != nil
+	return f.variables, f.secrets, f.valuesErr
 }
 
 // fakeGatewayClient records what an apply sends a gateway.

@@ -21,12 +21,23 @@ import (
 	"github.com/thunder-id/thunderid/tests/mocks/entitytypemock"
 	"github.com/thunder-id/thunderid/tests/mocks/flow/flowmgtmock"
 	"github.com/thunder-id/thunderid/tests/mocks/inboundclientmock"
+	"github.com/thunder-id/thunderid/tests/mocks/sharingmock"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
+
+// newSharingServiceStub is the sharing framework Initialize now requires. Both calls it may make
+// are optional, so a test that never reaches the declarative branch sets no expectation it has to
+// meet.
+func newSharingServiceStub(t *testing.T) *sharingmock.SharingServiceInterfaceMock {
+	m := sharingmock.NewSharingServiceInterfaceMock(t)
+	m.EXPECT().RegisterResourceType(mock.Anything).Return().Maybe()
+	m.EXPECT().LoadDeclarativeResources(mock.Anything, mock.Anything).Return(nil).Maybe()
+	return m
+}
 
 // newInMemoryDataSource returns a SQLite DataSource that uses a shared in-memory
 // database with a single open connection, ensuring all test operations within a
@@ -145,6 +156,7 @@ func (suite *InitTestSuite) TestInitialize_WithDeclarativeResourcesDisabled() {
 		nil, // cryptoSvc - not needed for this test
 		nil, // serverConfigSvc - not needed for this test
 		nil, // artifactLifetime - not needed for this test
+		newSharingServiceStub(suite.T()),
 	)
 
 	// Assert
@@ -189,6 +201,7 @@ func (suite *InitTestSuite) TestInitialize_WithMCPServer() {
 		nil, // cryptoSvc - not needed for this test
 		nil, // serverConfigSvc - not needed for this test
 		nil, // artifactLifetime - not needed for this test
+		newSharingServiceStub(suite.T()),
 	)
 
 	// Assert
@@ -581,6 +594,7 @@ func TestInitialize_Standalone(t *testing.T) {
 		nil, // cryptoSvc - not needed for this test
 		nil, // serverConfigSvc - not needed for this test
 		nil, // artifactLifetime - not needed for this test
+		newSharingServiceStub(t),
 	)
 
 	// Assert
@@ -633,6 +647,7 @@ func TestInitialize_WithDeclarativeResources_Standalone(t *testing.T) {
 		nil, // cryptoSvc - not needed for this test
 		nil, // serverConfigSvc - not needed for this test
 		nil, // artifactLifetime - not needed for this test
+		newSharingServiceStub(t),
 	)
 
 	// Assert

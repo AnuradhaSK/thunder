@@ -49,6 +49,24 @@ export function ClientCredentialsDiagram() {
   );
 }
 
+export function OrganizationScopedClientCredentialsDiagram() {
+  return (
+    <SequenceDiagram
+      actors={['Client', 'ThunderID', 'Resource Server']}
+      gaps={[340, 340]}
+      ariaLabel="Organization-scoped Client Credentials flow: the client posts to the organization-unit-prefixed token endpoint with one set of credentials, ThunderID resolves the named organization unit and checks that a sharing policy lets the application act for it, returns an access token whose organization claims name that unit, and the client calls a resource server with it."
+      rows={[
+        { from: 0, to: 1, label: 'POST /ou/{ouId}/oauth2/token', sublabel: ['grant_type=client_credentials,', 'one client ID and secret'] },
+        { note: 'Resolve the named organization unit', between: [1, 1] },
+        { note: 'Check the application is granted access to it', between: [1, 1] },
+        { from: 1, to: 0, label: ['200 OK — access token', '(ouId = the named unit)'] },
+        { from: 0, to: 2, label: 'GET /resource', sublabel: ['Authorization:', 'Bearer <access_token>'] },
+        { from: 2, to: 0, label: '200 OK' },
+      ]}
+    />
+  );
+}
+
 export function TokenExchangeDiagram() {
   return (
     <SequenceDiagram

@@ -289,6 +289,24 @@ func (suite *AuthorizeHandlerTestSuite) TestHandleAuthorizeGetRequest_NilSSOTran
 	assert.False(suite.T(), gotOK, "no inbound SSO handle must be attached without a transport")
 }
 
+// TestHandleAuthorizeGetRequest_RedirectsToClient: a result with RedirectURI goes straight to the
+// client, not the login page.
+func (suite *AuthorizeHandlerTestSuite) TestHandleAuthorizeGetRequest_RedirectsToClient() {
+	clientRedirect := "https://client.example.com/callback?code=test-code&state=test-state"
+	result := &AuthorizationInitResult{RedirectURI: clientRedirect}
+	suite.mockAuthzService.EXPECT().HandleInitialAuthorizationRequest(mock.Anything, mock.Anything).Return(result, nil)
+
+	req := httptest.NewRequest("GET",
+		"/oauth2/authorize?client_id=test-client&redirect_uri=https://client.example.com/callback"+
+			"&response_type=code&prompt=none", nil)
+	rr := httptest.NewRecorder()
+
+	suite.handler.HandleAuthorizeGetRequest(rr, req)
+
+	assert.Equal(suite.T(), http.StatusFound, rr.Code)
+	assert.Equal(suite.T(), clientRedirect, rr.Header().Get("Location"))
+}
+
 func (suite *AuthorizeHandlerTestSuite) TestHandleAuthorizeGetRequest_ServiceErrorRedirectToErrorPage() {
 	authErr := &AuthorizationError{
 		Code:              oauth2const.ErrorInvalidRequest,

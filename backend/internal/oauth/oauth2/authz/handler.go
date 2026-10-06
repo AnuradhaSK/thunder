@@ -84,6 +84,10 @@ func (ah *authorizeHandler) HandleAuthorizeGetRequest(w http.ResponseWriter, r *
 		return
 	}
 
+	if result.RedirectURI != "" {
+		http.Redirect(w, r, result.RedirectURI, http.StatusFound)
+		return
+	}
 	ah.redirectToLoginPage(w, r, result.QueryParams)
 }
 

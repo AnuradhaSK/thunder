@@ -480,6 +480,21 @@ CREATE TABLE "GATEWAY_APPLIED_VERSION" (
     PRIMARY KEY (GATEWAY_ID, DEPLOYMENT_ID)
 );
 
+-- The resources each gateway is set to leave alone: an apply neither writes nor removes them there,
+-- until one selects them again. A resource is keyed by its type and its id, or its name when it has
+-- none. Its type, id and name are kept too, so one whose removal was held back can still be offered
+-- once no version names it. A gateway declared in a file has no GATEWAY row, so there is no foreign
+-- key.
+CREATE TABLE "GATEWAY_EXCLUDED_RESOURCE" (
+    DEPLOYMENT_ID VARCHAR(255) NOT NULL,
+    GATEWAY_ID VARCHAR(36) NOT NULL,
+    RESOURCE_KEY VARCHAR(512) NOT NULL,
+    RESOURCE_TYPE VARCHAR(255) NOT NULL,
+    RESOURCE_ID VARCHAR(255),
+    RESOURCE_NAME VARCHAR(255),
+    PRIMARY KEY (DEPLOYMENT_ID, GATEWAY_ID, RESOURCE_KEY)
+);
+
 -- Table capturing the resource-sharing graph. Generic across resource types: a policy is one
 -- organization unit's standing decision about one resource, and there is exactly one per
 -- (resource, initiating OU) so that an edit has a single well-defined subject.

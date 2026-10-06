@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"sort"
 	"strings"
 	"testing"
 
@@ -28,6 +29,9 @@ type fakeVersionStore struct {
 	err      error
 	// setErr fails recording what a gateway holds.
 	setErr error
+	// excluded is what each gateway is set to leave alone; excludeErr fails keeping it.
+	excluded   map[string]map[string]excludedResource
+	excludeErr error
 }
 
 func (f *fakeVersionStore) Add(_ context.Context, version Version) (*Version, error) {
@@ -134,6 +138,40 @@ func (f *fakeVersionStore) SetApplied(_ context.Context, gatewayID string, appli
 
 func (f *fakeVersionStore) DeleteApplied(_ context.Context, gatewayID string) error {
 	delete(f.applied, gatewayID)
+	return nil
+}
+
+func (f *fakeVersionStore) GetExcluded(_ context.Context, gatewayID string) ([]excludedResource, error) {
+	excluded := []excludedResource{}
+	for _, resource := range f.excluded[gatewayID] {
+		excluded = append(excluded, resource)
+	}
+	sort.Slice(excluded, func(i, j int) bool { return excluded[i].Key < excluded[j].Key })
+	return excluded, nil
+}
+
+func (f *fakeVersionStore) SetExcluded(_ context.Context, gatewayID string, exclude []excludedResource,
+	include []string) error {
+	if f.excludeErr != nil {
+		return f.excludeErr
+	}
+	if f.excluded == nil {
+		f.excluded = map[string]map[string]excludedResource{}
+	}
+	if f.excluded[gatewayID] == nil {
+		f.excluded[gatewayID] = map[string]excludedResource{}
+	}
+	for _, resource := range exclude {
+		f.excluded[gatewayID][resource.Key] = resource
+	}
+	for _, key := range include {
+		delete(f.excluded[gatewayID], key)
+	}
+	return nil
+}
+
+func (f *fakeVersionStore) DeleteExcluded(_ context.Context, gatewayID string) error {
+	delete(f.excluded, gatewayID)
 	return nil
 }
 

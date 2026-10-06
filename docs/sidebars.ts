@@ -1129,6 +1129,11 @@ const sidebars: SidebarsConfig = {
               id: 'guides/declarative-configurations/value-references',
               label: 'Value References',
             },
+            {
+              type: 'doc',
+              id: 'guides/declarative-configurations/configuration-versions',
+              label: 'Apply Configuration Versions',
+            },
           ],
         },
       ],

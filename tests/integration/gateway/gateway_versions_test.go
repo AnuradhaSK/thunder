@@ -128,6 +128,56 @@ func (ts *GatewayVersionsTestSuite) TestApplyAddsAndRemovesWhatTheVersionsDiffer
 		ts.applied())
 }
 
+// A change left out of an apply is left alone on the gateway, and stays left alone in later applies
+// until one selects it again.
+func (ts *GatewayVersionsTestSuite) TestAChangeLeftOutIsLeftAloneUntilSelected() {
+	units := map[string]string{}
+	for _, name := range []string{"taken", "left"} {
+		id, err := testutils.CreateOrganizationUnit(testutils.OrganizationUnit{
+			Handle: fmt.Sprintf("selection-%s-%d", name, time.Now().UnixNano()), Name: name,
+		})
+		ts.Require().NoError(err)
+		units[name] = id
+		defer func() { _ = testutils.DeleteOrganizationUnit(id) }()
+	}
+	captured := ts.capture("two units")
+	for _, id := range units {
+		ts.Require().NoError(testutils.DeleteOrganizationUnit(id))
+	}
+	leftKey := "organization_unit/" + units["left"]
+
+	ts.Equal(http.StatusBadRequest, ts.call(http.MethodPost, "/gateways/"+ts.gatewayID+"/apply",
+		map[string]any{"version": captured.Version, "selection": []string{"organization_unit/not-in-the-diff"}},
+		nil), "a key the diff does not report was accepted")
+	ts.Equal(http.StatusNotFound, ts.unitStatus(units["taken"]), "a refused selection was applied")
+
+	ts.applySelecting(captured.Version, func(key string) bool { return key != leftKey })
+	ts.Equal(http.StatusOK, ts.unitStatus(units["taken"]), "the selected unit was not applied")
+	ts.Equal(http.StatusNotFound, ts.unitStatus(units["left"]), "the unit left out was applied")
+
+	var diff struct {
+		Changes []struct {
+			Key      string `json:"key"`
+			Excluded bool   `json:"excluded"`
+		} `json:"changes"`
+	}
+	ts.Require().Equal(http.StatusOK, ts.call(http.MethodGet,
+		fmt.Sprintf("/gateways/%s/diff?version=%s", ts.gatewayID, captured.Version), nil, &diff))
+	excluded := []string{}
+	for _, c := range diff.Changes {
+		if c.Excluded {
+			excluded = append(excluded, c.Key)
+		}
+	}
+	ts.Equal([]string{leftKey}, excluded, "the unit left out is not offered as left alone")
+
+	ts.apply(captured.Version, false)
+	ts.Equal(http.StatusNotFound, ts.unitStatus(units["left"]), "the choice was not kept for the next apply")
+
+	ts.applySelecting(captured.Version, func(string) bool { return true })
+	ts.Equal(http.StatusOK, ts.unitStatus(units["left"]), "selecting the unit again did not apply it")
+}
+
 // A dry run reports what would change and records nothing.
 func (ts *GatewayVersionsTestSuite) TestADryRunChangesNothing() {
 	captured := ts.capture("")
@@ -321,6 +371,32 @@ func (ts *GatewayVersionsTestSuite) apply(version string, dryRun bool) applyResu
 	status := ts.call(http.MethodPost, "/gateways/"+ts.gatewayID+"/apply",
 		map[string]any{"version": version, "dryRun": dryRun}, &result)
 	ts.Require().Equal(http.StatusOK, status)
+	return result
+}
+
+// applySelecting applies a version selecting the changes on offer that keep accepts.
+func (ts *GatewayVersionsTestSuite) applySelecting(version string, keep func(key string) bool) applyResult {
+	ts.T().Helper()
+	var diff struct {
+		Changes []struct {
+			Key      string `json:"key"`
+			Change   string `json:"change"`
+			Excluded bool   `json:"excluded"`
+		} `json:"changes"`
+	}
+	ts.Require().Equal(http.StatusOK, ts.call(http.MethodGet,
+		fmt.Sprintf("/gateways/%s/diff?version=%s", ts.gatewayID, version), nil, &diff))
+	selection := []string{}
+	for _, c := range diff.Changes {
+		if (c.Change != "unchanged" || c.Excluded) && keep(c.Key) {
+			selection = append(selection, c.Key)
+		}
+	}
+	var result applyResult
+	status := ts.call(http.MethodPost, "/gateways/"+ts.gatewayID+"/apply",
+		map[string]any{"version": version, "selection": selection}, &result)
+	ts.Require().Equal(http.StatusOK, status)
+	ts.Require().True(result.Recorded, "the apply was not recorded: %s", result.Import)
 	return result
 }
 

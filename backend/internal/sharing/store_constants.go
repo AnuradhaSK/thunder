@@ -77,19 +77,19 @@ var (
 
 	queryInsertExclusion = dbmodel.DBQuery{
 		ID: "SHQ-SHARING_MGT-10",
-		Query: `INSERT INTO "RESOURCE_SHARING_POLICY_EXCLUSION"
-			(POLICY_ID, EXCLUDED_OU_ID, DEPLOYMENT_ID) VALUES ($1, $2, $3)`,
+		Query: `INSERT INTO "RESOURCE_SHARING_POLICY_TARGET_EXCLUSIONS"
+			(POLICY_ID, TARGET_ID, EXCLUDED_OU_ID, DEPLOYMENT_ID) VALUES ($1, $2, $3, $4)`,
 	}
 
 	queryListExclusions = dbmodel.DBQuery{
 		ID: "SHQ-SHARING_MGT-11",
-		Query: `SELECT EXCLUDED_OU_ID FROM "RESOURCE_SHARING_POLICY_EXCLUSION"
+		Query: `SELECT TARGET_ID, EXCLUDED_OU_ID FROM "RESOURCE_SHARING_POLICY_TARGET_EXCLUSIONS"
 			WHERE POLICY_ID = $1 AND DEPLOYMENT_ID = $2`,
 	}
 
 	queryDeleteExclusions = dbmodel.DBQuery{
 		ID:    "SHQ-SHARING_MGT-12",
-		Query: `DELETE FROM "RESOURCE_SHARING_POLICY_EXCLUSION" WHERE POLICY_ID = $1 AND DEPLOYMENT_ID = $2`,
+		Query: `DELETE FROM "RESOURCE_SHARING_POLICY_TARGET_EXCLUSIONS" WHERE POLICY_ID = $1 AND DEPLOYMENT_ID = $2`,
 	}
 
 	queryInsertRule = dbmodel.DBQuery{
@@ -198,7 +198,9 @@ func buildRelevantPoliciesQuery(
 
 		// An empty chain names no organization unit, so the membership test is left out entirely
 		// rather than emitted as IN (), which is not valid SQL. The blanket scopes still match.
-		reach := "t.TARGET_SCOPE IN ('all_ous', 'all_roots')"
+		// They are rendered from the scope constants, the values targets are stored with, so the
+		// two cannot drift apart and leave blanket policies unmatched.
+		reach := fmt.Sprintf("t.TARGET_SCOPE IN ('%s', '%s')", ScopeAllOUs, ScopeAllRoots)
 		if len(chainOUIDs) > 0 {
 			placeholders := make([]string, len(chainOUIDs))
 			for i := range chainOUIDs {

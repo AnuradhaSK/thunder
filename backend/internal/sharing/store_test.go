@@ -133,8 +133,9 @@ func (s *StoreTestSuite) TestCreatePolicyWritesEveryPart() {
 	p := Policy{
 		ID: "p1", ResourceType: testType, ResourceID: testResource, OwningOUID: ownerOU,
 		InitiatingOUID: rootOU, Stage: stageShare, Version: 1,
-		Targets:       []Target{{ID: "t1", Scope: targetScopeRoot, OUID: rootOU}},
-		ExcludedOUIDs: []string{childOU, childOU},
+		Targets: []Target{{
+			ID: "t1", Scope: ScopeRoot, OUID: rootOU, ExcludedOUIDs: []string{childOU, childOU},
+		}},
 		Rules: []StoredRule{{
 			FieldKey: "assignments", TargetID: "t1",
 			Resolved:  OverlayRule{Editable: true, AllowedValues: members("a", "b")},
@@ -145,7 +146,7 @@ func (s *StoreTestSuite) TestCreatePolicyWritesEveryPart() {
 	s.expectExec(queryCreatePolicy, 9)
 	s.expectExec(queryInsertTarget, 5)
 	// The duplicate exclusion is deduplicated before it reaches the database.
-	s.expectExec(queryInsertExclusion, 3)
+	s.expectExec(queryInsertExclusion, 4)
 	// One insert per rule: both forms of it travel as documents.
 	s.expectExec(queryInsertRule, 7)
 
@@ -214,8 +215,8 @@ func (s *StoreTestSuite) TestGetPolicyHydratesEveryPart() {
 	s.client.On("QueryContext", mock.Anything, queryGetPolicyByID, "p1", storeDeploymentID).
 		Return([]map[string]interface{}{policyRow("p1")}, nil).Once()
 	s.expectHydrate("p1",
-		[]map[string]interface{}{{"id": "t1", "target_scope": string(targetScopeRoot), "target_ou_id": rootOU}},
-		[]map[string]interface{}{{"excluded_ou_id": childOU}},
+		[]map[string]interface{}{{"id": "t1", "target_scope": string(ScopeRoot), "target_ou_id": rootOU}},
+		[]map[string]interface{}{{"target_id": "t1", "excluded_ou_id": childOU}},
 		[]map[string]interface{}{{
 			"id": "r1", "field_key": "assignments", "target_id": "t1",
 			"resolved":  `{"editable":true,"allowedValues":["a"]}`,
@@ -228,8 +229,9 @@ func (s *StoreTestSuite) TestGetPolicyHydratesEveryPart() {
 	s.Equal("p1", p.ID)
 	s.Equal(stageShare, p.Stage)
 	s.Equal(2, p.Version)
-	s.Equal([]Target{{ID: "t1", Scope: targetScopeRoot, OUID: rootOU}}, p.Targets)
-	s.Equal([]string{childOU}, p.ExcludedOUIDs)
+	s.Equal([]Target{{
+		ID: "t1", Scope: ScopeRoot, OUID: rootOU, ExcludedOUIDs: []string{childOU},
+	}}, p.Targets)
 	s.Require().Len(p.Rules, 1)
 	s.Equal("assignments", p.Rules[0].FieldKey)
 	s.Equal([]string{"a"}, *p.Rules[0].Resolved.AllowedValues)
@@ -299,7 +301,7 @@ func (s *StoreTestSuite) TestReplacePolicyContentsClearsBeforeWriting() {
 	s.expectExec(queryInsertTarget, 5)
 
 	err := s.store.ReplacePolicyContents(context.Background(), Policy{
-		ID: "p1", Targets: []Target{{ID: "t1", Scope: targetScopeOU, OUID: childOU}},
+		ID: "p1", Targets: []Target{{ID: "t1", Scope: ScopeChild, OUID: childOU}},
 	}, 2)
 	s.Require().NoError(err)
 }
@@ -373,16 +375,19 @@ func (s *StoreTestSuite) TestWriteFailuresAreWrappedWithTheirPart() {
 				s.expectExec(queryCreatePolicy, 9)
 				s.expectExecError(queryInsertTarget, 5, failure)
 			},
-			policy:  Policy{ID: "p1", Targets: []Target{{ID: "t1", Scope: targetScopeOU, OUID: childOU}}},
+			policy:  Policy{ID: "p1", Targets: []Target{{ID: "t1", Scope: ScopeChild, OUID: childOU}}},
 			wantMsg: "failed to create sharing policy target",
 		},
 		{
 			name: "an exclusion",
 			arrange: func() {
 				s.expectExec(queryCreatePolicy, 9)
-				s.expectExecError(queryInsertExclusion, 3, failure)
+				s.expectExec(queryInsertTarget, 5)
+				s.expectExecError(queryInsertExclusion, 4, failure)
 			},
-			policy:  Policy{ID: "p1", ExcludedOUIDs: []string{childOU}},
+			policy: Policy{ID: "p1", Targets: []Target{{
+				ID: "t1", Scope: ScopeChild, OUID: childOU, ExcludedOUIDs: []string{childOU},
+			}}},
 			wantMsg: "failed to create sharing policy exclusion",
 		},
 		{
@@ -749,14 +754,14 @@ func (s *StoreTestSuite) TestGetPolicyByInitiatorHydrates() {
 		string(testType), testResource, rootOU, storeDeploymentID).
 		Return([]map[string]interface{}{policyRow("p1")}, nil).Once()
 	s.expectHydrate("p1",
-		[]map[string]interface{}{{"id": "t1", "target_scope": string(targetScopeOU), "target_ou_id": childOU}},
+		[]map[string]interface{}{{"id": "t1", "target_scope": string(ScopeChild), "target_ou_id": childOU}},
 		nil, nil)
 
 	p, err := s.store.GetPolicyByInitiator(context.Background(), testType, testResource, rootOU)
 
 	s.Require().NoError(err)
 	s.Equal(rootOU, p.InitiatingOUID)
-	s.Equal([]Target{{ID: "t1", Scope: targetScopeOU, OUID: childOU}}, p.Targets)
+	s.Equal([]Target{{ID: "t1", Scope: ScopeChild, OUID: childOU}}, p.Targets)
 }
 
 // A failed read of an organization unit's values is reported, not reported as no values, which

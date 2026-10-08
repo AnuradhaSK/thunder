@@ -10,8 +10,8 @@ url: https://example.com
 # the owner's own tree, so it needs no cross-tree permission.
 sharingPolicies:
   - id: decl-m2m-subtree-policy-1
-    targetOuScope:
-      allChildren: true
+    targets:
+      - scope: allChildren
 inboundAuthConfig:
   - type: "oauth2"
     config:

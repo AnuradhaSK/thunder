@@ -20,10 +20,10 @@ import (
 // /ou/{ouId}/oauth2/token, against the declaratively defined M2M service applications in
 // resources/declarative_resources/applications/m2m-*.yaml.
 //
-// The applications are owned by decl-m2m-root and shared outward three different ways: every
-// organization unit in the deployment, the owning subtree, and the owning subtree with one branch
-// carved out. That is what lets a single credential pair serve many organizations while remaining
-// invisible inside them.
+// The applications are owned by decl-m2m-root and shared outward four different ways: every
+// organization unit in the deployment, the owning subtree, the owning subtree with one branch
+// carved out, and named children one by one. That is what lets a single credential pair serve many
+// organizations while remaining invisible inside them.
 type M2MOUScopedTokenTestSuite struct {
 	suite.Suite
 }
@@ -33,9 +33,11 @@ func TestM2MOUScopedTokenTestSuite(t *testing.T) {
 }
 
 const (
-	m2mRootOUID   = "decl-m2m-root"
-	m2mChildAOUID = "decl-m2m-child-a"
-	m2mChildBOUID = "decl-m2m-child-b"
+	m2mRootOUID        = "decl-m2m-root"
+	m2mChildAOUID      = "decl-m2m-child-a"
+	m2mChildBOUID      = "decl-m2m-child-b"
+	m2mChildCOUID      = "decl-m2m-child-c"
+	m2mGrandchildAOUID = "decl-m2m-grandchild-a"
 
 	m2mAllOUsClientID     = "decl-m2m-all-ous-client"
 	m2mAllOUsSecret       = "decl-m2m-all-ous-secret"
@@ -43,6 +45,8 @@ const (
 	m2mSubtreeSecret      = "decl-m2m-subtree-secret"
 	m2mCarvedOutClientID  = "decl-m2m-carved-out-client"
 	m2mCarvedOutSecret    = "decl-m2m-carved-out-secret"
+	m2mSelectedClientID   = "decl-m2m-selected-client"
+	m2mSelectedSecret     = "decl-m2m-selected-secret"
 	unrelatedDeclOUHandle = "decl-ou-1"
 )
 
@@ -144,6 +148,44 @@ func (suite *M2MOUScopedTokenTestSuite) TestCarveOutExcludesOneBranch() {
 	suite.Equal(http.StatusBadRequest, refusedStatus, "body: %v", refusedBody)
 	suite.Equal("unauthorized_client", refusedBody["error"],
 		"a carved-out organization unit is refused exactly as an unreached one is")
+}
+
+// TestSelectivePolicyReachesOnlyTheNamedChildren is the opposite of the carve-out: instead of
+// granting the subtree and withholding one branch, the policy names the children it grants and
+// nothing else. A sibling that exists in the same tree but appears in no target is refused.
+func (suite *M2MOUScopedTokenTestSuite) TestSelectivePolicyReachesOnlyTheNamedChildren() {
+	for _, ouID := range []string{m2mChildAOUID, m2mChildBOUID} {
+		suite.Run("named "+ouID, func() {
+			status, body := suite.requestToken(ouID, m2mSelectedClientID, m2mSelectedSecret)
+
+			suite.Equal(http.StatusOK, status, "body: %v", body)
+			suite.NotEmpty(body["access_token"])
+		})
+	}
+
+	suite.Run("unnamed sibling "+m2mChildCOUID, func() {
+		status, body := suite.requestToken(m2mChildCOUID, m2mSelectedClientID, m2mSelectedSecret)
+
+		suite.Equal(http.StatusBadRequest, status, "body: %v", body)
+		suite.Equal("unauthorized_client", body["error"],
+			"a sibling no target names is refused exactly as a unit in another tree is")
+	})
+}
+
+// TestSelectivePolicyStopsAtTheNamedChild is what separates a child target from a childSubtree one:
+// naming an organization unit grants that unit alone, never the units beneath it. The subtree
+// application, which does cascade, is checked against the same unit so the difference is the policy
+// shape rather than anything about the organization unit itself.
+func (suite *M2MOUScopedTokenTestSuite) TestSelectivePolicyStopsAtTheNamedChild() {
+	status, body := suite.requestToken(m2mGrandchildAOUID, m2mSelectedClientID, m2mSelectedSecret)
+	suite.Equal(http.StatusBadRequest, status, "body: %v", body)
+	suite.Equal("unauthorized_client", body["error"],
+		"naming a child does not hand the resource to everything beneath it")
+
+	cascaded, cascadedBody := suite.requestToken(m2mGrandchildAOUID, m2mSubtreeClientID, m2mSubtreeSecret)
+	suite.Equal(http.StatusOK, cascaded, "body: %v", cascadedBody)
+	suite.NotEmpty(cascadedBody["access_token"],
+		"the same unit is reached by a policy that does cascade, so the refusal above is the policy shape")
 }
 
 // TestUnknownOUIsRefused proves an organization unit id that resolves to nothing is refused, under a

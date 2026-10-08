@@ -37,7 +37,7 @@ func declaredPolicy(id, resourceID, initiatingOUID string) Policy {
 		InitiatingOUID: initiatingOUID,
 		Stage:          stageShare,
 		Declared:       true,
-		Targets:        []Target{{ID: id + "-t", Scope: targetScopeRoot, OUID: rootOU}},
+		Targets:        []Target{{ID: id + "-t", Scope: ScopeRoot, OUID: rootOU}},
 	}
 }
 

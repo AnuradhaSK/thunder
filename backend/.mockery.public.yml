@@ -412,7 +412,7 @@ packages:
     interfaces:
       Service:
       Resolver:
-      HandleTransport:
+      HandleTransportInterface:
 
   github.com/thunder-id/thunderid/internal/flow/mgt:
     config:

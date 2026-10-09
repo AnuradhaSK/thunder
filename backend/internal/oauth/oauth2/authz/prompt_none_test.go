@@ -8,6 +8,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"time"
 
 	"github.com/stretchr/testify/mock"
@@ -32,11 +34,14 @@ const (
 // promptNoneCtx returns a context carrying the SSO cookie the authorize endpoint would have read
 // from the request, named for the client's authentication flow.
 func promptNoneCtx() context.Context {
-	return flowsession.WithInbound(context.Background(), flowsession.InboundHandle{
-		Cookies: map[string]string{
-			flowsession.CookieName(promptNoneFlowID): promptNoneFlowCookie,
-		},
-	})
+	transport := flowsession.NewHandleTransport(flowsession.TransportConfig{})
+	issued := httptest.NewRecorder()
+	transport.Write(&flowsession.Exchange{Response: issued}, promptNoneFlowID, promptNoneFlowCookie, time.Hour)
+	req := httptest.NewRequest(http.MethodGet, "/oauth2/authorize", nil)
+	for _, ck := range issued.Result().Cookies() {
+		req.AddCookie(ck)
+	}
+	return flowsession.WithInbound(context.Background(), transport.Read(&flowsession.Exchange{Request: req}))
 }
 
 // promptNoneApp is the OAuth client the request is made for.

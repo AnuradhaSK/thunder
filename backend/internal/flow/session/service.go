@@ -7,7 +7,7 @@
 // executions. It is grouped by flow: the flow ID is the group key, so only
 // applications configured with the same flow can share a session (SSO). The
 // session is referenced by an opaque handle, decoupled from the transport that
-// carries it (a cookie is one such transport; see HandleTransport).
+// carries it (a cookie is one such transport; see HandleTransportInterface).
 package session
 
 import (

@@ -445,6 +445,14 @@ type EntityReference struct {
 	OUID           string `json:"ouId"`
 }
 
+// LinkCandidates are the entities an identity's account-linking attributes matched, sorted by id,
+// with the matched values keyed by local attribute name.
+type LinkCandidates struct {
+	EntityIDs         []string
+	EntityTypes       []string
+	MatchedAttributes map[string]string
+}
+
 // GetAttributesMetadata holds metadata used when retrieving entity attributes.
 type GetAttributesMetadata struct {
 	Locale          string              `json:"locale"`

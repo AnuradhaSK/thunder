@@ -69,6 +69,19 @@ type ReferenceWriter interface {
 	WriteValueReferences(references bool)
 }
 
+// ValueCapturer keeps the values a resource's export refers to by name, so that whatever later
+// resolves those names finds them.
+//
+// A service that writes a resource hands it here once the write has succeeded, while it still holds
+// what a read would not return, such as a client secret it has just generated. The resource type is
+// the one its exporter is registered under.
+//
+// It is optional and best-effort: a service with none behaves exactly as before, and a capture that
+// fails is logged by the capturer and never fails the write that triggered it.
+type ValueCapturer interface {
+	CaptureValues(ctx context.Context, resourceType string, resource interface{})
+}
+
 // ExportError represents errors that occurred during export.
 type ExportError struct {
 	ResourceType string `json:"resourceType"`

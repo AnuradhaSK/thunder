@@ -14,6 +14,7 @@ import (
 	ncommon "github.com/thunder-id/thunderid/internal/notification/common"
 	"github.com/thunder-id/thunderid/internal/resource"
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
+	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
 	"github.com/thunder-id/thunderid/internal/system/resourcedependency"
 	sysutils "github.com/thunder-id/thunderid/internal/system/utils"
 	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
@@ -28,6 +29,7 @@ type service struct {
 	notificationService notification.NotificationSenderMgtSvcInterface
 	resourceService     resource.ResourceServiceInterface
 	authZENPDPService   authzenpdp.AuthZENPDPServiceInterface
+	valueCapturer       declarativeresource.ValueCapturer
 }
 
 // newService creates a connection service over the given identity-provider and
@@ -215,7 +217,11 @@ func (s *service) getByType(ctx context.Context, idpType providers.IDPType, id s
 
 // create delegates creation to the identity-provider service.
 func (s *service) create(ctx context.Context, dto *providers.IDPDTO) (*providers.IDPDTO, *tidcommon.ServiceError) {
-	return s.idpService.CreateIdentityProvider(ctx, dto)
+	created, svcErr := s.idpService.CreateIdentityProvider(ctx, dto)
+	if svcErr == nil {
+		s.captureIDPValues(ctx, created)
+	}
+	return created, svcErr
 }
 
 // update verifies the instance is of the expected type, preserves any secret the request
@@ -227,7 +233,11 @@ func (s *service) update(ctx context.Context, idpType providers.IDPType, id stri
 		return nil, svcErr
 	}
 	dto.Properties = mergeStoredSecrets(dto.Properties, existing.Properties)
-	return s.idpService.UpdateIdentityProvider(ctx, id, dto)
+	updated, svcErr := s.idpService.UpdateIdentityProvider(ctx, id, dto)
+	if svcErr == nil {
+		s.captureIDPValues(ctx, updated)
+	}
+	return updated, svcErr
 }
 
 // deleteByType verifies the instance is of the expected type, then deletes it.
@@ -273,7 +283,11 @@ func (s *service) getSenderByProvider(ctx context.Context, senderType ncommon.No
 // createSender delegates creation to the notification-sender service.
 func (s *service) createSender(ctx context.Context, dto ncommon.NotificationSenderDTO) (
 	*ncommon.NotificationSenderDTO, *tidcommon.ServiceError) {
-	return s.notificationService.CreateSender(ctx, dto)
+	created, svcErr := s.notificationService.CreateSender(ctx, dto)
+	if svcErr == nil {
+		s.captureSenderValues(ctx, created)
+	}
+	return created, svcErr
 }
 
 // updateSender verifies the sender is of the expected type and provider, preserves any secret
@@ -288,7 +302,11 @@ func (s *service) updateSender(ctx context.Context, senderType ncommon.Notificat
 	}
 	dto.Properties = mergeStoredSecrets(dto.Properties, existing.Properties,
 		senderCredentialTargetKeys(senderType, provider)...)
-	return s.notificationService.UpdateSender(ctx, id, dto)
+	updated, svcErr := s.notificationService.UpdateSender(ctx, id, dto)
+	if svcErr == nil {
+		s.captureSenderValues(ctx, updated)
+	}
+	return updated, svcErr
 }
 
 // senderCredentialTargetKeys returns the transport properties that identify where a sender's

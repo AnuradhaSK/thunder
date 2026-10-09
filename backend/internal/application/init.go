@@ -23,6 +23,9 @@ import (
 )
 
 // Initialize initializes the application service and registers its routes.
+//
+// valueCapturer is optional. Given one, the service hands it every application it creates or changes,
+// so the values the application's export refers to are kept where a reference finds them.
 func Initialize(
 	mux *http.ServeMux,
 	mcpServer *mcp.Server,
@@ -34,9 +37,11 @@ func Initialize(
 	serverConfigSvc serverconfig.ServerConfigService,
 	artifactLifetime artifactLifetimeResolver,
 	sharingService sharing.SharingServiceInterface,
+	valueCapturer declarativeresource.ValueCapturer,
 ) (ApplicationServiceInterface, declarativeresource.ResourceExporter, error) {
 	appService := newApplicationService(
 		inboundClient, entityService, ouService, i18nService, cryptoSvc, serverConfigSvc, artifactLifetime,
+		valueCapturer,
 	)
 
 	// Registered before declarative resources load, because loading seeds the sharing policies those

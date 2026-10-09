@@ -1356,8 +1356,6 @@ var defaultMessages = map[string]string{
 	"error.sharingservice.version_mismatch_description": "The policy changed since it was read; reread it and reapply the change",
 	"error.sysauthz.grant_not_permitted": "Insufficient privileges to grant these permissions",
 	"error.sysauthz.grant_not_permitted_description": "The operation would grant permissions that the caller does not hold",
-	"error.templateservice.template_not_found": "Template not found",
-	"error.templateservice.template_not_found_description": "The requested template does not exist for the given scenario",
 	"error.themeservice.invalid_limit_value_description": "Limit must be between 1 and {{param(max)}}",
 	"error.unauthorized": "Unauthorized",
 	"error.unauthorized_description": "The caller is not authorized to perform this operation",

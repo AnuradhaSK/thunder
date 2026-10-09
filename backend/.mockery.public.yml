@@ -717,14 +717,6 @@ packages:
       pkgname: attributecachemock
       filename: "{{.InterfaceName}}_mock.go"
 
-  github.com/thunder-id/thunderid/internal/system/template:
-    config:
-      all: true
-      dir: tests/mocks/templatemock
-      structname: '{{.InterfaceName}}Mock'
-      pkgname: templatemock
-      filename: "{{.InterfaceName}}_mock.go"
-
   github.com/thunder-id/thunderid/internal/system/resourcedependency:
     interfaces:
       Registry:

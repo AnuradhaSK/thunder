@@ -508,12 +508,12 @@ CREATE TABLE "RESOURCE_SHARING_POLICY_TARGET" (
     POLICY_ID     VARCHAR(36) NOT NULL
                   REFERENCES "RESOURCE_SHARING_POLICY" (ID) ON DELETE CASCADE,
     TARGET_SCOPE  VARCHAR(16) NOT NULL
-                  CHECK (TARGET_SCOPE IN ('all_ous', 'all_roots', 'root', 'all_children', 'ou', 'ou_subtree')),
+                  CHECK (TARGET_SCOPE IN ('allOus', 'allRoots', 'root', 'allChildren', 'child', 'childSubtree')),
     TARGET_OU_ID  VARCHAR(36),
     UNIQUE (POLICY_ID, TARGET_SCOPE, TARGET_OU_ID),
     UNIQUE (POLICY_ID, ID),
-    CHECK ((TARGET_SCOPE IN ('all_ous', 'all_roots') AND TARGET_OU_ID IS NULL)
-        OR (TARGET_SCOPE NOT IN ('all_ous', 'all_roots') AND TARGET_OU_ID IS NOT NULL))
+    CHECK ((TARGET_SCOPE IN ('allOus', 'allRoots') AND TARGET_OU_ID IS NULL)
+        OR (TARGET_SCOPE NOT IN ('allOus', 'allRoots') AND TARGET_OU_ID IS NOT NULL))
 );
 
 CREATE INDEX idx_rspt_policy ON "RESOURCE_SHARING_POLICY_TARGET" (POLICY_ID);
@@ -525,23 +525,30 @@ CREATE UNIQUE INDEX idx_rspt_blanket_once
     ON "RESOURCE_SHARING_POLICY_TARGET" (POLICY_ID, TARGET_SCOPE)
     WHERE TARGET_OU_ID IS NULL;
 
--- Organization units carved out of every target of a policy, each taking its subtree with it.
-CREATE TABLE "RESOURCE_SHARING_POLICY_EXCLUSION" (
+-- Organization units carved out of one target of a policy, each taking its subtree with it. The
+-- carve-out belongs to the target rather than to the policy, so a second target may still name a
+-- unit the broad one leaves out and hand it the resource on terms of its own.
+CREATE TABLE "RESOURCE_SHARING_POLICY_TARGET_EXCLUSIONS" (
     DEPLOYMENT_ID  VARCHAR(255) NOT NULL,
     POLICY_ID      VARCHAR(36) NOT NULL
                    REFERENCES "RESOURCE_SHARING_POLICY" (ID) ON DELETE CASCADE,
+    TARGET_ID      VARCHAR(36) NOT NULL,
     EXCLUDED_OU_ID VARCHAR(36) NOT NULL,
-    PRIMARY KEY (POLICY_ID, EXCLUDED_OU_ID)
+    PRIMARY KEY (POLICY_ID, TARGET_ID, EXCLUDED_OU_ID),
+    FOREIGN KEY (POLICY_ID, TARGET_ID)
+        REFERENCES "RESOURCE_SHARING_POLICY_TARGET" (POLICY_ID, ID) ON DELETE CASCADE
 );
 
--- What a policy says a target may do with one field. TARGET_ID null means the rule applies to
--- every target; set means it overrides the policy-level rule for that target alone.
+CREATE INDEX idx_rspte_target ON "RESOURCE_SHARING_POLICY_TARGET_EXCLUSIONS" (TARGET_ID);
+
+-- What a policy says one target may do with one field. A target and its terms travel together, so
+-- every rule names the target it belongs to.
 CREATE TABLE "RESOURCE_SHARING_POLICY_OVERLAY_RULE" (
     DEPLOYMENT_ID       VARCHAR(255) NOT NULL,
     ID                  VARCHAR(36) PRIMARY KEY,
     POLICY_ID           VARCHAR(36) NOT NULL
                         REFERENCES "RESOURCE_SHARING_POLICY" (ID) ON DELETE CASCADE,
-    TARGET_ID           VARCHAR(36),
+    TARGET_ID           VARCHAR(36) NOT NULL,
     FIELD_KEY           VARCHAR(255) NOT NULL,
     RESOLVED            TEXT NOT NULL,
     REQUESTED           TEXT NOT NULL,
@@ -552,10 +559,6 @@ CREATE TABLE "RESOURCE_SHARING_POLICY_OVERLAY_RULE" (
 
 CREATE INDEX idx_rspor_policy ON "RESOURCE_SHARING_POLICY_OVERLAY_RULE" (POLICY_ID);
 CREATE INDEX idx_rspor_target ON "RESOURCE_SHARING_POLICY_OVERLAY_RULE" (TARGET_ID);
-
-CREATE UNIQUE INDEX idx_rspor_policy_wide_once
-    ON "RESOURCE_SHARING_POLICY_OVERLAY_RULE" (POLICY_ID, FIELD_KEY)
-    WHERE TARGET_ID IS NULL;
 
 -- A target organization unit's own value for one templated field of a shared resource.
 CREATE TABLE "RESOURCE_OVERLAY_VALUE" (

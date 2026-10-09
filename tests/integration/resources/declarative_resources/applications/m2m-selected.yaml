@@ -1,22 +1,25 @@
 resource_type: application
-id: decl-m2m-all-ous
-name: M2M Service (All OUs)
-description: Backend service usable on behalf of every organization unit in the deployment
+id: decl-m2m-selected
+name: M2M Service (Selected Children)
+description: Backend service usable on behalf of named child organization units only
 ouId: decl-m2m-root
 type: fullstack
 template: web
 url: https://example.com
-# Every organization unit in the deployment, current and future. allOus is owner-only and, for an
-# application owned below a root, also needs resource_sharing.allow_child_ou_cross_tree_sharing.
+# Children named one by one. Each target reaches the unit it names and stops there, so a sibling
+# nobody named is not reached and neither is anything beneath a named one.
 sharingPolicies:
-  - id: decl-m2m-all-ous-policy-1
+  - id: decl-m2m-selected-policy-1
     targets:
-      - scope: allOus
+      - scope: child
+        ouId: decl-m2m-child-a
+      - scope: child
+        ouId: decl-m2m-child-b
 inboundAuthConfig:
   - type: "oauth2"
     config:
-      clientId: "decl-m2m-all-ous-client"
-      clientSecret: "decl-m2m-all-ous-secret"
+      clientId: "decl-m2m-selected-client"
+      clientSecret: "decl-m2m-selected-secret"
       grantTypes:
         - "client_credentials"
       tokenEndpointAuthMethod: "client_secret_basic"

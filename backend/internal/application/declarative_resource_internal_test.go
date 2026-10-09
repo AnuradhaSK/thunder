@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/thunder-id/thunderid/internal/application/model"
+	"github.com/thunder-id/thunderid/internal/sharing"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
@@ -561,8 +562,8 @@ name: Sharing App
 ouHandle: acme-root
 sharingPolicies:
   - id: p1
-    targetOuScope:
-      allChildren: true
+    targets:
+      - scope: allChildren
 `)
 	mockAppService := NewApplicationServiceInterfaceMock(s.T())
 	mockAppService.EXPECT().ValidateApplication(mock.Anything, mock.Anything).Return(
@@ -576,7 +577,8 @@ sharingPolicies:
 	s.Equal("Sharing App", declared.ResourceName)
 	s.Equal("resolved-ou-id", declared.OwningOUID, "the handle is resolved before the policy is declared")
 	s.Require().Len(declared.Policies, 1)
-	s.True(declared.Policies[0].TargetOUScope.AllChildren)
+	s.Require().Len(declared.Policies[0].Targets, 1)
+	s.Equal(sharing.ScopeAllChildren, declared.Policies[0].Targets[0].Scope)
 }
 
 // Most documents declare no policy. That answer costs nothing: the parser returns the resource id
@@ -607,8 +609,8 @@ name: Sharing App
 ouId: acme-root
 sharingPolicies:
   - id: p1
-    targetOuScope:
-      allChildren: true
+    targets:
+      - scope: allChildren
 `)
 	mockAppService := NewApplicationServiceInterfaceMock(s.T())
 	mockAppService.EXPECT().ValidateApplication(mock.Anything, mock.Anything).Return(

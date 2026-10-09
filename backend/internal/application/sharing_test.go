@@ -12,6 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/thunder-id/thunderid/internal/application/model"
+	"github.com/thunder-id/thunderid/internal/sharing"
 	"github.com/thunder-id/thunderid/internal/system/security"
 	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
@@ -85,10 +86,10 @@ name: ` + testAppName + `
 ouId: ` + testAppOwner + `
 sharingPolicies:
   - id: ` + testPolicyID + `
-    targetOuScope:
-      allOus: true
-      excludedOuIds:
-        - m2m-child-b
+    targets:
+      - scope: allOus
+        excludedOuIds:
+          - m2m-child-b
 `)
 
 	var request model.ApplicationRequestWithID
@@ -97,6 +98,7 @@ sharingPolicies:
 	s.Require().Len(request.SharingPolicies, 1)
 	policy := request.SharingPolicies[0]
 	s.Equal(testPolicyID, policy.ID)
-	s.True(policy.TargetOUScope.AllOUs)
-	s.Equal([]string{"m2m-child-b"}, policy.TargetOUScope.ExcludedOUIDs)
+	s.Require().Len(policy.Targets, 1)
+	s.Equal(sharing.ScopeAllOUs, policy.Targets[0].Scope)
+	s.Equal([]string{"m2m-child-b"}, policy.Targets[0].ExcludedOUIDs)
 }

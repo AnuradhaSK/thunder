@@ -118,10 +118,12 @@ func (s *sharingStore) writeContents(ctx context.Context, dbClient provider.DBCl
 			return fmt.Errorf("failed to create sharing policy target: %w", err)
 		}
 	}
-	for _, ouID := range utils.UniqueStrings(p.ExcludedOUIDs) {
-		if _, err := dbClient.ExecuteContext(ctx, queryInsertExclusion,
-			p.ID, ouID, s.scope(ctx)); err != nil {
-			return fmt.Errorf("failed to create sharing policy exclusion: %w", err)
+	for _, t := range p.Targets {
+		for _, ouID := range utils.UniqueStrings(t.ExcludedOUIDs) {
+			if _, err := dbClient.ExecuteContext(ctx, queryInsertExclusion,
+				p.ID, t.ID, ouID, s.scope(ctx)); err != nil {
+				return fmt.Errorf("failed to create sharing policy exclusion: %w", err)
+			}
 		}
 	}
 	for _, r := range p.Rules {
@@ -153,7 +155,7 @@ func (s *sharingStore) writeRule(
 		return fmt.Errorf("failed to generate an overlay rule identifier: %w", err)
 	}
 	if _, err := dbClient.ExecuteContext(ctx, queryInsertRule,
-		ruleID, policyID, nullableString(r.TargetID), r.FieldKey,
+		ruleID, policyID, r.TargetID, r.FieldKey,
 		string(resolved), string(requested), s.scope(ctx)); err != nil {
 		return fmt.Errorf("failed to create overlay rule: %w", err)
 	}
@@ -404,10 +406,12 @@ func (s *sharingStore) hydrate(
 	if err != nil {
 		return Policy{}, fmt.Errorf("failed to list sharing policy targets: %w", err)
 	}
+	byID := make(map[string]int, len(targetRows))
 	for _, row := range targetRows {
+		byID[utils.ConvertInterfaceValueToString(row["id"])] = len(p.Targets)
 		p.Targets = append(p.Targets, Target{
 			ID:    utils.ConvertInterfaceValueToString(row["id"]),
-			Scope: targetScope(utils.ConvertInterfaceValueToString(row["target_scope"])),
+			Scope: TargetScope(utils.ConvertInterfaceValueToString(row["target_scope"])),
 			OUID:  utils.ConvertInterfaceValueToString(row["target_ou_id"]),
 		})
 	}
@@ -417,7 +421,12 @@ func (s *sharingStore) hydrate(
 		return Policy{}, fmt.Errorf("failed to list sharing policy exclusions: %w", err)
 	}
 	for _, row := range exclusionRows {
-		p.ExcludedOUIDs = append(p.ExcludedOUIDs, utils.ConvertInterfaceValueToString(row["excluded_ou_id"]))
+		i, ok := byID[utils.ConvertInterfaceValueToString(row["target_id"])]
+		if !ok {
+			continue
+		}
+		p.Targets[i].ExcludedOUIDs = append(p.Targets[i].ExcludedOUIDs,
+			utils.ConvertInterfaceValueToString(row["excluded_ou_id"]))
 	}
 
 	ruleRows, err := dbClient.QueryContext(ctx, queryListRules, p.ID, s.scope(ctx))

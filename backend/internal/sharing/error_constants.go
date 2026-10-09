@@ -14,7 +14,7 @@ import (
 // organization unit, because a validation error saying only "invalid policy" costs an afternoon.
 var (
 	// ErrorInvalidRequestFormat is returned when a policy request is malformed, including when it
-	// selects none or more than one target mode.
+	// names no target at all or a target whose scope and organization unit disagree.
 	ErrorInvalidRequestFormat = tidcommon.ServiceError{
 		Type: tidcommon.ClientErrorType,
 		Code: "SHR-1001",
@@ -24,8 +24,8 @@ var (
 		},
 		ErrorDescription: tidcommon.I18nMessage{
 			Key: "error.sharingservice.invalid_request_format_description",
-			DefaultValue: "The request body is malformed, selects more than one target mode, or " +
-				"combines a mode's broad flag with the individual organization units it already reaches",
+			DefaultValue: "The request body is malformed, names no target, or names a target " +
+				"whose scope and organization unit do not go together",
 		},
 	}
 	// ErrorResourceTypeNotRegistered is returned when a resource type has no declaration.
@@ -256,7 +256,7 @@ var (
 		},
 		ErrorDescription: tidcommon.I18nMessage{
 			Key:          "error.sharingservice.exclusion_out_of_reach_description",
-			DefaultValue: "The excluded organization unit is not reached by any target of this policy",
+			DefaultValue: "The excluded organization unit is not reached by the target that carves it out",
 		},
 	}
 	// ErrorDeclaredPolicyIDRequired is returned when a resource file declares a policy without an id.
@@ -385,6 +385,51 @@ var (
 			Key: "error.sharingservice.result_limit_exceeded_in_composite_mode_description",
 			DefaultValue: "The resource has more sharing policies than can be listed while " +
 				"declarative resources are loaded",
+		},
+	}
+	// ErrorOverlappingTargets is returned when two targets of one policy reach the same
+	// organization unit, which leaves no basis for deciding whose terms it holds the resource on.
+	ErrorOverlappingTargets = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "SHR-1028",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.sharingservice.overlapping_targets",
+			DefaultValue: "Overlapping targets",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key: "error.sharingservice.overlapping_targets_description",
+			DefaultValue: "Two targets of this policy reach the same organization unit; " +
+				"exclude it from the broader target to give it terms of its own",
+		},
+	}
+	// ErrorExclusionEmptiesTarget is returned when an exclusion names the organization unit its
+	// own target anchors on, which leaves that target reaching nothing at all.
+	ErrorExclusionEmptiesTarget = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "SHR-1029",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.sharingservice.exclusion_empties_target",
+			DefaultValue: "Exclusion empties its target",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key: "error.sharingservice.exclusion_empties_target_description",
+			DefaultValue: "The excluded organization unit is the one its target names, so the " +
+				"target would reach nothing; drop the target instead",
+		},
+	}
+	// ErrorExclusionNotADirectChild is returned when a target reaching into the initiating
+	// organization unit's own tree carves out something deeper than one of its direct children.
+	ErrorExclusionNotADirectChild = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "SHR-1030",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.sharingservice.exclusion_not_a_direct_child",
+			DefaultValue: "Exclusion does not name a direct child",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key: "error.sharingservice.exclusion_not_a_direct_child_description",
+			DefaultValue: "A target reaching into the initiating organization unit's own tree may " +
+				"only carve out one of that unit's direct children",
 		},
 	}
 )

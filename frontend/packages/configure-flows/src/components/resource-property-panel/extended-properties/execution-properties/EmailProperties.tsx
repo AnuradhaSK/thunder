@@ -1,11 +1,14 @@
 // Copyright 2025 The ThunderID Authors
 // SPDX-License-Identifier: Apache-2.0
 
+import {useEmailProviders} from '@thunderid/configure-connections';
 import {
   Alert,
   Autocomplete,
   FormHelperText,
   FormLabel,
+  MenuItem,
+  Select,
   Stack,
   TextField,
   Typography,
@@ -16,18 +19,32 @@ import {useTranslation} from 'react-i18next';
 import type {CommonResourcePropertiesPropsInterface} from './types';
 import {buildTemplateLabels, buildTemplateOptions} from './utils';
 import useGetNotificationTemplates from '../../../../api/useGetNotificationTemplates';
-import type {StepData} from '../../../../models/steps';
+
+interface EmailStepProperties {
+  senderId?: string;
+  emailTemplate?: string;
+  [key: string]: unknown;
+}
 
 function EmailProperties({resource, onChange}: CommonResourcePropertiesPropsInterface): ReactNode {
   const {t} = useTranslation();
   const {data: templates, isLoading, isSuccess, isError} = useGetNotificationTemplates('email');
+  const {
+    data: emailProviders,
+    isLoading: isLoadingEmailProviders,
+    isError: isEmailProvidersError,
+  } = useEmailProviders();
 
-  const properties = useMemo(() => {
-    const stepData = resource?.data as StepData | undefined;
+  const properties = useMemo<EmailStepProperties>(() => {
+    const stepData = resource?.data as {properties?: EmailStepProperties} | undefined;
     return stepData?.properties ?? {};
   }, [resource]);
 
-  const emailTemplate = (properties['emailTemplate'] as string) || '';
+  const hasSenders = (emailProviders?.length ?? 0) > 0;
+  const emailSenderId = typeof properties.senderId === 'string' ? properties.senderId : '';
+  const isSenderPlaceholder = emailSenderId === '' || emailSenderId === '{{SENDER_ID}}';
+
+  const emailTemplate = typeof properties.emailTemplate === 'string' ? properties.emailTemplate : '';
 
   const options = useMemo((): string[] => buildTemplateOptions(templates, emailTemplate), [templates, emailTemplate]);
 
@@ -70,6 +87,34 @@ function EmailProperties({resource, onChange}: CommonResourcePropertiesPropsInte
       {isSuccess && !hasTemplates && (
         <Alert severity="warning">{t('flows:core.executions.email.emailTemplate.noTemplates')}</Alert>
       )}
+
+      {isEmailProvidersError && <Alert severity="error">{t('flows:core.executions.email.sender.loadError')}</Alert>}
+
+      {!isLoadingEmailProviders && !isEmailProvidersError && !hasSenders && (
+        <Alert severity="warning">{t('flows:core.executions.email.sender.noSenders')}</Alert>
+      )}
+
+      <div>
+        <FormLabel htmlFor="email-sender-select">{t('flows:core.executions.email.sender.label')}</FormLabel>
+        <Select
+          id="email-sender-select"
+          value={isSenderPlaceholder ? '' : emailSenderId}
+          onChange={(e) => onChange('data.properties.senderId', e.target.value, resource)}
+          displayEmpty
+          fullWidth
+          disabled={isLoadingEmailProviders || !hasSenders}
+        >
+          <MenuItem value="" disabled>
+            {isLoadingEmailProviders ? t('common:status.loading') : t('flows:core.executions.email.sender.placeholder')}
+          </MenuItem>
+          {emailProviders?.map((sender) => (
+            <MenuItem key={sender.id} value={sender.id}>
+              {sender.name}
+            </MenuItem>
+          ))}
+        </Select>
+        <FormHelperText>{t('flows:core.executions.email.sender.hint')}</FormHelperText>
+      </div>
     </Stack>
   );
 }

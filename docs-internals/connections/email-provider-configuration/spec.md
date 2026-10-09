@@ -1,7 +1,7 @@
 # Email Provider Configuration Specification
 
 - **Status:** Draft
-- **Version:** 0.1
+- **Version:** 0.2
 - **Related documents:** [Design discussion #3277](https://github.com/thunder-id/thunderid/discussions/3277), [Feature issue #5415](https://github.com/thunder-id/thunderid/issues/5415), [Feature issue #3276](https://github.com/thunder-id/thunderid/issues/3276)
 
 ## Summary
@@ -118,7 +118,7 @@ An unrecognized stored type is surfaced verbatim rather than downgraded to `none
 
 A credential field can be written but never read back. It is encrypted on construction, returned masked as `******`, and may be omitted on update to keep the stored value.
 
-Carrying a stored credential over is conditional on the authentication type being unchanged. Changing the method, or setting it to `none`, discards the previous method's stored credential, so a later switch back cannot silently reuse a value the operator did not enter again. The type property is never secret, so the comparison needs no decryption.
+Carrying a stored credential over is conditional on its target being unchanged, meaning the authentication type, every non-secret authentication field such as the username, and the provider's host and port. Changing any of them, or setting the method to `none`, discards every stored credential, so the credential is never presented to a target the operator did not enter it for, and a later switch back cannot silently reuse a value the operator did not enter again. None of these properties is secret, so the comparison needs no decryption.
 
 ### SMTP provider configuration
 
@@ -199,7 +199,7 @@ A `senderId` that is not a string fails the step with an error reporting the typ
 | Dispatch outcome | Flow result |
 |---|---|
 | Empty `senderId`, or a sender that does not resolve | A flow failure carrying "email provider not configured", recording that no email was sent. |
-| Any other dispatch failure | A flow failure carrying "email send failed", with the failure logged for diagnosis. |
+| Any other dispatch failure | The step fails as a server error, with the cause logged for diagnosis and nothing about the provider returned to the caller. |
 | Success | The step continues, recording that the email was sent. |
 
 A missing or unnamed provider is a configuration problem the flow can surface to the caller. Every other failure is a delivery problem that is logged rather than described to the caller.
@@ -261,13 +261,13 @@ Secret properties are encrypted on construction and decrypted only on the delive
 
 #### Vendor metadata
 
-`GET /connections/meta?vendor={vendor}` returns the description of a vendor's configurable options that the server supplies. Only authentication is described today, namely the methods the vendor supports, in the order a console should offer them, and the fields each one takes.
+`GET /connections/meta` returns the server's description of each connection vendor's configurable options, as a list. Without a filter it describes every registered vendor, and `?vendor={vendor}` narrows the list to that vendor without changing its shape, so a caller reads one response format either way. Only authentication is described today, namely the methods a vendor supports, in the order a console should offer them, and the fields each one takes.
 
-The endpoint takes the vendor as a query parameter rather than living at `/connections/{vendor}/meta`, which would need registering per vendor and would shadow an instance whose identifier is literally `meta`. An unregistered vendor is a client error. A registered vendor with no configurable choice, such as Twilio, reports an empty method list.
+The vendor is an optional query parameter rather than a path segment at `/connections/{vendor}/meta`, which would need registering per vendor, would shadow an instance whose identifier is literally `meta`, and could not describe every vendor in one call. An unregistered vendor named by the filter is a client error. A registered vendor with no configurable choice, such as Twilio, reports an empty method list.
 
 Each method's fields are an ordered array rather than a keyed object, because a JSON object's keys are serialized in sorted order, which would put a password above the username it belongs under with no way for the server to express render order.
 
-The supported set is read from the same constant the sender validation reads, so the API cannot advertise a method the server would reject.
+The supported set is read from the SMTP binding, the same source the sender validation reads, so the API cannot advertise a method the server would reject.
 
 #### Provider endpoints
 
@@ -392,8 +392,8 @@ This specification does not define the following.
 **Acceptance criteria:**
 
 - **AC2.1:** Given a provider created with a credential, when it is read through any API path, then the credential is masked and never returned in plain text.
-- **AC2.2:** Given a stored credential, when an update names the stored authentication method and omits the credential field, then the stored value is kept.
-- **AC2.3:** Given a stored credential, when the update changes the authentication method, sets it to `none`, or omits the `authentication` object entirely, then the stored credential is discarded rather than carried over.
+- **AC2.2:** Given a stored credential, when an update names the stored authentication method, leaves its non-secret fields such as the username and the provider's host and port unchanged, and omits the credential field, then the stored value is kept.
+- **AC2.3:** Given a stored credential, when the update changes the authentication method, sets it to `none`, omits the `authentication` object entirely, or changes a non-secret authentication field, the host, or the port, then the stored credential is discarded rather than carried over.
 - **AC2.4:** Given an enabled authentication method and a transport security of `none`, when the provider is written, then it is rejected, and given the same combination already stored, when the client is constructed, then it is refused.
 - **AC2.5:** Given a field the resolved method does not declare, when it is supplied, then it is not written to storage.
 
@@ -443,7 +443,7 @@ This specification does not define the following.
 
 - **AC6.1:** Given an email step with no `senderId`, when it runs, then the dispatch is refused and the step reports that no email provider is configured.
 - **AC6.2:** Given an email step naming a provider that does not resolve, when it runs, then the step reports that no email provider is configured rather than a delivery failure.
-- **AC6.3:** Given an email step naming a resolvable provider, when a dispatch fails for any other reason, then the step reports a send failure and the cause is logged.
+- **AC6.3:** Given an email step naming a resolvable provider, when a dispatch fails for any other reason, then the step fails as a server error, the cause is logged, and nothing about the provider is returned to the caller.
 - **AC6.4:** Given a shipped default flow whose email step names no provider, when the flow is loaded or saved, then the declaration is accepted and the executor still refuses the dispatch at execution.
 
 ### R7. Channel isolation across senders
@@ -462,12 +462,13 @@ This specification does not define the following.
 
 **Acceptance criteria:**
 
-- **AC8.1:** Given a registered vendor, when its metadata is requested, then the supported methods and their fields are returned in render order, with credential fields marked.
-- **AC8.2:** Given an unregistered vendor, when metadata is requested, then it is a client error.
+- **AC8.1:** Given a registered vendor, when its metadata is requested with the vendor filter, then the response lists that vendor alone, with its supported methods and their fields in render order and credential fields marked.
+- **AC8.2:** Given an unregistered vendor named by the filter, when metadata is requested, then it is a client error.
 - **AC8.3:** Given a vendor whose credentials are a fixed contract, when its metadata is requested, then it reports an empty method list and the Console renders no authentication section.
 - **AC8.4:** Given a method the Console has no translation for, when the form renders, then the raw field name is shown rather than a blank label.
 - **AC8.5:** Given a payload naming a method the deployment does not implement, when it is submitted, then it is refused as a client error whose description directs the caller to the metadata endpoint.
 - **AC8.6:** Given a new authentication method added to the descriptor table, when a vendor supports it and the transport binding carries it, then it becomes storable, validatable against its descriptors, exportable, and renderable with no Console change and no schema change. The binding that presents it to a transport, and any rule the descriptors cannot express, are the method's own code.
+- **AC8.7:** Given no vendor filter, when metadata is requested, then every registered vendor is described, in the same list shape a filtered request returns.
 
 ### R9. Declarative parity
 
@@ -498,3 +499,4 @@ This specification does not define the following.
 | Version | Date | Change |
 |---|---|---|
 | 0.1 | 2026-09-19 | Initial specification for email providers as connections, the outbound authentication model, SMTP delivery, provider selection per step, and the removal of the deployment SMTP configuration. |
+| 0.2 | 2026-10-09 | Aligned the credential carry-over, dispatch failure, and vendor metadata behaviour with the implementation. A stored credential carries over on update only while the authentication type, its non-secret fields, and the provider's host and port are unchanged. A dispatch failure other than a missing provider fails the step as a server error. The vendor on `GET /connections/meta` is an optional filter. |

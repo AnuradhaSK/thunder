@@ -282,7 +282,29 @@ paths:
               schema:
                 $ref: '#/components/schemas/ApplyResult'
         "400":
-          $ref: '#/components/responses/BadRequest'
+          description: The request was malformed, or the selection names a resource the diff does not report
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalidBody:
+                  summary: The body is not one JSON object
+                  value:
+                    code: "GTW-1007"
+                    message:
+                      key: "error.gatewayservice.invalid_request_body"
+                      defaultValue: "The request body is not valid JSON"
+                invalidSelection:
+                  summary: The selection names a resource the diff does not report
+                  value:
+                    code: "GTW-1025"
+                    message:
+                      key: "error.gatewayservice.invalid_selection"
+                      defaultValue: "The selection names a resource this apply does not report"
+                    description:
+                      key: "error.gatewayservice.invalid_selection.description"
+                      defaultValue: "Select changes by the keys a diff of this version reports for this gateway. A resource whose key is longer than 512 characters, or whose id or name is longer than 255, cannot be left out."
         "401":
           $ref: '#/components/responses/Unauthorized'
         "403":
@@ -741,6 +763,18 @@ components:
         dryRun:
           type: boolean
           description: Send the import as a dry run and record nothing.
+        selection:
+          type: array
+          items:
+            type: string
+          description: |
+            The keys (`Change.key`) of the changes to apply. Every other change the diff offers is
+            left alone: neither written nor removed. The gateway goes on leaving those resources alone
+            in later applies and reverts, until a selection includes them again. A dry run applies the
+            selection to what it checks without keeping it. Omitted, the gateway's standing choices
+            apply; empty, every change on offer is left alone. A key that names no resource in the
+            diff is refused with `400` (`GTW-1025`), as is leaving out a resource whose key is longer
+            than 512 characters or whose id or name is longer than 255.
     RevertRequest:
       type: object
       properties:
@@ -749,6 +783,15 @@ components:
     Change:
       type: object
       properties:
+        key:
+          type: string
+          description: Names the resource in a selection, as its type and its id, or its name when it has none.
+        excluded:
+          type: boolean
+          description: |
+            The gateway is set to leave this resource alone. Such a change stays on offer, whatever the
+            versions say of it, until a selection includes it again: one whose removal was held back is
+            offered as `deleted` once no version names it.
         resourceType:
           type: string
         id:
@@ -784,6 +827,7 @@ components:
           description: The hash of the version applied.
         summary:
           type: object
+          description: Counts the changes by kind, leaving out those the gateway is set to leave alone.
           properties:
             added:
               type: integer

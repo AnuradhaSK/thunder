@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -59,6 +60,44 @@ func TestTheClientReportsARefusal(t *testing.T) {
 	_, err := newGatewayClient().Import(context.Background(), gw, "wrong", gatewayImportRequest{})
 
 	assert.True(t, errors.Is(err, errGatewayRefused))
+	assert.True(t, errors.Is(err, errImportNotWritten), "a 4xx is answered before anything is written")
+}
+
+// Only a failure that shows the gateway received none of the import says so: a server error or a
+// connection lost after the request went out leaves open whether the gateway wrote it.
+func TestTheClientSaysWhenTheGatewayWroteNothing(t *testing.T) {
+	failing := gatewayFor(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	_, err := newGatewayClient().Import(context.Background(), failing, "k", gatewayImportRequest{})
+	assert.True(t, errors.Is(err, errGatewayRefused))
+	assert.False(t, errors.Is(err, errImportNotWritten), "a server error may follow a partial write")
+
+	hangingUp := gatewayFor(t, func(w http.ResponseWriter, _ *http.Request) {
+		conn, _, hijackErr := w.(http.Hijacker).Hijack()
+		require.NoError(t, hijackErr)
+		_ = conn.Close()
+	})
+	_, err = newGatewayClient().Import(context.Background(), hangingUp, "k", gatewayImportRequest{})
+	assert.Error(t, err)
+	assert.False(t, errors.Is(err, errImportNotWritten), "a connection lost after sending may have written")
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	closedAddress := listener.Addr().String()
+	require.NoError(t, listener.Close())
+	_, err = newGatewayClient().Import(context.Background(), &Gateway{ID: "gw-1", BaseURL: "https://" + closedAddress},
+		"k", gatewayImportRequest{})
+	assert.True(t, errors.Is(err, errImportNotWritten), "a refused connection sent nothing")
+
+	untrusted := *failing
+	untrusted.CACertificate = ""
+	_, err = newGatewayClient().Import(context.Background(), &untrusted, "k", gatewayImportRequest{})
+	assert.True(t, errors.Is(err, errImportNotWritten), "a certificate that does not verify sent nothing")
+
+	_, err = newGatewayClient().Import(context.Background(), &Gateway{ID: "gw-1", BaseURL: "http://dp.test"}, "k",
+		gatewayImportRequest{})
+	assert.True(t, errors.Is(err, errImportNotWritten), "a plain HTTP gateway is never called")
 }
 
 // Verification stays on: a gateway whose certificate the registration does not trust is refused,

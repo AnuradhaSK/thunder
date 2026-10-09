@@ -6,11 +6,13 @@ package gateway
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -43,6 +45,12 @@ type gatewayDeletion struct {
 // errGatewayRefused is a gateway answering an import with something other than success.
 var errGatewayRefused = errors.New("the gateway refused the import")
 
+// errImportNotWritten marks an import the gateway is known to have written nothing of: it was never
+// sent, the connection to the gateway was never made, or the gateway refused it whole with a 4xx,
+// which it answers before writing anything. Any other failure, such as a timeout or a connection
+// lost after the request went out, leaves open whether the gateway wrote it.
+var errImportNotWritten = errors.New("the gateway wrote nothing of the import")
+
 // gatewayClientInterface calls a gateway's own APIs.
 type gatewayClientInterface interface {
 	// Import posts to the gateway's /import presenting its key, and returns the answer as it came.
@@ -63,11 +71,11 @@ func (c *gatewayClient) Import(ctx context.Context, gw *Gateway, key string,
 	req gatewayImportRequest) (json.RawMessage, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to encode the import: %w", err)
+		return nil, fmt.Errorf("%w: failed to encode the import: %w", errImportNotWritten, err)
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, gw.BaseURL+"/import", bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("failed to build the import request: %w", err)
+		return nil, fmt.Errorf("%w: failed to build the import request: %w", errImportNotWritten, err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	// The key is presented in its own header, which is what the gateway's management API key
@@ -76,11 +84,14 @@ func (c *gatewayClient) Import(ctx context.Context, gw *Gateway, key string,
 
 	client, err := httpClientFor(gw, importTimeout)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", errImportNotWritten, err)
 	}
 	defer releaseConnections(client)
 	resp, err := client.Do(httpReq)
 	if err != nil {
+		if neverConnected(err) {
+			return nil, fmt.Errorf("%w: failed to reach the gateway: %w", errImportNotWritten, err)
+		}
 		return nil, fmt.Errorf("failed to reach the gateway: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -89,10 +100,24 @@ func (c *gatewayClient) Import(ctx context.Context, gw *Gateway, key string,
 	if err != nil {
 		return nil, fmt.Errorf("failed to read the gateway's answer: %w", err)
 	}
+	if resp.StatusCode >= http.StatusBadRequest && resp.StatusCode < http.StatusInternalServerError {
+		return answer, fmt.Errorf("%w: %w: status %d", errGatewayRefused, errImportNotWritten, resp.StatusCode)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return answer, fmt.Errorf("%w: status %d", errGatewayRefused, resp.StatusCode)
 	}
 	return answer, nil
+}
+
+// neverConnected reports whether a call failed before the request could be sent: the connection was
+// refused or never made, or the gateway's certificate did not verify.
+func neverConnected(err error) bool {
+	var opErr *net.OpError
+	if errors.As(err, &opErr) && opErr.Op == "dial" {
+		return true
+	}
+	var certErr *tls.CertificateVerificationError
+	return errors.As(err, &certErr)
 }
 
 // storeTimeout bounds one call to a gateway's store, which reads or writes a single value or a page.

@@ -59,9 +59,14 @@ type AppliedVersion struct {
 
 // ApplyRequest is the body of an apply. Version is a version's hash, a prefix of at least seven of its
 // characters, or "latest", and defaults to "latest".
+//
+// Selection names, by key, the changes to apply. Every other change the diff reports is left alone,
+// and the gateway goes on leaving it alone in later applies until one selects it again. Without a
+// selection, the gateway's standing choices apply; an empty one leaves every change alone.
 type ApplyRequest struct {
-	Version string `json:"version,omitempty"`
-	DryRun  bool   `json:"dryRun,omitempty"`
+	Version   string    `json:"version,omitempty"`
+	DryRun    bool      `json:"dryRun,omitempty"`
+	Selection *[]string `json:"selection,omitempty"`
 }
 
 // RevertRequest is the body of a revert.
@@ -83,12 +88,15 @@ const (
 	ChangeUnchanged ChangeKind = "unchanged"
 )
 
-// Change is one resource's difference.
+// Change is one resource's difference. Key names the resource for a selection. Excluded marks a
+// change the gateway is set to leave alone, which an apply neither writes nor removes.
 type Change struct {
+	Key          string     `json:"key"`
 	ResourceType string     `json:"resourceType"`
 	ID           string     `json:"id,omitempty"`
 	Name         string     `json:"name,omitempty"`
 	Change       ChangeKind `json:"change"`
+	Excluded     bool       `json:"excluded,omitempty"`
 	// Lines is the resource's document diffed line by line, from what the gateway holds to what is
 	// applied. An unchanged resource has none.
 	Lines []LineOp `json:"lines,omitempty"`
@@ -101,7 +109,7 @@ type LineOp struct {
 	Text string `json:"text"`
 }
 
-// DiffSummary counts the changes by kind.
+// DiffSummary counts the changes by kind, leaving out those the gateway is set to leave alone.
 type DiffSummary struct {
 	Added     int `json:"added"`
 	Updated   int `json:"updated"`

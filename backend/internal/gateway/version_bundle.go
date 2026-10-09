@@ -113,13 +113,18 @@ func diffBundles(held, applied []bundleResource) []Change {
 		}
 	}
 
+	sortChanges(changes)
+	return changes
+}
+
+// sortChanges orders changes by resource type, then by name and id.
+func sortChanges(changes []Change) {
 	sort.SliceStable(changes, func(i, j int) bool {
 		if changes[i].ResourceType != changes[j].ResourceType {
 			return changes[i].ResourceType < changes[j].ResourceType
 		}
 		return changes[i].Name+changes[i].ID < changes[j].Name+changes[j].ID
 	})
-	return changes
 }
 
 // maxDiffSteps bounds the work one document's line diff may take, at about 25 ms. Past it, what is
@@ -316,12 +321,16 @@ func splitLines(document string) []string {
 }
 
 func changeOf(resource bundleResource, kind ChangeKind) Change {
-	return Change{ResourceType: resource.Type, ID: resource.ID, Name: resource.Name, Change: kind}
+	return Change{Key: resource.key(), ResourceType: resource.Type, ID: resource.ID, Name: resource.Name,
+		Change: kind}
 }
 
 func summarize(changes []Change) DiffSummary {
 	var summary DiffSummary
 	for _, change := range changes {
+		if change.Excluded {
+			continue
+		}
 		switch change.Change {
 		case ChangeAdded:
 			summary.Added++

@@ -8,12 +8,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"time"
 
 	"github.com/stretchr/testify/mock"
 
+	"github.com/thunder-id/thunderid/internal/flow/flowexec"
 	flowsession "github.com/thunder-id/thunderid/internal/flow/session"
 	inboundmodel "github.com/thunder-id/thunderid/internal/inboundclient/model"
 	oauth2const "github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
@@ -404,4 +406,264 @@ func (suite *AuthorizeServiceTestSuite) TestCheckPromptNone_MaxAgeZeroIsNeverSat
 
 	suite.Equal(oauth2const.ErrorLoginRequired, errCode,
 		"max_age=0 cannot be answered from an existing session")
+}
+
+// promptNoneParams returns a prompt=none request.
+func promptNoneParams() *oauth2model.OAuthParameters {
+	return &oauth2model.OAuthParameters{
+		Prompt:      oauth2const.PromptNone,
+		RedirectURI: "https://client.example.com/callback",
+		State:       "state-1",
+	}
+}
+
+// TestTryCompleteWithSSOSession_FlowNeedsUser: a flow that needs input returns login_required.
+func (suite *AuthorizeServiceTestSuite) TestTryCompleteWithSSOSession_FlowNeedsUser() {
+	svc := suite.newService()
+	suite.mockFlowExecService.EXPECT().Execute(mock.Anything, promptNoneAppID, "exec-1",
+		string(providers.FlowTypeAuthentication), false, "", mock.Anything, "", "", "").
+		Return(&flowexec.FlowStep{Status: providers.FlowStatusIncomplete}, nil)
+	suite.mockAuthReqStore.EXPECT().ClearRequest(mock.Anything, "auth-1").Return(nil)
+
+	redirectURI, authErr := svc.tryCompleteWithSSOSession(context.Background(), promptNoneParams(),
+		promptNoneApp(), "auth-1", "exec-1")
+
+	suite.Empty(redirectURI)
+	suite.Require().NotNil(authErr)
+	suite.Equal(oauth2const.ErrorLoginRequired, authErr.Code)
+	suite.True(authErr.SendErrorToClient, "the error must go back to the client, not to a page")
+	suite.Equal("https://client.example.com/callback", authErr.ClientRedirectURI)
+	suite.Equal("state-1", authErr.State)
+}
+
+// TestTryCompleteWithSSOSession_ExecuteFails: a flow engine error without an assertion returns
+// server_error when server errors may reach the client, and login_required otherwise.
+func (suite *AuthorizeServiceTestSuite) TestTryCompleteWithSSOSession_ExecuteFails() {
+	for enabled, code := range map[bool]string{
+		true:  oauth2const.ErrorServerError,
+		false: oauth2const.ErrorLoginRequired,
+	} {
+		suite.Run(fmt.Sprintf("enabled=%t", enabled), func() {
+			suite.SetupTest()
+			svc := suite.newService()
+			svc.cfg.OAuth.SendServerErrorsToClient = new(enabled)
+			suite.mockFlowExecService.EXPECT().Execute(mock.Anything, promptNoneAppID, "exec-1",
+				string(providers.FlowTypeAuthentication), false, "", mock.Anything, "", "", "").
+				Return(nil, &tidcommon.ServiceError{Code: "FES-1001"})
+			suite.mockAuthReqStore.EXPECT().ClearRequest(mock.Anything, "auth-1").Return(nil)
+
+			redirectURI, authErr := svc.tryCompleteWithSSOSession(context.Background(), promptNoneParams(),
+				promptNoneApp(), "auth-1", "exec-1")
+
+			suite.Empty(redirectURI)
+			suite.Require().NotNil(authErr)
+			suite.Equal(code, authErr.Code)
+			suite.True(authErr.SendErrorToClient)
+			suite.Equal("state-1", authErr.State)
+		})
+	}
+}
+
+// TestTryCompleteWithSSOSession_ServerErrorAssertion: a flow server error goes to the client when
+// server errors may reach it, and is answered with login_required instead of the error page
+// otherwise.
+func (suite *AuthorizeServiceTestSuite) TestTryCompleteWithSSOSession_ServerErrorAssertion() {
+	for enabled, code := range map[bool]string{
+		true:  oauth2const.ErrorServerError,
+		false: oauth2const.ErrorLoginRequired,
+	} {
+		suite.Run(fmt.Sprintf("enabled=%t", enabled), func() {
+			suite.SetupTest()
+			svc := suite.newService()
+			svc.cfg.OAuth.SendServerErrorsToClient = new(enabled)
+			suite.mockFlowExecService.EXPECT().Execute(mock.Anything, promptNoneAppID, "exec-1",
+				string(providers.FlowTypeAuthentication), false, "", mock.Anything, "", "", "").
+				Return(&flowexec.FlowStep{ErrorAssertion: errAssertionServerError},
+					&tidcommon.ServiceError{Code: "FES-1001"})
+			suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, errAssertionServerError, "", "").Return(nil)
+			suite.mockAuthReqStore.EXPECT().
+				GetRequest(mock.Anything, testAuthID).Return(true, failedCallbackAuthCtx(), nil)
+			clears := 1
+			if !enabled {
+				clears = 2
+			}
+			suite.mockAuthReqStore.EXPECT().ClearRequest(mock.Anything, testAuthID).Return(nil).Times(clears)
+
+			redirectURI, authErr := svc.tryCompleteWithSSOSession(context.Background(), promptNoneParams(),
+				promptNoneApp(), testAuthID, "exec-1")
+
+			suite.Empty(redirectURI)
+			suite.Require().NotNil(authErr)
+			suite.Equal(code, authErr.Code)
+			suite.True(authErr.SendErrorToClient, "a silent request must never end on the error page")
+		})
+	}
+}
+
+// TestTryCompleteWithSSOSession_UnverifiableErrorAssertion: an error assertion the callback rejects
+// before consuming the request is answered with login_required, and the request is cleared.
+func (suite *AuthorizeServiceTestSuite) TestTryCompleteWithSSOSession_UnverifiableErrorAssertion() {
+	svc := suite.newService()
+	suite.mockFlowExecService.EXPECT().Execute(mock.Anything, promptNoneAppID, "exec-1",
+		string(providers.FlowTypeAuthentication), false, "", mock.Anything, "", "", "").
+		Return(&flowexec.FlowStep{Status: providers.FlowStatusError, ErrorAssertion: "not-a-jwt"}, nil)
+	suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, "not-a-jwt", "", "").
+		Return(&tidcommon.ServiceError{Code: "JWT-1001"})
+	suite.mockAuthReqStore.EXPECT().ClearRequest(mock.Anything, "auth-1").Return(nil).Once()
+
+	redirectURI, authErr := svc.tryCompleteWithSSOSession(context.Background(), promptNoneParams(),
+		promptNoneApp(), "auth-1", "exec-1")
+
+	suite.Empty(redirectURI)
+	suite.Require().NotNil(authErr)
+	suite.Equal(oauth2const.ErrorLoginRequired, authErr.Code)
+	suite.True(authErr.SendErrorToClient)
+}
+
+// TestTryCompleteWithSSOSession_CallbackServerError: a server error from exchanging a completed
+// flow's assertion goes to the client when server errors may reach it, and is answered with
+// login_required otherwise.
+func (suite *AuthorizeServiceTestSuite) TestTryCompleteWithSSOSession_CallbackServerError() {
+	for enabled, code := range map[bool]string{
+		true:  oauth2const.ErrorServerError,
+		false: oauth2const.ErrorLoginRequired,
+	} {
+		suite.Run(fmt.Sprintf("enabled=%t", enabled), func() {
+			suite.SetupTest()
+			svc := suite.newService()
+			svc.cfg.OAuth.SendServerErrorsToClient = new(enabled)
+			suite.mockFlowExecService.EXPECT().Execute(mock.Anything, promptNoneAppID, "exec-1",
+				string(providers.FlowTypeAuthentication), false, "", mock.Anything, "", "", "").
+				Return(&flowexec.FlowStep{Status: providers.FlowStatusComplete, Assertion: svcJWTWithIat}, nil)
+			suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, svcJWTWithIat, "", "").Return(nil)
+			suite.mockAuthReqStore.EXPECT().GetRequest(mock.Anything, testAuthID).Return(true, authRequestContext{
+				OAuthParameters: oauth2model.OAuthParameters{
+					ClientID:    "test-client",
+					RedirectURI: "https://client.example.com/callback",
+				},
+			}, nil)
+			suite.mockAuthReqStore.EXPECT().ClearRequest(mock.Anything, testAuthID).Return(nil)
+			suite.mockAuthzCodeStore.EXPECT().InsertAuthorizationCode(mock.Anything, mock.Anything).
+				Return(errors.New("db error"))
+
+			redirectURI, authErr := svc.tryCompleteWithSSOSession(context.Background(), promptNoneParams(),
+				promptNoneApp(), testAuthID, "exec-1")
+
+			suite.Empty(redirectURI)
+			suite.Require().NotNil(authErr)
+			suite.Equal(code, authErr.Code)
+			suite.True(authErr.SendErrorToClient, "a silent request must never end on the error page")
+			suite.Equal("state-1", authErr.State)
+		})
+	}
+}
+
+// TestTryCompleteWithSSOSession_FlowFails: a flow failure's error assertion is mapped by the
+// callback, like any other flow failure.
+func (suite *AuthorizeServiceTestSuite) TestTryCompleteWithSSOSession_FlowFails() {
+	svc := suite.newService()
+	suite.mockFlowExecService.EXPECT().Execute(mock.Anything, promptNoneAppID, "exec-1",
+		string(providers.FlowTypeAuthentication), false, "", mock.Anything, "", "", "").
+		Return(&flowexec.FlowStep{Status: providers.FlowStatusError, ErrorAssertion: errAssertionEndUser}, nil)
+	suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, errAssertionEndUser, "", "").Return(nil)
+	suite.mockAuthReqStore.EXPECT().
+		GetRequest(mock.Anything, testAuthID).Return(true, failedCallbackAuthCtx(), nil)
+	suite.mockAuthReqStore.EXPECT().ClearRequest(mock.Anything, testAuthID).Return(nil)
+
+	redirectURI, authErr := svc.tryCompleteWithSSOSession(context.Background(), promptNoneParams(),
+		promptNoneApp(), testAuthID, "exec-1")
+
+	suite.Empty(redirectURI)
+	suite.Require().NotNil(authErr)
+	suite.Equal(oauth2const.ErrorAccessDenied, authErr.Code)
+	suite.True(authErr.SendErrorToClient)
+}
+
+// TestTryCompleteWithSSOSession_CallbackFails: a rejected assertion is redirected to the client.
+func (suite *AuthorizeServiceTestSuite) TestTryCompleteWithSSOSession_CallbackFails() {
+	svc := suite.newService()
+	suite.mockFlowExecService.EXPECT().Execute(mock.Anything, promptNoneAppID, "exec-1",
+		string(providers.FlowTypeAuthentication), false, "", mock.Anything, "", "", "").
+		Return(&flowexec.FlowStep{Status: providers.FlowStatusComplete, Assertion: "not-a-jwt"}, nil)
+	suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, "not-a-jwt", "", "").
+		Return(&tidcommon.ServiceError{Code: "JWT-1001"})
+	suite.mockAuthReqStore.EXPECT().ClearRequest(mock.Anything, "auth-1").Return(nil).Once()
+
+	redirectURI, authErr := svc.tryCompleteWithSSOSession(context.Background(), promptNoneParams(),
+		promptNoneApp(), "auth-1", "exec-1")
+
+	suite.Empty(redirectURI)
+	suite.Require().NotNil(authErr)
+	suite.True(authErr.SendErrorToClient)
+	suite.Equal("https://client.example.com/callback", authErr.ClientRedirectURI)
+	suite.Equal("state-1", authErr.State)
+}
+
+// TestHandleInitialAuthorizationRequest_PromptNoneRedirectsToClient: prompt=none over a live
+// session returns the client redirect with the code instead of login page params.
+func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_PromptNoneRedirectsToClient() {
+	app := suite.testApp()
+	app.ID = promptNoneAppID
+	suite.mockInboundClient.EXPECT().GetOAuthClientByClientID(mock.Anything, "test-client-id").Return(app, nil)
+	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, mock.Anything, app).
+		Return(false, "", "")
+	svc := suite.wirePromptNone(promptNoneSession(time.Minute))
+
+	suite.mockAuthReqStore.EXPECT().AddRequest(mock.Anything, mock.Anything).Return(testAuthID, nil)
+	suite.mockFlowExecService.EXPECT().InitiateFlow(mock.Anything, mock.Anything).Return("exec-1", nil)
+	suite.mockFlowExecService.EXPECT().Execute(mock.Anything, promptNoneAppID, "exec-1",
+		string(providers.FlowTypeAuthentication), false, "", mock.Anything, "", "", "").
+		Return(&flowexec.FlowStep{Status: providers.FlowStatusComplete, Assertion: svcJWTWithIat}, nil)
+
+	suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, svcJWTWithIat, "", "").Return(nil)
+	suite.mockAuthReqStore.EXPECT().GetRequest(mock.Anything, testAuthID).Return(true, authRequestContext{
+		OAuthParameters: oauth2model.OAuthParameters{
+			ClientID:    "test-client-id",
+			RedirectURI: "https://client.example.com/callback",
+			State:       "test-state",
+		},
+	}, nil)
+	suite.mockAuthReqStore.EXPECT().ClearRequest(mock.Anything, testAuthID).Return(nil)
+	suite.mockAuthzCodeStore.EXPECT().InsertAuthorizationCode(mock.Anything, mock.Anything).Return(nil)
+
+	msg := suite.testMsg()
+	msg.RequestQueryParams["prompt"] = []string{oauth2const.PromptNone}
+
+	result, authErr := svc.HandleInitialAuthorizationRequest(promptNoneCtx(), msg)
+
+	suite.Require().Nil(authErr)
+	suite.Require().NotNil(result)
+	suite.Contains(result.RedirectURI, "https://client.example.com/callback")
+	suite.Contains(result.RedirectURI, "code=")
+	suite.Contains(result.RedirectURI, "state=test-state")
+	suite.Empty(result.QueryParams, "the login page must not be used")
+}
+
+// TestHandleInitialAuthorizationRequest_PromptNoneFlowNeedsUser: prompt=none whose flow needs
+// input returns login_required to the client.
+func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_PromptNoneFlowNeedsUser() {
+	app := suite.testApp()
+	app.ID = promptNoneAppID
+	suite.mockInboundClient.EXPECT().GetOAuthClientByClientID(mock.Anything, "test-client-id").Return(app, nil)
+	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, mock.Anything, app).
+		Return(false, "", "")
+	svc := suite.wirePromptNone(promptNoneSession(time.Minute))
+
+	suite.mockAuthReqStore.EXPECT().AddRequest(mock.Anything, mock.Anything).Return(testAuthID, nil)
+	suite.mockFlowExecService.EXPECT().InitiateFlow(mock.Anything, mock.Anything).Return("exec-1", nil)
+	suite.mockFlowExecService.EXPECT().Execute(mock.Anything, promptNoneAppID, "exec-1",
+		string(providers.FlowTypeAuthentication), false, "", mock.Anything, "", "", "").
+		Return(&flowexec.FlowStep{Status: providers.FlowStatusIncomplete}, nil)
+	suite.mockAuthReqStore.EXPECT().ClearRequest(mock.Anything, testAuthID).Return(nil)
+
+	msg := suite.testMsg()
+	msg.RequestQueryParams["prompt"] = []string{oauth2const.PromptNone}
+
+	result, authErr := svc.HandleInitialAuthorizationRequest(promptNoneCtx(), msg)
+
+	suite.Nil(result)
+	suite.Require().NotNil(authErr)
+	suite.Equal(oauth2const.ErrorLoginRequired, authErr.Code)
+	suite.True(authErr.SendErrorToClient)
+	suite.Equal("test-state", authErr.State)
 }

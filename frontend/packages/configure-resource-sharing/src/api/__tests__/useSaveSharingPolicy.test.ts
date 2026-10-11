@@ -1,0 +1,99 @@
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
+
+import {waitFor, renderHook} from '@thunderid/test-utils';
+import {describe, it, expect, beforeEach, vi} from 'vitest';
+import useSaveSharingPolicy from '../useSaveSharingPolicy';
+
+const mockHttpRequest = vi.fn();
+vi.mock('@thunderid/react', () => ({
+  useThunderID: () => ({http: {request: mockHttpRequest}}),
+}));
+
+const mockShowToast = vi.fn();
+vi.mock('@thunderid/contexts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@thunderid/contexts')>();
+  return {
+    ...actual,
+    useConfig: () => ({getServerUrl: () => 'https://localhost:8090'}),
+    useToast: () => ({showToast: mockShowToast}),
+  };
+});
+
+const collection = 'https://localhost:8090/applications/app-1/sharing-policies';
+
+describe('useSaveSharingPolicy', () => {
+  beforeEach(() => {
+    mockHttpRequest.mockReset();
+    mockShowToast.mockReset();
+    mockHttpRequest.mockResolvedValue({data: {}});
+  });
+
+  it('creates a policy with POST', async () => {
+    const {result} = renderHook(() => useSaveSharingPolicy('applications/app-1'));
+
+    result.current.mutate({type: 'create', targets: [{scope: 'allChildren'}]});
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockHttpRequest).toHaveBeenCalledWith(
+      expect.objectContaining({url: collection, method: 'POST', data: {targets: [{scope: 'allChildren'}]}}),
+    );
+    expect(mockShowToast).toHaveBeenCalledWith(expect.any(String), 'success');
+  });
+
+  it('replaces a policy with PUT carrying the version it read', async () => {
+    const {result} = renderHook(() => useSaveSharingPolicy('applications/app-1'));
+
+    result.current.mutate({type: 'update', policyId: 'p1', version: 3, targets: [{scope: 'allOus'}]});
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockHttpRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: `${collection}/p1`,
+        method: 'PUT',
+        data: {targets: [{scope: 'allOus'}], version: 3},
+      }),
+    );
+  });
+
+  it('deletes a policy with DELETE', async () => {
+    const {result} = renderHook(() => useSaveSharingPolicy('applications/app-1'));
+
+    result.current.mutate({type: 'delete', policyId: 'p1'});
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockHttpRequest).toHaveBeenCalledWith(expect.objectContaining({url: `${collection}/p1`, method: 'DELETE'}));
+  });
+
+  it('replaces by deleting before creating', async () => {
+    const {result} = renderHook(() => useSaveSharingPolicy('applications/app-1'));
+
+    result.current.mutate({type: 'replace', policyId: 'p1', targets: [{scope: 'child', ouId: 'retail'}]});
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockHttpRequest.mock.calls.map(([request]) => (request as {method: string}).method)).toEqual([
+      'DELETE',
+      'POST',
+    ]);
+  });
+
+  it('sends nothing for an empty plan', async () => {
+    const {result} = renderHook(() => useSaveSharingPolicy('applications/app-1'));
+
+    result.current.mutate({type: 'none'});
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockHttpRequest).not.toHaveBeenCalled();
+  });
+
+  it('reports a failure without a success toast', async () => {
+    mockHttpRequest.mockRejectedValue(new Error('refused'));
+    const {result} = renderHook(() => useSaveSharingPolicy('applications/app-1'));
+
+    result.current.mutate({type: 'create', targets: [{scope: 'allChildren'}]});
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.error?.message).toBe('refused');
+    expect(mockShowToast).not.toHaveBeenCalled();
+  });
+});

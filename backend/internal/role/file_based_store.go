@@ -357,6 +357,12 @@ func (f *fileBasedStore) DeleteAssignmentsByAssignee(
 	return 0, nil
 }
 
+// DeleteAssignmentsByRoleAndOU is a no-op for the file-based store: assignments a role file
+// declares are held to the policies the same file declares, which the API cannot change.
+func (f *fileBasedStore) DeleteAssignmentsByRoleAndOU(_ context.Context, _, _ string) error {
+	return nil
+}
+
 // GetReferencedPermissions returns no permissions for the file-based store: declarative role
 // permissions are immutable, so they are never pruned.
 func (f *fileBasedStore) GetReferencedPermissions(_ context.Context) ([]ResourcePermissions, error) {

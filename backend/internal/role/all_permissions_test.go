@@ -14,10 +14,13 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	"github.com/thunder-id/thunderid/internal/group"
+	"github.com/thunder-id/thunderid/internal/sharing"
 	"github.com/thunder-id/thunderid/internal/system/sysauthz"
 	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
 	"github.com/thunder-id/thunderid/tests/mocks/entitymock"
 	"github.com/thunder-id/thunderid/tests/mocks/groupmock"
+	"github.com/thunder-id/thunderid/tests/mocks/sharingmock"
 	"github.com/thunder-id/thunderid/tests/mocks/sysauthzmock"
 )
 
@@ -522,13 +525,18 @@ func TestModifyAssignments_RechecksInsideTransaction(t *testing.T) {
 	store.EXPECT().AddAssignments(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	groupSvc := groupmock.NewGroupServiceInterfaceMock(t)
-	groupSvc.EXPECT().ValidateGroupIDs(ctx, []string{"grp1"}).Return(nil).Once()
+	groupSvc.EXPECT().GetGroupsByIDs(ctx, []string{"grp1"}).
+		Return(map[string]*group.Group{"grp1": {ID: "grp1", OUID: "ou1"}}, nil).Once()
+	sharingSvc := sharingmock.NewSharingServiceInterfaceMock(t)
+	sharingSvc.EXPECT().ResolveOverlayRules(ctx, RoleSharingType, "role1", "ou1").
+		Return(sharing.ResolvedOverlay{Owned: true, Visible: true}, nil).Once()
 
 	svc := &roleAssignmentService{
 		roleStore:     store,
 		groupService:  groupSvc,
 		transactioner: txr,
 		authzService:  authz,
+		scope:         newRoleAssignmentScope(sharingSvc, nil, groupSvc, nil),
 	}
 	svcErr := svc.AddAssignments(ctx, "role1", []RoleAssignment{{ID: "grp1", Type: AssigneeTypeGroup}})
 

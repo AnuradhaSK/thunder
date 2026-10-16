@@ -49,15 +49,17 @@ CREATE TABLE "ROLE_PERMISSION" (
 -- Index for resource server queries with deployment isolation on ROLE_PERMISSION
 CREATE INDEX idx_role_permission_resource_server ON "ROLE_PERMISSION" (RESOURCE_SERVER_ID, DEPLOYMENT_ID);
 
--- Table to store Role assignments (to entities and groups)
+-- Table to store Role assignments (to entities and groups). An assignment is made in one
+-- organization unit, so the same assignee can hold a role once in each unit it acts in.
 CREATE TABLE "ROLE_ASSIGNMENT" (
     DEPLOYMENT_ID       VARCHAR(255) NOT NULL,
     ROLE_ID         VARCHAR(36) NOT NULL,
     ASSIGNEE_TYPE   VARCHAR(6)  NOT NULL CHECK (ASSIGNEE_TYPE IN ('entity', 'group')),
     ASSIGNEE_ID     VARCHAR(36) NOT NULL,
+    ASSIGNMENT_OU_ID    VARCHAR(36) NOT NULL,
     CREATED_AT      TIMESTAMPTZ DEFAULT NOW(),
     UPDATED_AT      TIMESTAMPTZ DEFAULT NOW(),
-    PRIMARY KEY (ROLE_ID, DEPLOYMENT_ID, ASSIGNEE_TYPE, ASSIGNEE_ID)
+    PRIMARY KEY (ROLE_ID, DEPLOYMENT_ID, ASSIGNEE_TYPE, ASSIGNEE_ID, ASSIGNMENT_OU_ID)
 );
 
 -- Table to store theme configurations.

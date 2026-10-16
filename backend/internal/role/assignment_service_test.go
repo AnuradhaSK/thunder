@@ -19,6 +19,7 @@ import (
 	"github.com/thunder-id/thunderid/internal/entitytype"
 	"github.com/thunder-id/thunderid/internal/group"
 	"github.com/thunder-id/thunderid/internal/revocation"
+	"github.com/thunder-id/thunderid/internal/sharing"
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
 	"github.com/thunder-id/thunderid/internal/system/declarative_resource/entity"
@@ -28,6 +29,7 @@ import (
 	"github.com/thunder-id/thunderid/tests/mocks/entitytypemock"
 	"github.com/thunder-id/thunderid/tests/mocks/groupmock"
 	"github.com/thunder-id/thunderid/tests/mocks/resourcemock"
+	"github.com/thunder-id/thunderid/tests/mocks/sharingmock"
 	"github.com/thunder-id/thunderid/tests/mocks/sysauthzmock"
 )
 
@@ -38,6 +40,7 @@ type RoleAssignmentServiceTestSuite struct {
 	mockEntityService     *entitymock.EntityServiceInterfaceMock
 	mockGroupService      *groupmock.GroupServiceInterfaceMock
 	mockEntityTypeService *entitytypemock.EntityTypeServiceInterfaceMock
+	mockSharingService    *sharingmock.SharingServiceInterfaceMock
 	transactioner         *fakeTransactioner
 	service               RoleAssignmentServiceInterface
 }
@@ -52,6 +55,11 @@ func (suite *RoleAssignmentServiceTestSuite) SetupTest() {
 	suite.mockGroupService = groupmock.NewGroupServiceInterfaceMock(suite.T())
 	suite.mockEntityTypeService = entitytypemock.NewEntityTypeServiceInterfaceMock(suite.T())
 	suite.transactioner = &fakeTransactioner{}
+	suite.mockSharingService = sharingmock.NewSharingServiceInterfaceMock(suite.T())
+	// The role is owned by every organization unit asked about, unless a test says otherwise, so
+	// the tests that are not about sharing assign as they did before it.
+	suite.mockSharingService.EXPECT().ResolveOverlayRules(mock.Anything, RoleSharingType, mock.Anything, mock.Anything).
+		Return(sharing.ResolvedOverlay{Owned: true, Visible: true}, nil).Maybe()
 	suite.service = newRoleAssignmentService(
 		suite.mockStore,
 		suite.mockEntityService,
@@ -60,6 +68,7 @@ func (suite *RoleAssignmentServiceTestSuite) SetupTest() {
 		nil,
 		suite.transactioner,
 		newAllowAllRoleAuthz(suite.T()),
+		newRoleAssignmentScope(suite.mockSharingService, suite.mockEntityService, suite.mockGroupService, nil),
 	)
 }
 
@@ -67,8 +76,8 @@ func (suite *RoleAssignmentServiceTestSuite) SetupTest() {
 
 func (suite *RoleAssignmentServiceTestSuite) TestGetRoleAssignments_Success() {
 	expectedAssignments := []RoleAssignment{
-		{ID: testUserID1, Type: assigneeTypeEntity},
-		{ID: "group1", Type: AssigneeTypeGroup},
+		{ID: testUserID1, Type: assigneeTypeEntity, OUID: "ou1"},
+		{ID: "group1", Type: AssigneeTypeGroup, OUID: "ou2"},
 	}
 
 	suite.mockStore.On("IsRoleExist", mock.Anything,
@@ -91,8 +100,34 @@ func (suite *RoleAssignmentServiceTestSuite) TestGetRoleAssignments_Success() {
 	suite.Equal(2, len(result.Assignments))
 	suite.Equal(testUserID1, result.Assignments[0].ID)
 	suite.Equal(AssigneeTypeUser, result.Assignments[0].Type)
+	suite.Equal("ou1", result.Assignments[0].OUID)
 	suite.Equal("group1", result.Assignments[1].ID)
 	suite.Equal(AssigneeTypeGroup, result.Assignments[1].Type)
+	suite.Equal("ou2", result.Assignments[1].OUID)
+}
+
+// A declared assignment may name no organization unit, in which case the listing reports the
+// assignee's own.
+func (suite *RoleAssignmentServiceTestSuite) TestGetRoleAssignments_FillsAssigneeOrganizationUnit() {
+	suite.mockStore.On("IsRoleExist", mock.Anything, "role1").Return(true, nil)
+	suite.mockStore.On("GetRoleAssignmentsCount", mock.Anything, "role1").Return(2, nil)
+	suite.mockStore.On("GetRoleAssignments", mock.Anything, "role1", 10, 0).Return([]RoleAssignment{
+		{ID: testUserID1, Type: assigneeTypeEntity},
+		{ID: "group1", Type: AssigneeTypeGroup},
+	}, nil)
+	suite.mockEntityService.On("GetEntitiesByIDs", mock.Anything, []string{testUserID1}).
+		Return([]providers.Entity{
+			{ID: testUserID1, Category: providers.EntityCategoryUser, OUID: "ou1"},
+		}, nil).Once()
+	suite.mockGroupService.On("GetGroupsByIDs", mock.Anything, []string{"group1"}).
+		Return(map[string]*group.Group{"group1": {ID: "group1", OUID: "ou2"}}, nil).Once()
+
+	result, err := suite.service.GetRoleAssignments(context.Background(), "role1", 10, 0, false)
+
+	suite.Nil(err)
+	suite.Require().Len(result.Assignments, 2)
+	suite.Equal("ou1", result.Assignments[0].OUID)
+	suite.Equal("ou2", result.Assignments[1].OUID)
 }
 
 func (suite *RoleAssignmentServiceTestSuite) TestGetRoleAssignments_MissingID() {
@@ -558,6 +593,89 @@ func (suite *RoleAssignmentServiceTestSuite) TestAddAssignments_Success() {
 	suite.Nil(err)
 }
 
+// serviceSharedAs returns an assignment service whose role is shared the way sharingService says,
+// for the tests that are about sharing rather than relying on the suite's permissive default.
+func (suite *RoleAssignmentServiceTestSuite) serviceSharedAs(
+	sharingService *sharingmock.SharingServiceInterfaceMock,
+) RoleAssignmentServiceInterface {
+	return newRoleAssignmentService(
+		suite.mockStore, suite.mockEntityService, suite.mockGroupService, suite.mockEntityTypeService, nil,
+		suite.transactioner, newAllowAllRoleAuthz(suite.T()),
+		newRoleAssignmentScope(sharingService, suite.mockEntityService, suite.mockGroupService, nil),
+	)
+}
+
+func (suite *RoleAssignmentServiceTestSuite) TestAddAssignments_StoresTheOrganizationUnitOfTheAssignment() {
+	suite.mockEntityService.On("GetEntitiesByIDs", mock.Anything, []string{testUserID1}).
+		Return([]providers.Entity{
+			{ID: testUserID1, Category: providers.EntityCategoryUser, OUID: "ou1"},
+		}, nil)
+	suite.mockStore.On("IsRoleExist", mock.Anything, "role1").Return(true, nil)
+	suite.mockStore.On("AddAssignments", mock.Anything, "role1",
+		[]RoleAssignment{{ID: testUserID1, Type: assigneeTypeEntity, OUID: "ou1"}}).Return(nil)
+
+	err := suite.service.AddAssignments(context.Background(), "role1",
+		[]RoleAssignment{{ID: testUserID1, Type: AssigneeTypeUser}})
+
+	suite.Nil(err)
+}
+
+func (suite *RoleAssignmentServiceTestSuite) TestAddAssignments_RefusedWhereTheRoleIsNotShared() {
+	sharingService := sharingmock.NewSharingServiceInterfaceMock(suite.T())
+	sharingService.EXPECT().ResolveOverlayRules(mock.Anything, RoleSharingType, "role1", "ou1").
+		Return(sharing.ResolvedOverlay{}, nil).Once()
+	suite.mockEntityService.On("GetEntitiesByIDs", mock.Anything, []string{testUserID1}).
+		Return([]providers.Entity{
+			{ID: testUserID1, Category: providers.EntityCategoryUser, OUID: "ou1"},
+		}, nil)
+	suite.mockStore.On("IsRoleExist", mock.Anything, "role1").Return(true, nil)
+
+	err := suite.serviceSharedAs(sharingService).AddAssignments(context.Background(), "role1",
+		[]RoleAssignment{{ID: testUserID1, Type: AssigneeTypeUser}})
+
+	suite.Require().NotNil(err)
+	suite.Equal(ErrorRoleNotAssignableInOrganizationUnit.Code, err.Code)
+	suite.mockStore.AssertNotCalled(suite.T(), "AddAssignments", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func (suite *RoleAssignmentServiceTestSuite) TestAddAssignments_RefusedForALockedAssigneeType() {
+	sharingService := sharingmock.NewSharingServiceInterfaceMock(suite.T())
+	sharingService.EXPECT().ResolveOverlayRules(mock.Anything, RoleSharingType, "role1", "ou1").
+		Return(sharing.ResolvedOverlay{Visible: true, Rules: map[string]sharing.OverlayRule{
+			sharingFieldUsers: {Editable: false},
+		}}, nil).Once()
+	suite.mockEntityService.On("GetEntitiesByIDs", mock.Anything, []string{testUserID1}).
+		Return([]providers.Entity{
+			{ID: testUserID1, Category: providers.EntityCategoryUser, OUID: "ou1"},
+		}, nil)
+	suite.mockStore.On("IsRoleExist", mock.Anything, "role1").Return(true, nil)
+
+	err := suite.serviceSharedAs(sharingService).AddAssignments(context.Background(), "role1",
+		[]RoleAssignment{{ID: testUserID1, Type: AssigneeTypeUser}})
+
+	suite.Require().NotNil(err)
+	suite.Equal(ErrorAssigneeTypeNotAssignable.Code, err.Code)
+	suite.mockStore.AssertNotCalled(suite.T(), "AddAssignments", mock.Anything, mock.Anything, mock.Anything)
+}
+
+// An assignment the role's sharing no longer allows has to stay removable, so removing asks the
+// sharing framework nothing: the mock here has no expectations and fails on any call.
+func (suite *RoleAssignmentServiceTestSuite) TestRemoveAssignments_IsNotHeldToTheRolesSharing() {
+	sharingService := sharingmock.NewSharingServiceInterfaceMock(suite.T())
+	suite.mockEntityService.On("GetEntitiesByIDs", mock.Anything, []string{"app1"}).
+		Return([]providers.Entity{
+			{ID: "app1", Category: providers.EntityCategoryApp, OUID: "ou-owner"},
+		}, nil)
+	suite.mockStore.On("IsRoleExist", mock.Anything, "role1").Return(true, nil)
+	suite.mockStore.On("RemoveAssignments", mock.Anything, "role1",
+		[]RoleAssignment{{ID: "app1", Type: assigneeTypeEntity, OUID: "ou-sharee"}}).Return(nil)
+
+	err := suite.serviceSharedAs(sharingService).RemoveAssignments(context.Background(), "role1",
+		[]RoleAssignment{{ID: "app1", Type: AssigneeTypeApp, OUID: "ou-sharee"}})
+
+	suite.Nil(err)
+}
+
 // RemoveAssignments Tests
 
 func (suite *RoleAssignmentServiceTestSuite) TestRemoveAssignments_MissingRoleID() {
@@ -846,7 +964,8 @@ func (s *RoleAssignmentRemovalValidationTestSuite) SetupTest() {
 	s.resources = resourcemock.NewResourceServiceInterfaceMock(s.T())
 	s.authz = sysauthzmock.NewSystemAuthorizationServiceInterfaceMock(s.T())
 	s.service = newRoleAssignmentService(
-		s.store, s.entities, s.groups, nil, s.resources, &fakeTransactioner{}, s.authz)
+		s.store, s.entities, s.groups, nil, s.resources, &fakeTransactioner{}, s.authz,
+		newRoleAssignmentScope(nil, s.entities, s.groups, nil))
 }
 
 func (s *RoleAssignmentRemovalValidationTestSuite) mayChangeAssignments() {
@@ -902,7 +1021,8 @@ func (s *RoleAssignmentRemovalValidationTestSuite) TestExpandsAGroupAssignee() {
 	s.mayChangeAssignments()
 	s.roleGranting([]ResourcePermissions{{ResourceServerID: californiaRSID, Permissions: []string{"license"}}})
 	s.assignedOnPage(1, 0, "", RoleAssignment{ID: targetGroupID, Type: AssigneeTypeGroup})
-	s.groups.On("ValidateGroupIDs", mock.Anything, []string{targetGroupID}).Return(nil)
+	s.groups.On("GetGroupsByIDs", mock.Anything, []string{targetGroupID}).
+		Return(map[string]*group.Group{targetGroupID: {ID: targetGroupID, OUID: "ou-1"}}, nil)
 	stubResourceServer(s.resources, californiaRSID, californiaAud)
 	stubGroupEntities(s.groups, targetGroupID, "member-1", "member-2")
 
@@ -952,8 +1072,8 @@ func (s *RoleAssignmentRemovalValidationTestSuite) TestFindsAnAssignmentOnALater
 func (s *RoleAssignmentRemovalValidationTestSuite) TestRunsTheRemovalsAssigneeChecks() {
 	s.mayChangeAssignments()
 	s.assignedOnPage(1, 0, "", RoleAssignment{ID: targetGroupID, Type: AssigneeTypeGroup})
-	s.groups.On("ValidateGroupIDs", mock.Anything, []string{targetGroupID}).
-		Return(&group.ErrorInvalidGroupMemberID)
+	s.groups.On("GetGroupsByIDs", mock.Anything, []string{targetGroupID}).
+		Return(map[string]*group.Group{}, nil)
 
 	_, svcErr := s.service.ValidateRemoveAssignment(context.Background(), targetRoleID, targetGroupID)
 
@@ -1028,7 +1148,8 @@ assignments:
 		GenericFileBasedStore: declarativeresource.NewGenericFileBasedStoreForTest(entity.KeyTypeRole),
 	}
 	s.Require().NoError(store.Create(declared.ID, declared))
-	service := newRoleAssignmentService(store, s.entities, s.groups, nil, s.resources, &fakeTransactioner{}, s.authz)
+	service := newRoleAssignmentService(store, s.entities, s.groups, nil, s.resources, &fakeTransactioner{}, s.authz,
+		newRoleAssignmentScope(nil, s.entities, s.groups, nil))
 	s.mayChangeAssignments()
 	s.entities.On("GetEntitiesByIDs", mock.Anything, []string{targetUserID}).
 		Return([]providers.Entity{{ID: targetUserID, Category: providers.EntityCategoryUser}}, nil)

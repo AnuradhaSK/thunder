@@ -235,8 +235,17 @@ func registerServices(mux *http.ServeMux, cacheManager cache.CacheManagerInterfa
 		scimconfig.FromServerRuntime(),
 	)
 
+	// Initialized before the resource types that share through it, which register with it and
+	// declare the sharing policies their resource files carry.
+	sharingService, err := sharing.Initialize(cacheManager, ouHierarchyResolver, ouEnumerator,
+		runtime.Config.ResourceSharing.AllowChildOUCrossTreeSharing)
+	fatalOnError(ctx, logger, err, "Failed to initialize SharingService")
+
 	roleService, roleAssignmentService, ouRoleResolver, roleExporter, err := role.Initialize(
 		mux, entityService, groupService, ouService, resourceService, entityTypeService, ouAuthzService,
+		sharingService, map[providers.EntityCategory]sharing.ResourceType{
+			providers.EntityCategoryApp: application.ApplicationSharingType,
+		},
 	)
 	fatalOnError(ctx, logger, err, "Failed to initialize RoleService")
 	exporters = append(exporters, roleExporter)
@@ -440,10 +449,6 @@ func registerServices(mux *http.ServeMux, cacheManager cache.CacheManagerInterfa
 	layoutMgtService, layoutExporter, err := layoutmgt.Initialize(mux)
 	fatalOnError(ctx, logger, err, "Failed to initialize LayoutMgtService")
 	exporters = append(exporters, layoutExporter)
-
-	sharingService, err := sharing.Initialize(cacheManager, ouHierarchyResolver, ouEnumerator,
-		runtime.Config.ResourceSharing.AllowChildOUCrossTreeSharing)
-	fatalOnError(ctx, logger, err, "Failed to initialize SharingService")
 
 	cimdService := cimd.Initialize(mux)
 	inboundClientService, err := inboundclient.Initialize(

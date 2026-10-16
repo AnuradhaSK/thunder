@@ -250,6 +250,183 @@ var (
 			DefaultValue: "The assignee does not hold this role",
 		},
 	}
+	// ErrorRoleNotAssignableInOrganizationUnit is returned when an assignment is made in an
+	// organization unit the role is neither owned by nor shared with.
+	ErrorRoleNotAssignableInOrganizationUnit = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "ROL-1021",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.roleservice.role_not_assignable_in_organization_unit",
+			DefaultValue: "Role cannot be assigned in the organization unit",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key: "error.roleservice.role_not_assignable_in_organization_unit_description",
+			DefaultValue: "The role is not available to the organization unit an assignment is made in. " +
+				"Share the role with that organization unit, or assign it in one the role is shared with",
+		},
+	}
+	// ErrorAssigneeTypeNotAssignable is returned when the role's sharing terms lock a type of
+	// assignee in the organization unit an assignment is made in.
+	ErrorAssigneeTypeNotAssignable = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "ROL-1022",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.roleservice.assignee_type_not_assignable",
+			DefaultValue: "Assignee type cannot hold the role in the organization unit",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key: "error.roleservice.assignee_type_not_assignable_description",
+			DefaultValue: "The role's sharing terms do not allow this type of assignee in the " +
+				"organization unit an assignment is made in. Assign a type the terms allow",
+		},
+	}
+	// ErrorAssigneeNotInOrganizationUnit is returned when an assignment names an organization unit
+	// its assignee neither belongs to nor is shared with.
+	ErrorAssigneeNotInOrganizationUnit = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "ROL-1023",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.roleservice.assignee_not_in_organization_unit",
+			DefaultValue: "Assignee cannot be assigned in the organization unit",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key: "error.roleservice.assignee_not_in_organization_unit_description",
+			DefaultValue: "An assignment names an organization unit its assignee cannot be assigned in. " +
+				"Leave out the organization unit to use the assignee's own",
+		},
+	}
+	// ErrorSharingRuleValuesNotSupported is returned when a sharing rule on a role lists values.
+	ErrorSharingRuleValuesNotSupported = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "ROL-1024",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.roleservice.sharing_rule_values_not_supported",
+			DefaultValue: "Sharing rule values are not supported for roles",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key: "error.roleservice.sharing_rule_values_not_supported_description",
+			DefaultValue: "A sharing rule on a role states only whether a type of assignee may hold the role. " +
+				"Remove value, allowedValues and excludedValues from the rule",
+		},
+	}
+
+	// Sharing policy errors. Each carries the sharing framework's own description through, so a
+	// refusal keeps the half that says what is wrong.
+
+	// ErrorInvalidSharingPolicy is returned when a sharing policy is not one the issuing
+	// organization unit may write.
+	ErrorInvalidSharingPolicy = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "ROL-1025",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.roleservice.invalid_sharing_policy",
+			DefaultValue: "Invalid sharing policy",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key:          "error.roleservice.invalid_sharing_policy_description",
+			DefaultValue: "The sharing policy is not one the issuing organization unit may write",
+		},
+	}
+	// ErrorSharingPolicyNotFound is returned when the role holds no policy under the requested
+	// id. A policy belonging to another resource answers the same way.
+	ErrorSharingPolicyNotFound = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "ROL-1026",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.roleservice.sharing_policy_not_found",
+			DefaultValue: "Sharing policy not found",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key:          "error.roleservice.sharing_policy_not_found_description",
+			DefaultValue: "The role has no sharing policy with the specified id",
+		},
+	}
+	// ErrorSharingPolicyExists is returned when the organization unit already holds a policy for
+	// this role.
+	ErrorSharingPolicyExists = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "ROL-1027",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.roleservice.sharing_policy_exists",
+			DefaultValue: "Sharing policy already exists",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key:          "error.roleservice.sharing_policy_exists_description",
+			DefaultValue: "This organization unit already has a sharing policy for the role; edit it instead",
+		},
+	}
+	// ErrorSharingPolicyVersionMismatch is returned when an edit names a version the policy has
+	// moved past.
+	ErrorSharingPolicyVersionMismatch = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "ROL-1028",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.roleservice.sharing_policy_version_mismatch",
+			DefaultValue: "Sharing policy version mismatch",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key:          "error.roleservice.sharing_policy_version_mismatch_description",
+			DefaultValue: "The sharing policy changed since it was read; read it again and retry the edit",
+		},
+	}
+	// ErrorSharingPolicyDeclared is returned when an edit or a delete is aimed at a policy a
+	// resource file declares.
+	ErrorSharingPolicyDeclared = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "ROL-1029",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.roleservice.sharing_policy_declared",
+			DefaultValue: "Sharing policy is declared",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key:          "error.roleservice.sharing_policy_declared_description",
+			DefaultValue: "The sharing policy is declared in a resource file and cannot be changed through the API",
+		},
+	}
+	// ErrorRoleNotSharedToOU is returned when an organization unit cannot see the role, so
+	// there are no terms to resolve for it.
+	ErrorRoleNotSharedToOU = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "ROL-1030",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.roleservice.role_not_shared_to_ou",
+			DefaultValue: "Role is not shared to the organization unit",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key: "error.roleservice.role_not_shared_to_ou_description",
+			DefaultValue: "No sharing policy reaches the specified organization unit, so the role is not available " +
+				"there",
+		},
+	}
+	// ErrorMissingOUIDParameter is returned when an overlay-rules request does not say which
+	// organization unit to resolve for.
+	ErrorMissingOUIDParameter = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "ROL-1031",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.roleservice.missing_ou_id_parameter",
+			DefaultValue: "Missing required parameter",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key:          "error.roleservice.missing_ou_id_parameter_description",
+			DefaultValue: "The 'ouId' query parameter is required",
+		},
+	}
+	// ErrorDeploymentWideSharingNotAllowed is returned when a create through the API states a
+	// section whose reach is not bounded by where the issuing organization unit sits in the tree.
+	ErrorDeploymentWideSharingNotAllowed = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "ROL-1032",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.roleservice.deployment_wide_sharing_not_allowed",
+			DefaultValue: "Deployment-wide sharing is not allowed",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key: "error.roleservice.deployment_wide_sharing_not_allowed_description",
+			DefaultValue: "A policy reaching all organization units or the roots of all other trees can only be " +
+				"created from a declarative resource file or an import",
+		},
+	}
 )
 
 // Internal error constants for role management operations.

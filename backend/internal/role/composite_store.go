@@ -370,6 +370,12 @@ func (c *compositeRoleStore) DeleteAssignmentsByRoleID(ctx context.Context, id s
 	return c.dbStore.DeleteAssignmentsByRoleID(ctx, id)
 }
 
+// DeleteAssignmentsByRoleAndOU deletes a role's assignments in one organization unit from the
+// database store only.
+func (c *compositeRoleStore) DeleteAssignmentsByRoleAndOU(ctx context.Context, id, ouID string) error {
+	return c.dbStore.DeleteAssignmentsByRoleAndOU(ctx, id, ouID)
+}
+
 // DeleteAssignmentsByAssignee deletes assignments for the assignee from the database store only.
 func (c *compositeRoleStore) DeleteAssignmentsByAssignee(
 	ctx context.Context, assigneeType, assigneeID string) (int64, error) {
@@ -676,25 +682,32 @@ func mergeRoles(dbRoles, fileRoles []Role) []Role {
 }
 
 // mergeAssignments deduplicates and merges assignments from database and file stores.
-// Database assignments take precedence over file-based assignments with the same ID and type.
+// Database assignments take precedence over file-based assignments of the same assignee in the same
+// organization unit. A file-based assignment that names no organization unit is made in the
+// assignee's own, which the store cannot resolve, so it gives way to any database assignment of
+// that assignee.
 func mergeAssignments(dbAssignments, fileAssignments []RoleAssignment) []RoleAssignment {
 	seen := make(map[string]bool)
+	seenAssignee := make(map[string]bool)
 	result := make([]RoleAssignment, 0, len(dbAssignments)+len(fileAssignments))
 
 	// Add database assignments first (they take precedence)
 	for _, assignment := range dbAssignments {
-		key := string(assignment.Type) + ":" + assignment.ID
+		assignee := string(assignment.Type) + ":" + assignment.ID
 		result = append(result, assignment)
-		seen[key] = true
+		seen[assignee+":"+assignment.OUID] = true
+		seenAssignee[assignee] = true
 	}
 
 	// Add file-based assignments only if not already seen
 	for _, assignment := range fileAssignments {
-		key := string(assignment.Type) + ":" + assignment.ID
-		if !seen[key] {
-			result = append(result, assignment)
-			seen[key] = true
+		assignee := string(assignment.Type) + ":" + assignment.ID
+		key := assignee + ":" + assignment.OUID
+		if seen[key] || (assignment.OUID == "" && seenAssignee[assignee]) {
+			continue
 		}
+		result = append(result, assignment)
+		seen[key] = true
 	}
 
 	return result

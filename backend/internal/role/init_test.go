@@ -15,12 +15,14 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/thunder-id/thunderid/internal/sharing"
 	"github.com/thunder-id/thunderid/internal/system/config"
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	"github.com/thunder-id/thunderid/internal/system/database/provider"
 	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
 	"github.com/thunder-id/thunderid/internal/system/declarative_resource/entity"
 	"github.com/thunder-id/thunderid/tests/mocks/database/providermock"
+	"github.com/thunder-id/thunderid/tests/mocks/sharingmock"
 )
 
 // InitTestSuite contains tests for store initialization.
@@ -628,6 +630,14 @@ func (suite *LoadDeclarativeResourcesTestSuite) TestMatchesAssigneeEmptyAssignme
 	suite.False(matchesAssignee(assignments, "", groupSet))
 }
 
+// sharingForInit returns a sharing service that accepts the role type's registration, which
+// Initialize makes once the store is ready.
+func (suite *InitTestSuite) sharingForInit() *sharingmock.SharingServiceInterfaceMock {
+	sharingService := sharingmock.NewSharingServiceInterfaceMock(suite.T())
+	sharingService.EXPECT().RegisterResourceType(mock.Anything).Maybe()
+	return sharingService
+}
+
 // TestInitialize_DBClientError tests Initialize when DB client retrieval fails
 func (suite *InitTestSuite) TestInitialize_DBClientError() {
 	mockProvider := &providermock.DBProviderInterfaceMock{}
@@ -642,7 +652,7 @@ func (suite *InitTestSuite) TestInitialize_DBClientError() {
 	}()
 
 	mux := http.NewServeMux()
-	_, _, _, _, err := Initialize(mux, nil, nil, nil, nil, nil, nil)
+	_, _, _, _, err := Initialize(mux, nil, nil, nil, nil, nil, nil, suite.sharingForInit(), nil)
 
 	suite.Error(err)
 	suite.Equal("mock db client error", err.Error())
@@ -666,7 +676,7 @@ func (suite *InitTestSuite) TestInitialize_TransactionerError() {
 	}()
 
 	mux := http.NewServeMux()
-	_, _, _, _, err := Initialize(mux, nil, nil, nil, nil, nil, nil)
+	_, _, _, _, err := Initialize(mux, nil, nil, nil, nil, nil, nil, suite.sharingForInit(), nil)
 
 	suite.Error(err)
 	suite.Equal("mock transactioner error", err.Error())
@@ -697,7 +707,7 @@ func (suite *InitTestSuite) TestInitialize_Success() {
 	}()
 
 	mux := http.NewServeMux()
-	svc, _, _, exporter, err := Initialize(mux, nil, nil, nil, nil, nil, nil)
+	svc, _, _, exporter, err := Initialize(mux, nil, nil, nil, nil, nil, nil, suite.sharingForInit(), nil)
 
 	suite.NoError(err)
 	suite.NotNil(svc)
@@ -733,7 +743,7 @@ func (suite *InitTestSuite) TestInitialize_StoreInitError() {
 	}()
 
 	mux := http.NewServeMux()
-	svc, _, _, exporter, err := Initialize(mux, nil, nil, nil, nil, nil, nil)
+	svc, _, _, exporter, err := Initialize(mux, nil, nil, nil, nil, nil, nil, suite.sharingForInit(), nil)
 
 	suite.Error(err)
 	if err != nil {
@@ -741,4 +751,97 @@ func (suite *InitTestSuite) TestInitialize_StoreInitError() {
 	}
 	suite.Nil(svc)
 	suite.Nil(exporter)
+}
+
+// writeDeclaredRole puts one role document where a declarative-mode Initialize reads it, and
+// restores the runtime the suite set up when the test ends.
+func (suite *InitTestSuite) writeDeclaredRole(document string) {
+	// The declarative store is shared by the whole process, so a role an earlier test loaded would
+	// be reported as a duplicate.
+	suite.Require().NoError(entity.GetInstance().Clear())
+	config.ResetServerRuntime()
+	testDir := suite.T().TempDir()
+	rolesDir := filepath.Join(testDir, "config", "resources", "roles")
+	suite.Require().NoError(os.MkdirAll(rolesDir, 0750))
+	suite.Require().NoError(os.WriteFile(filepath.Join(rolesDir, "role.yaml"), []byte(document), 0600))
+
+	testConfig := &config.Config{
+		Role:                 config.RoleConfig{Store: string(serverconst.StoreModeDeclarative)},
+		DeclarativeResources: config.DeclarativeResources{Enabled: true},
+	}
+	suite.Require().NoError(config.InitializeServerRuntime(testDir, testConfig))
+	suite.T().Cleanup(func() {
+		suite.NoError(entity.GetInstance().Clear())
+		config.ResetServerRuntime()
+		suite.SetupSuite()
+	})
+}
+
+const declaredSharedRole = `
+id: role1
+name: Support Agent
+ouId: ou-owner
+permissions: []
+sharingPolicies:
+  - id: role1-policy-owner
+    childUnits:
+      mode: all
+assignments:
+  - id: user1
+    type: user
+  - id: group1
+    type: group
+    ouId: ou-sharee
+`
+
+// A declared role's policies are loaded through the sharing framework, and its assignments are then
+// held to them.
+func (suite *InitTestSuite) TestInitialize_DeclaredRoleSharing() {
+	suite.writeDeclaredRole(declaredSharedRole)
+
+	sharingService := sharingmock.NewSharingServiceInterfaceMock(suite.T())
+	sharingService.EXPECT().RegisterResourceType(mock.Anything).Once()
+	sharingService.EXPECT().LoadDeclarativeResources(mock.Anything, mock.MatchedBy(
+		func(cfg sharing.DeclarativeLoaderConfig) bool {
+			return cfg.ResourceType == RoleSharingType && cfg.DirectoryName == "roles"
+		})).Return(nil).Once()
+	sharingService.EXPECT().ResolveOverlayRules(mock.Anything, RoleSharingType, "role1", "ou-sharee").
+		Return(sharing.ResolvedOverlay{Visible: true, Rules: map[string]sharing.OverlayRule{
+			sharingFieldGroups: {Editable: true},
+		}}, nil).Once()
+
+	svc, _, _, _, err := Initialize(http.NewServeMux(), nil, nil, nil, nil, nil, nil, sharingService, nil)
+
+	suite.NoError(err)
+	suite.NotNil(svc)
+}
+
+func (suite *InitTestSuite) TestInitialize_DeclaredAssignmentOutsideTheRolesSharing() {
+	suite.writeDeclaredRole(declaredSharedRole)
+
+	sharingService := sharingmock.NewSharingServiceInterfaceMock(suite.T())
+	sharingService.EXPECT().RegisterResourceType(mock.Anything).Once()
+	sharingService.EXPECT().LoadDeclarativeResources(mock.Anything, mock.Anything).Return(nil).Once()
+	sharingService.EXPECT().ResolveOverlayRules(mock.Anything, RoleSharingType, "role1", "ou-sharee").
+		Return(sharing.ResolvedOverlay{}, nil).Once()
+
+	svc, _, _, _, err := Initialize(http.NewServeMux(), nil, nil, nil, nil, nil, nil, sharingService, nil)
+
+	suite.ErrorContains(err, "failed to check declared role assignments")
+	suite.ErrorContains(err, ErrorRoleNotAssignableInOrganizationUnit.Code)
+	suite.Nil(svc)
+}
+
+func (suite *InitTestSuite) TestInitialize_DeclaredSharingPolicyRefused() {
+	suite.writeDeclaredRole(declaredSharedRole)
+
+	sharingService := sharingmock.NewSharingServiceInterfaceMock(suite.T())
+	sharingService.EXPECT().RegisterResourceType(mock.Anything).Once()
+	sharingService.EXPECT().LoadDeclarativeResources(mock.Anything, mock.Anything).
+		Return(errors.New("policy refused")).Once()
+
+	svc, _, _, _, err := Initialize(http.NewServeMux(), nil, nil, nil, nil, nil, nil, sharingService, nil)
+
+	suite.ErrorContains(err, "policy refused")
+	suite.Nil(svc)
 }

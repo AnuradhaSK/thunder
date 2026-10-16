@@ -358,3 +358,36 @@ func (suite *CompositeRoleStoreTestSuite) TestCascadeHooks_UseDatabaseStoreOnly(
 	suite.mockFileStore.AssertNotCalled(suite.T(), "DeleteRolePermission",
 		mock.Anything, mock.Anything, mock.Anything)
 }
+
+func (suite *CompositeRoleStoreTestSuite) TestMergeAssignments_KeepsOneAssigneePerOrganizationUnit() {
+	db := []RoleAssignment{
+		{ID: "app1", Type: assigneeTypeEntity, OUID: "ou-owner"},
+		{ID: "user1", Type: assigneeTypeEntity, OUID: "ou-owner"},
+	}
+	file := []RoleAssignment{
+		// The same assignee in the same organization unit is the database row again.
+		{ID: "app1", Type: assigneeTypeEntity, OUID: "ou-owner"},
+		// The same assignee in another organization unit is a second assignment.
+		{ID: "app1", Type: assigneeTypeEntity, OUID: "ou-sharee"},
+		// One that names no organization unit gives way to the database row of that assignee.
+		{ID: "user1", Type: assigneeTypeEntity},
+		{ID: "group1", Type: AssigneeTypeGroup},
+	}
+
+	suite.Equal([]RoleAssignment{
+		{ID: "app1", Type: assigneeTypeEntity, OUID: "ou-owner"},
+		{ID: "user1", Type: assigneeTypeEntity, OUID: "ou-owner"},
+		{ID: "app1", Type: assigneeTypeEntity, OUID: "ou-sharee"},
+		{ID: "group1", Type: AssigneeTypeGroup},
+	}, mergeAssignments(db, file))
+}
+
+// Assignments live only in the database, so the cleanup an organization unit losing the role needs
+// goes there.
+func (suite *CompositeRoleStoreTestSuite) TestDeleteAssignmentsByRoleAndOU_GoesToTheDatabase() {
+	suite.mockDBStore.On("DeleteAssignmentsByRoleAndOU", mock.Anything, "role1", "ou-child").Return(nil)
+
+	suite.NoError(suite.store.DeleteAssignmentsByRoleAndOU(context.Background(), "role1", "ou-child"))
+	suite.mockFileStore.AssertNotCalled(suite.T(), "DeleteAssignmentsByRoleAndOU",
+		mock.Anything, mock.Anything, mock.Anything)
+}

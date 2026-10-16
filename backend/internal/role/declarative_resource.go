@@ -11,9 +11,11 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/thunder-id/thunderid/internal/sharing"
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
 	"github.com/thunder-id/thunderid/internal/system/log"
+	"github.com/thunder-id/thunderid/internal/system/security"
 	"github.com/thunder-id/thunderid/internal/system/utils"
 )
 
@@ -29,11 +31,15 @@ const (
 type roleExporter struct {
 	service           RoleServiceInterface
 	assignmentService RoleAssignmentServiceInterface
+	sharingService    sharing.SharingServiceInterface
 }
 
 // newRoleExporter creates a new role exporter.
-func newRoleExporter(service RoleServiceInterface, assignmentService RoleAssignmentServiceInterface) *roleExporter {
-	return &roleExporter{service: service, assignmentService: assignmentService}
+func newRoleExporter(
+	service RoleServiceInterface, assignmentService RoleAssignmentServiceInterface,
+	sharingService sharing.SharingServiceInterface,
+) *roleExporter {
+	return &roleExporter{service: service, assignmentService: assignmentService, sharingService: sharingService}
 }
 
 // GetResourceType returns the resource type for roles.
@@ -80,7 +86,7 @@ func (e *roleExporter) GetAllResourceIDs(ctx context.Context) ([]string, *tidcom
 	return ids, nil
 }
 
-// GetResourceByID retrieves a role by its ID.
+// GetResourceByID retrieves a role by its ID, with the sharing policies recorded for it.
 func (e *roleExporter) GetResourceByID(
 	ctx context.Context, id string) (interface{}, string, *tidcommon.ServiceError) {
 	roleWithPermissions, err := e.service.GetRoleWithPermissions(ctx, id)
@@ -93,18 +99,30 @@ func (e *roleExporter) GetResourceByID(
 		return nil, "", err
 	}
 
+	// A document that silently lost its sharing would re-import as a role its assignments in other
+	// organization units could not be held to, so this fails the export rather than thinning it.
+	replayable, sharingErr := e.sharingService.ExportPolicies(ctx, RoleSharingType, id)
+	if sharingErr != nil {
+		return nil, "", translateSharingError(sharingErr)
+	}
+	var policies []sharing.PolicyRequest
+	for _, r := range replayable {
+		policies = append(policies, r.Request)
+	}
+
 	perms := make([]roleDeclarativePermission, 0, len(roleWithPermissions.Permissions))
 	for _, p := range roleWithPermissions.Permissions {
 		perms = append(perms, roleDeclarativePermission(p))
 	}
 
 	role := &roleDeclarativeResource{
-		ID:          roleWithPermissions.ID,
-		Name:        roleWithPermissions.Name,
-		Description: roleWithPermissions.Description,
-		OUID:        roleWithPermissions.OUID,
-		Permissions: perms,
-		Assignments: assignments,
+		ID:              roleWithPermissions.ID,
+		Name:            roleWithPermissions.Name,
+		Description:     roleWithPermissions.Description,
+		OUID:            roleWithPermissions.OUID,
+		Permissions:     perms,
+		SharingPolicies: policies,
+		Assignments:     assignments,
 	}
 
 	return role, role.Name, nil
@@ -221,7 +239,9 @@ type roleDeclarativeResource struct {
 	OUID        string                      `yaml:"ouId,omitempty"`
 	OUHandle    string                      `yaml:"ouHandle,omitempty"`
 	Permissions []roleDeclarativePermission `yaml:"permissions"`
-	Assignments []RoleAssignment            `yaml:"assignments,omitempty"`
+	// SharingPolicies are the organization units the role may be assigned in, and on what terms.
+	SharingPolicies []sharing.PolicyRequest `yaml:"sharingPolicies,omitempty"`
+	Assignments     []RoleAssignment        `yaml:"assignments,omitempty"`
 }
 
 // toResourcePermissions converts roleDeclarativePermission to ResourcePermissions.
@@ -340,6 +360,7 @@ func (e *roleExporter) getAllRoleAssignments(
 			assignments = append(assignments, RoleAssignment{
 				ID:   assignment.ID,
 				Type: assignment.Type,
+				OUID: assignment.OUID,
 			})
 		}
 
@@ -352,4 +373,123 @@ func (e *roleExporter) getAllRoleAssignments(
 	}
 
 	return assignments, nil
+}
+
+// makeRoleSharingConfig creates the loader config the sharing framework reads a role's declared
+// policies with. It names the roles directory, because a policy is carried inside the role that
+// declares it rather than in a document of its own.
+func makeRoleSharingConfig(service RoleServiceInterface) sharing.DeclarativeLoaderConfig {
+	return sharing.DeclarativeLoaderConfig{
+		ResourceType:  RoleSharingType,
+		DirectoryName: "roles",
+		Parser:        makeRoleSharingParser(service),
+	}
+}
+
+// makeRoleSharingParser returns a parser that reads the sharing half of one role document.
+//
+// It resolves through the service because a document may name its organization unit by handle,
+// and a policy has to be declared against the id.
+func makeRoleSharingParser(
+	service RoleServiceInterface,
+) func([]byte) (*sharing.DeclaredResourcePolicies, error) {
+	return func(data []byte) (*sharing.DeclaredResourcePolicies, error) {
+		var resource roleDeclarativeResource
+		if err := yaml.Unmarshal(data, &resource); err != nil {
+			return nil, fmt.Errorf("failed to parse role YAML: %w", err)
+		}
+		// Most documents declare no policy, and resolving one that has nothing to declare would be
+		// a lookup for an answer nobody reads.
+		if len(resource.SharingPolicies) == 0 {
+			return &sharing.DeclaredResourcePolicies{ResourceID: resource.ID}, nil
+		}
+
+		role := &RoleWithPermissionsAndAssignments{
+			ID: resource.ID, Name: resource.Name, OUID: resource.OUID, OUHandle: resource.OUHandle,
+		}
+		if svcErr := service.ResolveRoleOUHandle(context.Background(), role); svcErr != nil {
+			return nil, fmt.Errorf("organization unit with handle %q not found for role '%s'",
+				resource.OUHandle, resource.Name)
+		}
+
+		return &sharing.DeclaredResourcePolicies{
+			ResourceID:   resource.ID,
+			ResourceName: resource.Name,
+			OwningOUID:   role.OUID,
+			Policies:     resource.SharingPolicies,
+		}, nil
+	}
+}
+
+// checkDeclaredAssignments holds every role document's assignments to the role's sharing. It reads
+// the roles directory once more, after the roles and their sharing policies are loaded, because an
+// assignment can only be judged against policies that are already declared.
+func checkDeclaredAssignments(ctx context.Context, scope *roleAssignmentScope) error {
+	resourceConfig := declarativeresource.ResourceConfig{
+		ResourceType:  "RoleAssignment",
+		DirectoryName: "roles",
+		Parser: func(data []byte) (interface{}, error) {
+			var resource roleDeclarativeResource
+			if err := yaml.Unmarshal(data, &resource); err != nil {
+				return nil, err
+			}
+			return &resource, nil
+		},
+		IDExtractor: func(data interface{}) string {
+			if v, ok := data.(*roleDeclarativeResource); ok {
+				return v.ID
+			}
+			return ""
+		},
+	}
+
+	checker := &declaredAssignmentChecker{ctx: ctx, scope: scope}
+	loader := declarativeresource.NewResourceLoader(resourceConfig, checker)
+	if err := loader.LoadResources(); err != nil {
+		return fmt.Errorf("failed to check declared role assignments: %w", err)
+	}
+	return nil
+}
+
+// declaredAssignmentChecker checks a role document's assignments as the loader hands the document
+// over. It stores nothing: the role itself is already loaded.
+type declaredAssignmentChecker struct {
+	ctx   context.Context
+	scope *roleAssignmentScope
+}
+
+// Create checks the assignments one role document makes in a named organization unit. An
+// assignment that names none is made in the assignee's own organization unit, which is only known
+// once the assignee is resolved, so it is not judged here. For the same reason an assignee is not
+// checked to belong to the unit it is assigned in: a declared assignee may load after the roles do,
+// and a role document's assignees have never been resolved at load.
+func (c *declaredAssignmentChecker) Create(_ string, data interface{}) error {
+	resource, ok := data.(*roleDeclarativeResource)
+	if !ok {
+		return fmt.Errorf("unexpected data type: %T", data)
+	}
+
+	var scoped []RoleAssignment
+	for _, assignment := range resource.Assignments {
+		if assignment.OUID == "" {
+			continue
+		}
+		if _, known := sharingFieldByAssigneeType[assignment.Type]; !known {
+			return fmt.Errorf("role '%s' assigns '%s' in organization unit %q with type '%s': "+
+				"an assignment that names an organization unit must be of type user, app, agent or group",
+				resource.Name, assignment.ID, assignment.OUID, assignment.Type)
+		}
+		scoped = append(scoped, assignment)
+	}
+	if len(scoped) == 0 {
+		return nil
+	}
+
+	// Declaring carries no caller to scope against.
+	if svcErr := c.scope.requireAssignable(
+		security.WithRuntimeContext(c.ctx), resource.ID, scoped); svcErr != nil {
+		return fmt.Errorf("role '%s' declares an assignment its sharing does not allow: %s: %s",
+			resource.Name, svcErr.Code, svcErr.ErrorDescription.DefaultValue)
+	}
+	return nil
 }

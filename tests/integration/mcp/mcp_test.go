@@ -44,6 +44,8 @@ const (
 	// permission on the default System resource server. Reused here so the admin ends up in that
 	// same group for this suite's own resource server too.
 	adminGroupID = "01900000-0000-7000-8000-000000000040"
+	// defaultOUID is the bootstrapped organization unit the Administrators group belongs to.
+	defaultOUID = "01900000-0000-7000-8000-000000000001"
 
 	systemActionHandle = "system"
 )
@@ -103,11 +105,12 @@ func (ts *MCPTestSuite) SetupSuite() {
 
 	// Grants the "system" permission on this resource server to the same group the bootstrapped
 	// admin user belongs to, so the admin token request below can obtain "system" scope bound to
-	// this resource server's identifier instead of only the default one.
+	// this resource server's identifier instead of only the default one. The role sits in the
+	// group's own organization unit, since a role is assignable only where it is owned or shared.
 	roleID, err := testutils.CreateRole(testutils.Role{
 		Name:        "MCP Auth Test System Role",
 		Description: "Grants system permission on the MCP auth test resource server",
-		OUID:        ts.ouID,
+		OUID:        defaultOUID,
 		Permissions: []testutils.ResourcePermissions{
 			{ResourceServerID: ts.resourceServerID, Permissions: []string{systemActionHandle}},
 		},

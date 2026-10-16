@@ -12,6 +12,7 @@ import (
 
 	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
 
+	"github.com/thunder-id/thunderid/internal/sharing"
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	"github.com/thunder-id/thunderid/internal/system/error/apierror"
 	"github.com/thunder-id/thunderid/internal/system/log"
@@ -300,15 +301,17 @@ func handleError(ctx context.Context, w http.ResponseWriter,
 	statusCode := http.StatusInternalServerError
 	if svcErr.Type == tidcommon.ClientErrorType {
 		switch svcErr.Code {
-		case ErrorRoleNotFound.Code:
+		case ErrorRoleNotFound.Code, ErrorSharingPolicyNotFound.Code, ErrorRoleNotSharedToOU.Code:
 			statusCode = http.StatusNotFound
-		case ErrorRoleNameConflict.Code:
+		case ErrorRoleNameConflict.Code, ErrorSharingPolicyExists.Code, ErrorSharingPolicyVersionMismatch.Code:
 			statusCode = http.StatusConflict
 		case ErrorOrganizationUnitNotFound.Code,
 			ErrorInvalidRequestFormat.Code, ErrorMissingRoleID.Code,
 			ErrorInvalidLimit.Code, ErrorInvalidOffset.Code,
 			ErrorEmptyAssignments.Code,
-			ErrorInvalidAssignmentID.Code:
+			ErrorInvalidAssignmentID.Code,
+			ErrorRoleNotAssignableInOrganizationUnit.Code,
+			ErrorAssigneeTypeNotAssignable.Code:
 			statusCode = http.StatusBadRequest
 		case tidcommon.ErrorUnauthorized.Code, sysauthz.ErrorGrantNotPermitted.Code:
 			statusCode = http.StatusForbidden
@@ -435,7 +438,7 @@ func parsePaginationParams(query url.Values) (int, int, *tidcommon.ServiceError)
 func (rh *roleHandler) toRoleCreationDetail(req CreateRoleRequest) RoleCreationDetail {
 	serviceAssignments := make([]RoleAssignment, len(req.Assignments))
 	for i, a := range req.Assignments {
-		serviceAssignments[i] = RoleAssignment(a)
+		serviceAssignments[i] = RoleAssignment{ID: a.ID, Type: a.Type}
 	}
 
 	return RoleCreationDetail{
@@ -460,6 +463,7 @@ func (rh *roleHandler) toHTTPCreateRoleResponse(role *RoleWithPermissionsAndAssi
 		httpAssignments[i] = AssignmentResponse{
 			ID:   sa.ID,
 			Type: sa.Type,
+			OUID: sa.OUID,
 		}
 	}
 	permissions := role.Permissions
@@ -482,7 +486,178 @@ func (rh *roleHandler) toHTTPCreateRoleResponse(role *RoleWithPermissionsAndAssi
 func (rh *roleHandler) toRoleAssignments(req AssignmentsRequest) []RoleAssignment {
 	serviceAssignments := make([]RoleAssignment, len(req.Assignments))
 	for i, a := range req.Assignments {
-		serviceAssignments[i] = RoleAssignment(a)
+		serviceAssignments[i] = RoleAssignment{ID: a.ID, Type: a.Type}
 	}
 	return serviceAssignments
+}
+
+// toFrameworkSharingRequest turns the wire shape into the one the framework takes. The framework is
+// what validates it, so a mode or a reach the schema does not list is carried across as it was sent
+// and refused there.
+func toFrameworkSharingRequest(p SharingPolicyUpdateRequest) sharing.PolicyRequest {
+	req := sharing.PolicyRequest{Version: p.Version}
+	if a := p.AllUnits; a != nil {
+		req.AllUnits = &sharing.AllUnitsRequest{
+			ExcludedOUIDs: a.ExcludedOUIDs,
+			OverlayRules:  toFrameworkOverlayRules(a.OverlayRules),
+		}
+	}
+	if c := p.ChildUnits; c != nil {
+		req.ChildUnits = &sharing.ChildUnitsRequest{
+			Mode:          sharing.ChildUnitsMode(c.Mode),
+			ExcludedOUIDs: c.ExcludedOUIDs,
+			OverlayRules:  toFrameworkOverlayRules(c.OverlayRules),
+		}
+		for _, u := range c.Units {
+			req.ChildUnits.Units = append(req.ChildUnits.Units, sharing.ChildUnitRequest{
+				OUID:         u.OUID,
+				Reach:        sharing.UnitReach(u.Reach),
+				OverlayRules: toFrameworkOverlayRules(u.OverlayRules),
+			})
+		}
+	}
+	if t := p.OtherTreeRoots; t != nil {
+		req.OtherTreeRoots = &sharing.OtherTreeRootsRequest{
+			Mode:          sharing.OtherTreeRootsMode(t.Mode),
+			ExcludedOUIDs: t.ExcludedOUIDs,
+			OverlayRules:  toFrameworkOverlayRules(t.OverlayRules),
+		}
+		for _, u := range t.Units {
+			req.OtherTreeRoots.Units = append(req.OtherTreeRoots.Units, sharing.RootUnitRequest{
+				OUID:         u.OUID,
+				OverlayRules: toFrameworkOverlayRules(u.OverlayRules),
+			})
+		}
+	}
+	return req
+}
+
+// toFrameworkOverlayRules carries the terms across. A role rule states only whether a type of
+// assignee may hold the role, so editable is all there is to carry.
+func toFrameworkOverlayRules(rules map[string]SharingOverlayRuleRequest) map[string]sharing.OverlayRule {
+	if len(rules) == 0 {
+		return nil
+	}
+	out := make(map[string]sharing.OverlayRule, len(rules))
+	for field, rule := range rules {
+		out[field] = sharing.OverlayRule{Editable: rule.Editable}
+	}
+	return out
+}
+
+// decodeSharingBody reads a policy request body through the shared strict decoder, which refuses a
+// field the body does not declare: a misspelled excludedOuIds would otherwise read as a section with
+// no exclusions and share the role with the organization unit the caller named to keep it from. It
+// answers the malformed body itself.
+func decodeSharingBody[T any](ctx context.Context, w http.ResponseWriter, r *http.Request) (*T, bool) {
+	wire, err := sysutils.DecodeJSONBodyStrict[T](r)
+	if err != nil {
+		handleError(ctx, w, &ErrorInvalidRequestFormat)
+		return nil, false
+	}
+	return wire, true
+}
+
+// HandleSharingPolicyPostRequest records a sharing policy on a role.
+func (rh *roleHandler) HandleSharingPolicyPostRequest(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	wire, ok := decodeSharingBody[SharingPolicyRequest](ctx, w, r)
+	if !ok {
+		return
+	}
+	req := toFrameworkSharingRequest(wire.SharingPolicyUpdateRequest)
+	req.InitiatingOUID = wire.InitiatingOUID
+	// A reach not bounded by where the issuer sits is a deployment decision, so this API leaves it
+	// to a resource file or an import. An edit may still restate such a section to move its
+	// exclusions, and the framework refuses any edit that would introduce one.
+	if req.AllUnits != nil ||
+		(req.OtherTreeRoots != nil && req.OtherTreeRoots.Mode == sharing.OtherTreeRootsAll) {
+		handleError(ctx, w, &ErrorDeploymentWideSharingNotAllowed)
+		return
+	}
+
+	policy, svcErr := rh.roleService.CreateSharingPolicy(ctx, r.PathValue("id"), req)
+	if svcErr != nil {
+		handleError(ctx, w, svcErr)
+		return
+	}
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusCreated, sharing.ToPolicyResponse(policy))
+}
+
+// HandleSharingPolicyListRequest returns one page of a role's sharing policies.
+func (rh *roleHandler) HandleSharingPolicyListRequest(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	limit, offset, svcErr := parsePaginationParams(r.URL.Query())
+	if svcErr != nil {
+		handleError(ctx, w, svcErr)
+		return
+	}
+
+	roleID := r.PathValue("id")
+	list, svcErr := rh.roleService.ListSharingPolicies(ctx, roleID, limit, offset)
+	if svcErr != nil {
+		handleError(ctx, w, svcErr)
+		return
+	}
+
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, sharing.ToPolicyListResponse(
+		list, "/roles/"+roleID+"/sharing-policies", limit, offset))
+}
+
+// HandleSharingPolicyGetRequest returns one of a role's sharing policies.
+func (rh *roleHandler) HandleSharingPolicyGetRequest(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	policy, svcErr := rh.roleService.GetSharingPolicy(ctx, r.PathValue("id"), r.PathValue("policyId"))
+	if svcErr != nil {
+		handleError(ctx, w, svcErr)
+		return
+	}
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, sharing.ToPolicyResponse(policy))
+}
+
+// HandleSharingPolicyPutRequest replaces a sharing policy's contents.
+func (rh *roleHandler) HandleSharingPolicyPutRequest(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	wire, ok := decodeSharingBody[SharingPolicyUpdateRequest](ctx, w, r)
+	if !ok {
+		return
+	}
+
+	policy, svcErr := rh.roleService.UpdateSharingPolicy(
+		ctx, r.PathValue("id"), r.PathValue("policyId"), toFrameworkSharingRequest(*wire))
+	if svcErr != nil {
+		handleError(ctx, w, svcErr)
+		return
+	}
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, sharing.ToPolicyResponse(policy))
+}
+
+// HandleSharingPolicyDeleteRequest removes a sharing policy.
+func (rh *roleHandler) HandleSharingPolicyDeleteRequest(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	if svcErr := rh.roleService.DeleteSharingPolicy(
+		ctx, r.PathValue("id"), r.PathValue("policyId")); svcErr != nil {
+		handleError(ctx, w, svcErr)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// HandleOverlayRuleGetRequest answers what the organization unit named in ouId may do with the
+// role: which types of assignee it may assign the role to.
+func (rh *roleHandler) HandleOverlayRuleGetRequest(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	overlay, svcErr := rh.roleService.ResolveSharingOverlay(ctx, r.PathValue("id"), r.URL.Query().Get("ouId"))
+	if svcErr != nil {
+		handleError(ctx, w, svcErr)
+		return
+	}
+
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, sharing.ToResolvedOverlayResponse(overlay))
 }

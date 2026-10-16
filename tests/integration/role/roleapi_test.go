@@ -2153,6 +2153,272 @@ func (suite *RoleAPITestSuite) TestListRolesByOU_Declarative() {
 	}
 }
 
+// The declared role 'decl-shared-role' is owned by decl-m2m-root and shared with child A on open
+// terms and with child B without groups. Child C is not named.
+const (
+	declSharedRoleID = "decl-shared-role"
+	declSharedRootOU = "decl-m2m-root"
+	declSharedChildA = "decl-m2m-child-a"
+	declSharedChildB = "decl-m2m-child-b"
+	declSharedChildC = "decl-m2m-child-c"
+)
+
+// createGroupIn creates a group in an organization unit and removes it when the test ends.
+func (suite *RoleAPITestSuite) createGroupIn(ouID, name string) string {
+	groupID, err := testutils.CreateGroup(testutils.Group{Name: name, OUID: ouID})
+	suite.Require().NoError(err, "failed to create a group in %s", ouID)
+	suite.T().Cleanup(func() { _ = testutils.DeleteGroup(groupID) })
+	return groupID
+}
+
+// A shared role is assignable in its owner and in the organization units it is shared with, and an
+// assignment reports the organization unit it was made in.
+func (suite *RoleAPITestSuite) TestSharedRole_AssignableWhereItIsShared() {
+	for _, ouID := range []string{declSharedRootOU, declSharedChildA} {
+		groupID := suite.createGroupIn(ouID, "shared-role-group-"+ouID)
+		request := AssignmentsRequest{Assignments: []Assignment{{ID: groupID, Type: AssigneeTypeGroup}}}
+
+		suite.Require().NoError(suite.addAssignments(declSharedRoleID, request),
+			"the role should be assignable in %s", ouID)
+
+		assignments, err := suite.getRoleAssignmentsByType(declSharedRoleID, 0, 100, string(AssigneeTypeGroup))
+		suite.Require().NoError(err)
+		var madeIn string
+		for _, a := range assignments.Assignments {
+			if a.ID == groupID {
+				madeIn = a.OUID
+			}
+		}
+		suite.Equal(ouID, madeIn, "the assignment should be made in the group's own organization unit")
+
+		suite.Require().NoError(suite.removeAssignments(declSharedRoleID, request))
+	}
+}
+
+// A declared assignment is made in its assignee's own organization unit: the application is owned by
+// the root.
+func (suite *RoleAPITestSuite) TestSharedRole_DeclaredAssignmentIsMadeInTheAssigneesOwnUnit() {
+	assignments, err := suite.getRoleAssignmentsByType(declSharedRoleID, 0, 100, string(AssigneeTypeApp))
+	suite.Require().NoError(err)
+
+	var madeIn string
+	for _, a := range assignments.Assignments {
+		if a.ID == "decl-m2m-selected" {
+			madeIn = a.OUID
+		}
+	}
+	suite.Equal(declSharedRootOU, madeIn)
+}
+
+func (suite *RoleAPITestSuite) TestSharedRole_NotAssignableWhereItIsNotShared() {
+	groupID := suite.createGroupIn(declSharedChildC, "shared-role-group-unreached")
+
+	err := suite.addAssignments(declSharedRoleID,
+		AssignmentsRequest{Assignments: []Assignment{{ID: groupID, Type: AssigneeTypeGroup}}})
+
+	suite.Require().Error(err)
+	suite.Contains(err.Error(), "ROL-1021")
+}
+
+func (suite *RoleAPITestSuite) TestSharedRole_LockedAssigneeTypeIsRefused() {
+	groupID := suite.createGroupIn(declSharedChildB, "shared-role-group-locked")
+
+	err := suite.addAssignments(declSharedRoleID,
+		AssignmentsRequest{Assignments: []Assignment{{ID: groupID, Type: AssigneeTypeGroup}}})
+
+	suite.Require().Error(err)
+	suite.Contains(err.Error(), "ROL-1022")
+}
+
+// A role no sharing policy names is assignable only in its own organization unit.
+func (suite *RoleAPITestSuite) TestUnsharedRole_AssignableOnlyInItsOwnOrganizationUnit() {
+	role, err := suite.createRole(CreateRoleRequest{
+		Name: "Unshared Role", OUID: testOUID, Permissions: []ResourcePermissions{}})
+	suite.Require().NoError(err)
+	defer suite.deleteRole(role.ID)
+
+	inOwner := AssignmentsRequest{Assignments: []Assignment{{ID: testGroupID, Type: AssigneeTypeGroup}}}
+	suite.Require().NoError(suite.addAssignments(role.ID, inOwner))
+	suite.Require().NoError(suite.removeAssignments(role.ID, inOwner))
+
+	err = suite.addAssignments(role.ID, AssignmentsRequest{Assignments: []Assignment{
+		{ID: suite.createGroupIn(declSharedChildC, "unshared-role-group-elsewhere"), Type: AssigneeTypeGroup}}})
+	suite.Require().Error(err)
+	suite.Contains(err.Error(), "ROL-1021")
+}
+
+// A role being created has no sharing policy yet, so an inline assignment outside its own
+// organization unit is refused and no role is created.
+func (suite *RoleAPITestSuite) TestCreateRole_RefusesAnInlineAssignmentOutsideItsOrganizationUnit() {
+	groupID := suite.createGroupIn(declSharedChildC, "create-role-group-elsewhere")
+
+	role, err := suite.createRole(CreateRoleRequest{
+		Name:        "Inline Elsewhere Role",
+		OUID:        testOUID,
+		Permissions: []ResourcePermissions{},
+		Assignments: []Assignment{{ID: groupID, Type: AssigneeTypeGroup}},
+	})
+	if role != nil {
+		defer suite.deleteRole(role.ID)
+	}
+	suite.Require().Error(err)
+	suite.Contains(err.Error(), "ROL-1021")
+}
+
+// sharingPolicyPath returns the path of a role's sharing policies, or of one of them.
+func sharingPolicyPath(roleID string, policyID ...string) string {
+	path := rolesBasePath + "/" + roleID + "/sharing-policies"
+	if len(policyID) > 0 {
+		path += "/" + policyID[0]
+	}
+	return path
+}
+
+// decodeBody reads a JSON response body into a map.
+func (suite *RoleAPITestSuite) decodeBody(resp *http.Response) map[string]interface{} {
+	suite.T().Helper()
+	var body map[string]interface{}
+	suite.Require().NoError(json.NewDecoder(resp.Body).Decode(&body))
+	return body
+}
+
+// groupAssignmentOU returns the organization unit the role's assignment of a group is made in, or
+// an empty string when the role holds no such assignment.
+func (suite *RoleAPITestSuite) groupAssignmentOU(roleID, groupID string) string {
+	suite.T().Helper()
+	assignments, err := suite.getRoleAssignmentsByType(roleID, 0, 100, string(AssigneeTypeGroup))
+	suite.Require().NoError(err)
+	for _, a := range assignments.Assignments {
+		if a.ID == groupID {
+			return a.OUID
+		}
+	}
+	return ""
+}
+
+// A role shared through the API becomes assignable where the policy reaches, and an organization
+// unit an edit takes the role away from loses the assignments made in it.
+func (suite *RoleAPITestSuite) TestSharingPolicy_Lifecycle() {
+	role, err := suite.createRole(CreateRoleRequest{
+		Name: "API Shared Role", OUID: declSharedRootOU, Permissions: []ResourcePermissions{}})
+	suite.Require().NoError(err)
+	defer suite.deleteRole(role.ID)
+
+	groupID := suite.createGroupIn(declSharedChildC, "api-shared-role-group")
+	inChildC := AssignmentsRequest{Assignments: []Assignment{{ID: groupID, Type: AssigneeTypeGroup}}}
+	err = suite.addAssignments(role.ID, inChildC)
+	suite.Require().Error(err, "the role is not shared yet")
+	suite.Contains(err.Error(), "ROL-1021")
+
+	resp := suite.doRoleRequest(http.MethodPost, sharingPolicyPath(role.ID), mustMarshal(suite.T(),
+		map[string]interface{}{"childUnits": map[string]interface{}{
+			"mode":  "selected",
+			"units": []map[string]string{{"ouId": declSharedChildC, "reach": "unit"}},
+		}}))
+	suite.Require().Equal(http.StatusCreated, resp.StatusCode)
+	policy := suite.decodeBody(resp)
+	resp.Body.Close()
+	policyID, _ := policy["id"].(string)
+	suite.Require().NotEmpty(policyID)
+	suite.Equal(declSharedRootOU, policy["initiatingOuId"])
+
+	resp = suite.doRoleRequest(http.MethodGet, sharingPolicyPath(role.ID), nil)
+	suite.Require().Equal(http.StatusOK, resp.StatusCode)
+	list := suite.decodeBody(resp)
+	resp.Body.Close()
+	suite.EqualValues(1, list["totalResults"])
+
+	resp = suite.doRoleRequest(http.MethodGet, rolesBasePath+"/"+role.ID+"/overlay-rules?ouId="+declSharedChildC, nil)
+	suite.Require().Equal(http.StatusOK, resp.StatusCode)
+	overlay := suite.decodeBody(resp)
+	resp.Body.Close()
+	suite.Equal(true, overlay["visible"])
+	suite.Equal(false, overlay["owned"])
+
+	suite.Require().NoError(suite.addAssignments(role.ID, inChildC))
+	suite.Equal(declSharedChildC, suite.groupAssignmentOU(role.ID, groupID))
+
+	// Moving the share from child C to child A takes the role away from child C.
+	resp = suite.doRoleRequest(http.MethodPut, sharingPolicyPath(role.ID, policyID), mustMarshal(suite.T(),
+		map[string]interface{}{"version": policy["version"], "childUnits": map[string]interface{}{
+			"mode":  "selected",
+			"units": []map[string]string{{"ouId": declSharedChildA, "reach": "unit"}},
+		}}))
+	suite.Require().Equal(http.StatusOK, resp.StatusCode)
+	resp.Body.Close()
+	suite.Empty(suite.groupAssignmentOU(role.ID, groupID), "child C lost the role, so its assignment goes too")
+
+	resp = suite.doRoleRequest(http.MethodDelete, sharingPolicyPath(role.ID, policyID), nil)
+	suite.Equal(http.StatusNoContent, resp.StatusCode)
+	resp.Body.Close()
+
+	resp = suite.doRoleRequest(http.MethodGet, rolesBasePath+"/"+role.ID+"/overlay-rules?ouId="+declSharedChildA, nil)
+	suite.Equal(http.StatusNotFound, resp.StatusCode)
+	suite.Equal("ROL-1029", decodeErrorCode(suite.T(), resp))
+	resp.Body.Close()
+}
+
+// A policy reaching beyond the issuer's own place in the tree is left to resource files and imports.
+func (suite *RoleAPITestSuite) TestSharingPolicy_DeploymentWideCreateIsRefused() {
+	role, err := suite.createRole(CreateRoleRequest{
+		Name: "API Deployment Wide Role", OUID: declSharedRootOU, Permissions: []ResourcePermissions{}})
+	suite.Require().NoError(err)
+	defer suite.deleteRole(role.ID)
+
+	resp := suite.doRoleRequest(http.MethodPost, sharingPolicyPath(role.ID),
+		mustMarshal(suite.T(), map[string]interface{}{"allUnits": map[string]interface{}{}}))
+	defer resp.Body.Close()
+
+	suite.Equal(http.StatusBadRequest, resp.StatusCode)
+	suite.Equal("ROL-1031", decodeErrorCode(suite.T(), resp))
+}
+
+// A declared role's own sharing is declared with it, and its declared policy goes away only with
+// the file.
+func (suite *RoleAPITestSuite) TestSharingPolicy_DeclaredRoleSharingIsReadOnly() {
+	resp := suite.doRoleRequest(http.MethodPost, sharingPolicyPath(declSharedRoleID), mustMarshal(suite.T(),
+		map[string]interface{}{"childUnits": map[string]interface{}{"mode": "all"}}))
+	suite.Equal(http.StatusBadRequest, resp.StatusCode)
+	suite.Equal("ROL-1013", decodeErrorCode(suite.T(), resp))
+	resp.Body.Close()
+
+	resp = suite.doRoleRequest(http.MethodGet, sharingPolicyPath(declSharedRoleID), nil)
+	suite.Require().Equal(http.StatusOK, resp.StatusCode)
+	list := suite.decodeBody(resp)
+	resp.Body.Close()
+	policies, _ := list["policies"].([]interface{})
+	suite.Require().Len(policies, 1)
+	declared, _ := policies[0].(map[string]interface{})
+	suite.Equal(true, declared["isReadOnly"])
+
+	resp = suite.doRoleRequest(http.MethodDelete, sharingPolicyPath(declSharedRoleID, declared["id"].(string)), nil)
+	suite.Equal(http.StatusBadRequest, resp.StatusCode)
+	suite.Equal("ROL-1028", decodeErrorCode(suite.T(), resp))
+	resp.Body.Close()
+}
+
+// An export writes the role's sharing policies into the document, so it re-imports as a role its
+// assignments in other organization units can be held to.
+func (suite *RoleAPITestSuite) TestSharingPolicy_ExportCarriesThePolicies() {
+	role, err := suite.createRole(CreateRoleRequest{
+		Name: "API Exported Shared Role", OUID: declSharedRootOU, Permissions: []ResourcePermissions{}})
+	suite.Require().NoError(err)
+	defer suite.deleteRole(role.ID)
+
+	resp := suite.doRoleRequest(http.MethodPost, sharingPolicyPath(role.ID), mustMarshal(suite.T(),
+		map[string]interface{}{"childUnits": map[string]interface{}{
+			"mode":         "all",
+			"overlayRules": map[string]interface{}{"assignments.apps": map[string]bool{"editable": false}},
+		}}))
+	suite.Require().Equal(http.StatusCreated, resp.StatusCode)
+	resp.Body.Close()
+
+	exported, err := suite.exportRoles([]string{role.ID})
+	suite.Require().NoError(err)
+	suite.Contains(exported, "sharingPolicies:")
+	suite.Contains(exported, "assignments.apps:")
+}
+
 // A declarative role cannot be updated through the API.
 func (suite *RoleAPITestSuite) TestUpdateRole_DeclarativeImmutable() {
 	updated, err := suite.updateRole("decl-role-1", UpdateRoleRequest{

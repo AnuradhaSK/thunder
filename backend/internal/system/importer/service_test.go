@@ -669,13 +669,14 @@ func (f *fakeOUService) UpdateOrganizationUnit(
 type fakeRoleService struct {
 	created []role.RoleCreationDetail
 	updated []role.RoleUpdateDetail
+	deleted []string
 }
 
 func (f *fakeRoleService) CreateRole(
 	_ context.Context, req role.RoleCreationDetail,
 ) (*role.RoleWithPermissionsAndAssignments, *tidcommon.ServiceError) {
 	f.created = append(f.created, req)
-	return &role.RoleWithPermissionsAndAssignments{ID: "role-1", Name: req.Name}, nil
+	return &role.RoleWithPermissionsAndAssignments{ID: "role-1", Name: req.Name, OUID: req.OUID}, nil
 }
 
 func (f *fakeRoleService) GetRoleWithPermissions(
@@ -692,7 +693,7 @@ func (f *fakeRoleService) UpdateRoleWithPermissions(
 	_ context.Context, _ string, req role.RoleUpdateDetail,
 ) (*role.RoleWithPermissions, *tidcommon.ServiceError) {
 	f.updated = append(f.updated, req)
-	return &role.RoleWithPermissions{ID: "role-1", Name: req.Name}, nil
+	return &role.RoleWithPermissions{ID: "role-1", Name: req.Name, OUID: req.OUID}, nil
 }
 
 type fakeRoleAssignmentService struct {
@@ -4084,4 +4085,140 @@ func TestImportApplicationRefusesPoliciesWithoutASharingAdapter(t *testing.T) {
 	require.Len(t, resp.Results, 1)
 	assert.Equal(t, statusFailed, resp.Results[0].Status)
 	assert.Contains(t, resp.Results[0].Message, "sharing")
+}
+
+type ImportRoleSharingTestSuite struct {
+	suite.Suite
+	roleSvc           *fakeRoleService
+	roleAssignmentSvc *fakeRoleAssignmentService
+	sharingSvc        *fakeSharingService
+	svc               ImportServiceInterface
+}
+
+func TestImportRoleSharingTestSuite(t *testing.T) {
+	suite.Run(t, new(ImportRoleSharingTestSuite))
+}
+
+func (s *ImportRoleSharingTestSuite) SetupTest() {
+	s.roleSvc = &fakeRoleService{}
+	s.roleAssignmentSvc = &fakeRoleAssignmentService{}
+	s.sharingSvc = &fakeSharingService{}
+	svc := newImportService(
+		nil, nil, nil, nil, nil, nil, s.roleSvc, s.roleAssignmentSvc,
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	svc.(*importService).sharingService = s.sharingSvc
+	s.svc = svc
+}
+
+// roleDocWithPolicies is one role document carrying a sharing policy and its assignments.
+func roleDocWithPolicies(id string) string {
+	return strings.Join([]string{
+		"resource_type: role",
+		"id: " + id,
+		"name: Support Agent",
+		"ouId: ou-owner",
+		"permissions: []",
+		"sharingPolicies:",
+		"  - id: " + id + "-policy-owner",
+		"    childUnits:",
+		"      mode: all",
+		"      overlayRules:",
+		"        assignments.apps:",
+		"          editable: false",
+		"assignments:",
+		"  - type: group",
+		"    id: group1",
+		"  - type: user",
+		"    id: user1",
+		"",
+	}, "\n")
+}
+
+// The importer replays the policies a role document carries, then adds its assignments, so an
+// assignment made where the role is shared is held to policies that already exist.
+func (s *ImportRoleSharingTestSuite) TestPoliciesAreReplayedAndAssignmentsAdded() {
+	resp, err := s.svc.ImportResources(context.Background(), &ImportRequest{Content: roleDocWithPolicies("role-new")})
+
+	s.Require().Nil(err)
+	s.Require().Len(resp.Results, 1)
+	s.Equal(statusSuccess, resp.Results[0].Status)
+
+	s.Require().Len(s.roleSvc.created, 1)
+	s.Empty(s.roleSvc.created[0].Assignments, "the role is created before it can be assigned outside its owner")
+
+	s.Require().Len(s.sharingSvc.calls, 1)
+	call := s.sharingSvc.calls[0]
+	s.Equal(role.RoleSharingType, call.resourceType)
+	s.Equal("role-1", call.resourceID)
+	s.Equal("ou-owner", call.owningOUID)
+	s.Require().Len(call.policies, 1)
+	s.Require().NotNil(call.policies[0].ChildUnits)
+	s.False(call.policies[0].ChildUnits.OverlayRules["assignments.apps"].Editable)
+
+	s.Equal([]role.RoleAssignment{
+		{ID: "group1", Type: role.AssigneeTypeGroup},
+		{ID: "user1", Type: role.AssigneeTypeUser},
+	}, s.roleAssignmentSvc.assignments)
+	s.Empty(s.roleSvc.deleted)
+}
+
+// A refused policy has to undo the create: the caller is told the document failed and gets no id
+// back, so a role left behind would hold the name a retry needs.
+func (s *ImportRoleSharingTestSuite) TestRefusedPoliciesUndoTheCreate() {
+	s.sharingSvc.failure = &sharing.PolicyReplayError{
+		Index: 0, InitiatingOUID: "ou-owner", Err: &sharing.ErrorInvalidRequestFormat}
+
+	resp, _ := s.svc.ImportResources(context.Background(), &ImportRequest{Content: roleDocWithPolicies("role-new")})
+
+	s.Require().Len(resp.Results, 1)
+	s.Equal(statusFailed, resp.Results[0].Status)
+	s.Contains(resp.Results[0].Message, "sharing policy 1 (organization unit ou-owner)")
+	s.Equal([]string{"role-1"}, s.roleSvc.deleted)
+	s.Empty(s.roleAssignmentSvc.assignments, "no assignment is made once the policies are refused")
+}
+
+// A refused assignment undoes the create too, for the same reason.
+func (s *ImportRoleSharingTestSuite) TestRefusedAssignmentUndoesTheCreate() {
+	s.roleAssignmentSvc.assignmentErr = &role.ErrorRoleNotAssignableInOrganizationUnit
+
+	resp, _ := s.svc.ImportResources(context.Background(), &ImportRequest{Content: roleDocWithPolicies("role-new")})
+
+	s.Require().Len(resp.Results, 1)
+	s.Equal(statusFailed, resp.Results[0].Status)
+	s.Equal(role.ErrorRoleNotAssignableInOrganizationUnit.Code, resp.Results[0].Code)
+	s.Equal([]string{"role-1"}, s.roleSvc.deleted)
+}
+
+// An update replays the document's policies against the role as stored, then adds its assignments.
+func (s *ImportRoleSharingTestSuite) TestUpsertReplaysPoliciesAndAddsAssignments() {
+	upsert := true
+	resp, err := s.svc.ImportResources(context.Background(), &ImportRequest{
+		Content: roleDocWithPolicies("role-1"),
+		Options: &ImportOptions{Upsert: &upsert},
+	})
+
+	s.Require().Nil(err)
+	s.Require().Len(resp.Results, 1)
+	s.Equal(statusSuccess, resp.Results[0].Status)
+	s.Equal(operationUpdate, resp.Results[0].Operation)
+	s.Require().Len(s.sharingSvc.calls, 1)
+	s.Equal("role-1", s.sharingSvc.calls[0].resourceID)
+	s.Len(s.roleAssignmentSvc.assignments, 2)
+	s.Empty(s.roleSvc.deleted, "an update is not undone")
+}
+
+// A document carrying no policies asks the sharing adapter nothing, and its assignments are still
+// added.
+func (s *ImportRoleSharingTestSuite) TestDocumentWithoutPoliciesAsksTheAdapterNothing() {
+	content := strings.Join([]string{
+		"resource_type: role", "id: role-plain", "name: Plain", "ouId: ou-owner", "permissions: []",
+		"assignments:", "  - type: user", "    id: user1", "",
+	}, "\n")
+
+	resp, err := s.svc.ImportResources(context.Background(), &ImportRequest{Content: content})
+
+	s.Require().Nil(err)
+	s.Equal(statusSuccess, resp.Results[0].Status)
+	s.Empty(s.sharingSvc.calls)
+	s.Equal([]role.RoleAssignment{{ID: "user1", Type: role.AssigneeTypeUser}}, s.roleAssignmentSvc.assignments)
 }

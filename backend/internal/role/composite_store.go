@@ -370,6 +370,12 @@ func (c *compositeRoleStore) DeleteAssignmentsByRoleID(ctx context.Context, id s
 	return c.dbStore.DeleteAssignmentsByRoleID(ctx, id)
 }
 
+// DeleteAssignmentsByRoleAndOU deletes a role's assignments in one organization unit from the
+// database store only.
+func (c *compositeRoleStore) DeleteAssignmentsByRoleAndOU(ctx context.Context, id, ouID string) error {
+	return c.dbStore.DeleteAssignmentsByRoleAndOU(ctx, id, ouID)
+}
+
 // DeleteAssignmentsByAssignee deletes assignments for the assignee from the database store only.
 func (c *compositeRoleStore) DeleteAssignmentsByAssignee(
 	ctx context.Context, assigneeType, assigneeID string) (int64, error) {

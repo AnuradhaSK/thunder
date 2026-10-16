@@ -18,6 +18,7 @@ type Assignment struct {
 	ID      string       `json:"id"`
 	Type    AssigneeType `json:"type"`
 	Display string       `json:"display,omitempty"` // Display name (only included with include=display parameter)
+	OUID    string       `json:"ouId,omitempty"`    // Organization unit the assignment is made in
 }
 
 // CreateRoleRequest represents the request to create a role

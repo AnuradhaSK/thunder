@@ -446,4 +446,6 @@ func (suite *RoleFileBasedStoreTestSuite) TestCascadeHooksAreNoOps() {
 	deleted, err := suite.store.DeleteRolePermission(context.Background(), "rs1", "system:user")
 	suite.NoError(err)
 	suite.Equal(int64(0), deleted)
+
+	suite.NoError(suite.store.DeleteAssignmentsByRoleAndOU(context.Background(), "declarative-role", "ou2"))
 }

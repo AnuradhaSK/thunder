@@ -8,6 +8,12 @@ permissions:
   - resourceServerId: decl-rs-1
     permissions:
       - test-resource:read
+# The tests assign this role to principals in organization units they create at runtime, each the
+# root of its own tree, so the role is shared with the root of every other tree.
+sharingPolicies:
+  - id: decl-role-1-policy-owner
+    otherTreeRoots:
+      mode: all
 assignments:
   - id: decl-user-1
     type: user

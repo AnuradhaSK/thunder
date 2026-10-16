@@ -40,6 +40,8 @@ type AssignmentResponse struct {
 	ID      string       `json:"id"`
 	Type    AssigneeType `json:"type"`
 	Display string       `json:"display,omitempty"`
+	// OUID is the organization unit the assignment is made in.
+	OUID string `json:"ouId,omitempty"`
 }
 
 // AssignmentRequest represents an assignment of a role to a user or group.
@@ -153,6 +155,9 @@ type RoleWithPermissionsAndAssignments struct {
 type RoleAssignment struct {
 	ID   string       `yaml:"id"`
 	Type AssigneeType `yaml:"type"`
+	// OUID is the organization unit the assignment is made in: the assignee's own. It is settled
+	// by the service, so a resource file or an import does not state it.
+	OUID string `yaml:"-"`
 }
 
 // RoleAssignmentWithDisplay represents an assignment used internally by the service layer.
@@ -160,6 +165,7 @@ type RoleAssignmentWithDisplay struct {
 	ID      string
 	Type    AssigneeType
 	Display string
+	OUID    string
 }
 
 // Role represents basic role information used internally by the service layer.
@@ -206,4 +212,68 @@ type AssignmentList struct {
 	Count        int
 	Assignments  []RoleAssignmentWithDisplay
 	Links        []utils.Link
+}
+
+// SharingPolicyRequest is a sharing policy as this API creates one, which is narrower than what
+// the framework can hold. It carries no policy id: the id is the framework's to mint on an
+// interactive create. Declaring it here would accept bodies the published schema refuses.
+type SharingPolicyRequest struct {
+	InitiatingOUID string `json:"initiatingOuId,omitempty"`
+	SharingPolicyUpdateRequest
+}
+
+// SharingPolicyUpdateRequest is an edit of a sharing policy: its sections and the version being
+// edited. Whose decision the policy is cannot change, since that would be another policy, so an
+// edit does not carry it.
+type SharingPolicyUpdateRequest struct {
+	AllUnits       *SharingAllUnitsRequest       `json:"allUnits,omitempty"`
+	ChildUnits     *SharingChildUnitsRequest     `json:"childUnits,omitempty"`
+	OtherTreeRoots *SharingOtherTreeRootsRequest `json:"otherTreeRoots,omitempty"`
+	Version        int                           `json:"version,omitempty"`
+}
+
+// SharingOverlayRuleRequest is a term on one assignment field: whether a reached organization unit
+// may assign the role to that type of assignee. A role rule states nothing else.
+type SharingOverlayRuleRequest struct {
+	Editable bool `json:"editable"`
+}
+
+// SharingAllUnitsRequest is the section reaching every organization unit. A create may not state
+// it; an edit restates it to rewrite the exclusions or terms of a policy that already holds it.
+type SharingAllUnitsRequest struct {
+	ExcludedOUIDs []string                             `json:"excludedOuIds,omitempty"`
+	OverlayRules  map[string]SharingOverlayRuleRequest `json:"overlayRules,omitempty"`
+}
+
+// SharingChildUnitsRequest is the section about the organization units beneath the issuer, with
+// the fields the schema lists.
+type SharingChildUnitsRequest struct {
+	Mode          string                               `json:"mode"`
+	ExcludedOUIDs []string                             `json:"excludedOuIds,omitempty"`
+	OverlayRules  map[string]SharingOverlayRuleRequest `json:"overlayRules,omitempty"`
+	Units         []SharingChildUnitRequest            `json:"units,omitempty"`
+}
+
+// SharingChildUnitRequest names one direct child of the issuer, how far the role carries from it,
+// and the terms it holds the role on.
+type SharingChildUnitRequest struct {
+	OUID         string                               `json:"ouId"`
+	Reach        string                               `json:"reach"`
+	OverlayRules map[string]SharingOverlayRuleRequest `json:"overlayRules,omitempty"`
+}
+
+// SharingOtherTreeRootsRequest is the section about the root organization units of other trees,
+// with the fields the schema lists.
+type SharingOtherTreeRootsRequest struct {
+	Mode          string                               `json:"mode"`
+	ExcludedOUIDs []string                             `json:"excludedOuIds,omitempty"`
+	OverlayRules  map[string]SharingOverlayRuleRequest `json:"overlayRules,omitempty"`
+	Units         []SharingRootUnitRequest             `json:"units,omitempty"`
+}
+
+// SharingRootUnitRequest names the root organization unit of one other tree and the terms it holds
+// the role on.
+type SharingRootUnitRequest struct {
+	OUID         string                               `json:"ouId"`
+	OverlayRules map[string]SharingOverlayRuleRequest `json:"overlayRules,omitempty"`
 }

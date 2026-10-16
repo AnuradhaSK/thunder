@@ -17,6 +17,7 @@ import (
 	"github.com/thunder-id/thunderid/internal/group"
 	resourcepkg "github.com/thunder-id/thunderid/internal/resource"
 	"github.com/thunder-id/thunderid/internal/revocation"
+	"github.com/thunder-id/thunderid/internal/sharing"
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	"github.com/thunder-id/thunderid/internal/system/log"
 	"github.com/thunder-id/thunderid/internal/system/resourcedependency"
@@ -53,6 +54,7 @@ type roleAssignmentService struct {
 	resourceService   resourcepkg.ResourceServiceInterface
 	transactioner     providers.Transactioner
 	authzService      sysauthz.SystemAuthorizationServiceInterface
+	sharingService    sharing.SharingServiceInterface
 }
 
 // newRoleAssignmentService creates a new instance of roleAssignmentService.
@@ -64,6 +66,7 @@ func newRoleAssignmentService(
 	resourceService resourcepkg.ResourceServiceInterface,
 	transactioner providers.Transactioner,
 	authzService sysauthz.SystemAuthorizationServiceInterface,
+	sharingService sharing.SharingServiceInterface,
 ) RoleAssignmentServiceInterface {
 	return &roleAssignmentService{
 		roleStore:         roleStore,
@@ -73,6 +76,7 @@ func newRoleAssignmentService(
 		resourceService:   resourceService,
 		transactioner:     transactioner,
 		authzService:      authzService,
+		sharingService:    sharingService,
 	}
 }
 
@@ -249,7 +253,7 @@ func (as *roleAssignmentService) getAssignmentsByEntityCategory(
 // Assignments can be added to both mutable (DB-backed) and declarative (file-backed) roles.
 func (as *roleAssignmentService) AddAssignments(
 	ctx context.Context, id string, assignments []RoleAssignment) *tidcommon.ServiceError {
-	return as.modifyAssignments(ctx, id, assignments,
+	return as.modifyAssignments(ctx, id, assignments, true,
 		as.roleStore.AddAssignments,
 		"add assignments to role", "added assignments to role")
 }
@@ -258,7 +262,7 @@ func (as *roleAssignmentService) AddAssignments(
 // Assignments can be removed from both mutable (DB-backed) and declarative (file-backed) roles.
 func (as *roleAssignmentService) RemoveAssignments(
 	ctx context.Context, id string, assignments []RoleAssignment) *tidcommon.ServiceError {
-	return as.modifyAssignments(ctx, id, assignments,
+	return as.modifyAssignments(ctx, id, assignments, false,
 		as.roleStore.RemoveAssignments,
 		"remove assignments from role", "removed assignments from role")
 }
@@ -284,7 +288,7 @@ func (as *roleAssignmentService) ValidateRemoveAssignment(ctx context.Context, i
 		return nil, &ErrorRoleAssignmentNotFound
 	}
 	if _, svcErr := as.prepareAssignments(
-		ctx, id, []RoleAssignment{{ID: assignment.ID, Type: assignment.Type}},
+		ctx, id, []RoleAssignment{{ID: assignment.ID, Type: assignment.Type}}, false,
 	); svcErr != nil {
 		return nil, svcErr
 	}
@@ -313,11 +317,13 @@ func (as *roleAssignmentService) ValidateRemoveAssignment(ctx context.Context, i
 
 // modifyAssignments is the shared implementation for AddAssignments and RemoveAssignments. Both
 // directions carry the same requirement, since assigning conveys the role's permissions to the
-// assignee.
+// assignee. Only adding is held to the role's sharing, so an assignment the sharing no longer
+// allows can still be removed.
 func (as *roleAssignmentService) modifyAssignments(
 	ctx context.Context,
 	id string,
 	assignments []RoleAssignment,
+	adding bool,
 	storeOp func(context.Context, string, []RoleAssignment) error,
 	action, successAction string,
 ) *tidcommon.ServiceError {
@@ -329,7 +335,7 @@ func (as *roleAssignmentService) modifyAssignments(
 		return svcErr
 	}
 
-	normalized, svcErr := as.prepareAssignments(ctx, id, assignments)
+	normalized, svcErr := as.prepareAssignments(ctx, id, assignments, adding)
 	if svcErr != nil {
 		return svcErr
 	}
@@ -394,7 +400,7 @@ func (as *roleAssignmentService) AddAssigneesToRoles(
 // Unlike the previous role service implementation, this allows modifying assignments for
 // both mutable and declarative (file-backed) roles.
 func (as *roleAssignmentService) prepareAssignments(
-	ctx context.Context, id string, assignments []RoleAssignment,
+	ctx context.Context, id string, assignments []RoleAssignment, adding bool,
 ) ([]RoleAssignment, *tidcommon.ServiceError) {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, assignmentLoggerComponentName))
 
@@ -416,13 +422,96 @@ func (as *roleAssignmentService) prepareAssignments(
 		return nil, &ErrorRoleNotFound
 	}
 
-	if err := as.validateAssignmentIDs(ctx, assignments); err != nil {
-		return nil, err
+	resolved, svcErr := resolveAssignees(ctx, assignments, as.entityService, as.groupService,
+		assignmentLoggerComponentName)
+	if svcErr != nil {
+		return nil, svcErr
+	}
+	if adding {
+		if svcErr := requireAssignable(
+			ctx, as.sharingService, id, resolved, assignmentLoggerComponentName); svcErr != nil {
+			return nil, svcErr
+		}
 	}
 
-	normalized := normalizeAssignments(assignments)
+	return normalizeAssignments(resolved), nil
+}
 
-	return normalized, nil
+// resolveAssignees checks that each assignee exists under the type it was given as, and returns the
+// assignments with the organization unit each is made in: the assignee's own.
+func resolveAssignees(
+	ctx context.Context,
+	assignments []RoleAssignment,
+	entitySvc entity.EntityServiceInterface,
+	groupSvc group.GroupServiceInterface,
+	loggerComponent string,
+) ([]RoleAssignment, *tidcommon.ServiceError) {
+	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, loggerComponent))
+
+	typeByID := make(map[string]AssigneeType)
+	var groupIDs []string
+	for _, a := range assignments {
+		if a.Type.IsEntityType() {
+			if existing, ok := typeByID[a.ID]; ok && existing != a.Type {
+				return nil, &ErrorInvalidAssignmentID
+			}
+			typeByID[a.ID] = a.Type
+		} else if a.Type == AssigneeTypeGroup {
+			groupIDs = append(groupIDs, a.ID)
+		}
+	}
+	groupIDs = utils.UniqueStrings(groupIDs)
+
+	entityOUs := make(map[string]string, len(typeByID))
+	if len(typeByID) > 0 {
+		entityIDs := make([]string, 0, len(typeByID))
+		for id := range typeByID {
+			entityIDs = append(entityIDs, id)
+		}
+		entities, err := entitySvc.GetEntitiesByIDs(ctx, entityIDs)
+		if err != nil {
+			logger.Error(ctx, "Failed to fetch entities for assignment validation", log.Error(err))
+			return nil, &tidcommon.InternalServerError
+		}
+		if len(entities) != len(entityIDs) {
+			return nil, &ErrorInvalidAssignmentID
+		}
+		for _, e := range entities {
+			claimed := typeByID[e.ID]
+			if actual := AssigneeType(e.Category); claimed != actual {
+				logger.Debug(ctx, "Assignment type mismatch", log.String("id", e.ID),
+					log.String("claimed", string(claimed)), log.String("actual", string(actual)))
+				return nil, &ErrorInvalidAssignmentID
+			}
+			entityOUs[e.ID] = e.OUID
+		}
+	}
+
+	groupOUs := make(map[string]string, len(groupIDs))
+	if len(groupIDs) > 0 {
+		// The group service logs its own failure, so it is passed on without a second entry.
+		groups, svcErr := groupSvc.GetGroupsByIDs(ctx, groupIDs)
+		if svcErr != nil {
+			return nil, &tidcommon.InternalServerError
+		}
+		for _, id := range groupIDs {
+			g, ok := groups[id]
+			if !ok {
+				logger.Debug(ctx, "Invalid group assignee found", log.String("id", id))
+				return nil, &ErrorInvalidAssignmentID
+			}
+			groupOUs[id] = g.OUID
+		}
+	}
+
+	resolved := make([]RoleAssignment, len(assignments))
+	for i, a := range assignments {
+		resolved[i] = RoleAssignment{ID: a.ID, Type: a.Type, OUID: entityOUs[a.ID]}
+		if a.Type == AssigneeTypeGroup {
+			resolved[i].OUID = groupOUs[a.ID]
+		}
+	}
+	return resolved, nil
 }
 
 // validateAssignmentsRequest validates the assignments request.
@@ -445,79 +534,6 @@ func (as *roleAssignmentService) validateAssignmentsRequest(
 	return nil
 }
 
-// validateAssignmentIDs validates assignment IDs before normalization.
-func (as *roleAssignmentService) validateAssignmentIDs(
-	ctx context.Context, assignments []RoleAssignment) *tidcommon.ServiceError {
-	return validateAssignmentIDs(ctx, assignments, as.entityService, as.groupService, assignmentLoggerComponentName)
-}
-
-// validateAssignmentIDs validates assignment IDs checking entity/group existence and type matching.
-func validateAssignmentIDs(
-	ctx context.Context,
-	assignments []RoleAssignment,
-	entitySvc entity.EntityServiceInterface,
-	groupSvc group.GroupServiceInterface,
-	loggerComponent string,
-) *tidcommon.ServiceError {
-	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, loggerComponent))
-
-	typeByID := make(map[string]AssigneeType)
-	var groupIDs []string
-
-	for _, a := range assignments {
-		if a.Type.IsEntityType() {
-			if existing, ok := typeByID[a.ID]; ok && existing != a.Type {
-				return &ErrorInvalidAssignmentID
-			}
-			typeByID[a.ID] = a.Type
-		} else if a.Type == AssigneeTypeGroup {
-			groupIDs = append(groupIDs, a.ID)
-		}
-	}
-
-	groupIDs = utils.UniqueStrings(groupIDs)
-
-	if len(typeByID) > 0 {
-		entityIDs := make([]string, 0, len(typeByID))
-		for id := range typeByID {
-			entityIDs = append(entityIDs, id)
-		}
-
-		entities, err := entitySvc.GetEntitiesByIDs(ctx, entityIDs)
-		if err != nil {
-			logger.Error(ctx, "Failed to fetch entities for assignment validation", log.Error(err))
-			return &tidcommon.InternalServerError
-		}
-
-		if len(entities) != len(entityIDs) {
-			return &ErrorInvalidAssignmentID
-		}
-
-		for _, e := range entities {
-			claimed := typeByID[e.ID]
-			actual := AssigneeType(e.Category)
-			if claimed != actual {
-				logger.Debug(ctx, "Assignment type mismatch", log.String("id", e.ID),
-					log.String("claimed", string(claimed)), log.String("actual", string(actual)))
-				return &ErrorInvalidAssignmentID
-			}
-		}
-	}
-
-	if len(groupIDs) > 0 {
-		if err := groupSvc.ValidateGroupIDs(ctx, groupIDs); err != nil {
-			if err.Code == group.ErrorInvalidGroupMemberID.Code {
-				logger.Debug(ctx, "Invalid group member IDs found")
-				return &ErrorInvalidAssignmentID
-			}
-			logger.Error(ctx, "Failed to validate group IDs", log.String("error", err.Error.DefaultValue))
-			return &tidcommon.InternalServerError
-		}
-	}
-
-	return nil
-}
-
 // resolveAssignments resolves the public types and optionally display names for role assignments.
 func (as *roleAssignmentService) resolveAssignments(
 	ctx context.Context,
@@ -526,13 +542,16 @@ func (as *roleAssignmentService) resolveAssignments(
 ) ([]RoleAssignmentWithDisplay, *tidcommon.ServiceError) {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, assignmentLoggerComponentName))
 
+	// A declared assignment carries no organization unit: it is made in the assignee's own.
 	var entityIDs, groupIDs []string
+	groupOUNeeded := false
 	for _, a := range assignments {
 		switch a.Type {
 		case assigneeTypeEntity:
 			entityIDs = append(entityIDs, a.ID)
 		case AssigneeTypeGroup:
 			groupIDs = append(groupIDs, a.ID)
+			groupOUNeeded = groupOUNeeded || a.OUID == ""
 		}
 	}
 
@@ -555,18 +574,18 @@ func (as *roleAssignmentService) resolveAssignments(
 	}
 
 	var groupsMap map[string]*group.Group
-	if includeDisplay && len(groupIDs) > 0 {
+	if (includeDisplay || groupOUNeeded) && len(groupIDs) > 0 {
 		var svcErr *tidcommon.ServiceError
 		groupsMap, svcErr = as.groupService.GetGroupsByIDs(ctx, groupIDs)
 		if svcErr != nil {
-			logger.Warn(ctx, "Failed to batch fetch groups for display names", log.Any("error", svcErr))
+			logger.Warn(ctx, "Failed to batch fetch groups for assignments", log.Any("error", svcErr))
 		}
 	}
 
 	// Build the result slice, skipping orphaned entity assignments.
 	result := make([]RoleAssignmentWithDisplay, 0, len(assignments))
 	for _, a := range assignments {
-		ra := RoleAssignmentWithDisplay{ID: a.ID}
+		ra := RoleAssignmentWithDisplay{ID: a.ID, OUID: a.OUID}
 		switch a.Type {
 		case assigneeTypeEntity:
 			e, ok := entityMap[a.ID]
@@ -575,6 +594,9 @@ func (as *roleAssignmentService) resolveAssignments(
 				continue
 			}
 			ra.Type = AssigneeType(e.Category)
+			if ra.OUID == "" {
+				ra.OUID = e.OUID
+			}
 			if includeDisplay {
 				switch e.Category {
 				case providers.EntityCategoryUser, providers.EntityCategoryAgent:
@@ -585,6 +607,9 @@ func (as *roleAssignmentService) resolveAssignments(
 			}
 		case AssigneeTypeGroup:
 			ra.Type = AssigneeTypeGroup
+			if g, ok := groupsMap[a.ID]; ok && ra.OUID == "" {
+				ra.OUID = g.OUID
+			}
 			if includeDisplay {
 				if groupsMap != nil {
 					if g, ok := groupsMap[a.ID]; ok {
@@ -645,7 +670,7 @@ func normalizeAssignments(assignments []RoleAssignment) []RoleAssignment {
 		if t.IsEntityType() {
 			t = assigneeTypeEntity
 		}
-		normalized[i] = RoleAssignment{ID: a.ID, Type: t}
+		normalized[i] = RoleAssignment{ID: a.ID, Type: t, OUID: a.OUID}
 	}
 	return normalized
 }

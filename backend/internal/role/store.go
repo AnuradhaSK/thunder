@@ -37,6 +37,7 @@ type roleStoreInterface interface {
 	DeleteRole(ctx context.Context, id string) error
 	DeleteAssignmentsByRoleID(ctx context.Context, id string) error
 	DeleteAssignmentsByAssignee(ctx context.Context, assigneeType, assigneeID string) (int64, error)
+	DeleteAssignmentsByRoleAndOU(ctx context.Context, id, ouID string) error
 	AddAssignments(ctx context.Context, id string, assignments []RoleAssignment) error
 	RemoveAssignments(ctx context.Context, id string, assignments []RoleAssignment) error
 	CheckRoleNameExists(ctx context.Context, ouID, name string) (bool, error)
@@ -331,9 +332,14 @@ func parseAssignmentResults(results []map[string]interface{}) ([]RoleAssignment,
 		if err != nil {
 			return nil, err
 		}
+		assignmentOUID, err := parseStringField(row, "assignment_ou_id")
+		if err != nil {
+			return nil, err
+		}
 		assignments = append(assignments, RoleAssignment{
 			ID:   assigneeID,
 			Type: AssigneeType(assigneeType),
+			OUID: assignmentOUID,
 		})
 	}
 
@@ -432,6 +438,20 @@ func (s *roleStore) DeleteAssignmentsByRoleID(ctx context.Context, id string) er
 	_, err = dbClient.ExecuteContext(ctx, queryDeleteAllRoleAssignments, id, s.scope(ctx))
 	if err != nil {
 		return fmt.Errorf("failed to delete assignments for role: %w", err)
+	}
+	return nil
+}
+
+// DeleteAssignmentsByRoleAndOU removes the assignments of a role made in one organization unit.
+func (s *roleStore) DeleteAssignmentsByRoleAndOU(ctx context.Context, id, ouID string) error {
+	dbClient, err := s.getConfigDBClient()
+	if err != nil {
+		return err
+	}
+
+	if _, err := dbClient.ExecuteContext(
+		ctx, queryDeleteRoleAssignmentsByOU, id, ouID, s.scope(ctx)); err != nil {
+		return fmt.Errorf("failed to delete the assignments of a role in an organization unit: %w", err)
 	}
 	return nil
 }
@@ -613,7 +633,7 @@ func addAssignmentsToRole(
 ) error {
 	for _, assignment := range assignments {
 		_, err := dbClient.ExecuteContext(
-			ctx, queryCreateRoleAssignment, id, assignment.Type, assignment.ID, deploymentID)
+			ctx, queryCreateRoleAssignment, id, assignment.Type, assignment.ID, assignment.OUID, deploymentID)
 		if err != nil {
 			return fmt.Errorf("failed to add assignment to role: %w", err)
 		}

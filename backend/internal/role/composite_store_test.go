@@ -358,3 +358,13 @@ func (suite *CompositeRoleStoreTestSuite) TestCascadeHooks_UseDatabaseStoreOnly(
 	suite.mockFileStore.AssertNotCalled(suite.T(), "DeleteRolePermission",
 		mock.Anything, mock.Anything, mock.Anything)
 }
+
+// Assignments live only in the database, so the cleanup an organization unit losing the role needs
+// goes there.
+func (suite *CompositeRoleStoreTestSuite) TestDeleteAssignmentsByRoleAndOU_GoesToTheDatabase() {
+	suite.mockDBStore.On("DeleteAssignmentsByRoleAndOU", mock.Anything, "role1", "ou-child").Return(nil)
+
+	suite.NoError(suite.store.DeleteAssignmentsByRoleAndOU(context.Background(), "role1", "ou-child"))
+	suite.mockFileStore.AssertNotCalled(suite.T(), "DeleteAssignmentsByRoleAndOU",
+		mock.Anything, mock.Anything, mock.Anything)
+}

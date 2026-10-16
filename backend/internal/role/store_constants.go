@@ -89,14 +89,16 @@ var (
 	// queryCreateRoleAssignment creates a new role assignment.
 	queryCreateRoleAssignment = dbmodel.DBQuery{
 		ID: "RLQ-ROLE_MGT-10",
-		Query: `INSERT INTO "ROLE_ASSIGNMENT" (ROLE_ID, ASSIGNEE_TYPE, ASSIGNEE_ID, DEPLOYMENT_ID)
-			VALUES ($1, $2, $3, $4) ON CONFLICT (ROLE_ID, DEPLOYMENT_ID, ASSIGNEE_TYPE, ASSIGNEE_ID) DO NOTHING`,
+		Query: `INSERT INTO "ROLE_ASSIGNMENT"
+			(ROLE_ID, ASSIGNEE_TYPE, ASSIGNEE_ID, ASSIGNMENT_OU_ID, DEPLOYMENT_ID)
+			VALUES ($1, $2, $3, $4, $5)
+			ON CONFLICT (ROLE_ID, DEPLOYMENT_ID, ASSIGNEE_TYPE, ASSIGNEE_ID, ASSIGNMENT_OU_ID) DO NOTHING`,
 	}
 
 	// queryGetRoleAssignments retrieves all assignments for a role with pagination.
 	queryGetRoleAssignments = dbmodel.DBQuery{
 		ID: "RLQ-ROLE_MGT-11",
-		Query: `SELECT ASSIGNEE_ID, ASSIGNEE_TYPE FROM "ROLE_ASSIGNMENT"
+		Query: `SELECT ASSIGNEE_ID, ASSIGNEE_TYPE, ASSIGNMENT_OU_ID FROM "ROLE_ASSIGNMENT"
 			WHERE ROLE_ID = $1 AND DEPLOYMENT_ID = $4 ORDER BY CREATED_AT LIMIT $2 OFFSET $3`,
 	}
 
@@ -127,6 +129,14 @@ var (
 			`WHERE ASSIGNEE_TYPE = $1 AND ASSIGNEE_ID = $2 AND DEPLOYMENT_ID = $3`,
 	}
 
+	// queryDeleteRoleAssignmentsByOU deletes the assignments of a role made in one organization unit
+	// (used when the organization unit loses the role).
+	queryDeleteRoleAssignmentsByOU = dbmodel.DBQuery{
+		ID: "RLQ-ROLE_MGT-30",
+		Query: `DELETE FROM "ROLE_ASSIGNMENT" ` +
+			`WHERE ROLE_ID = $1 AND ASSIGNMENT_OU_ID = $2 AND DEPLOYMENT_ID = $3`,
+	}
+
 	// queryCheckRoleNameExists checks if a role name already exists for a given organization unit.
 	queryCheckRoleNameExists = dbmodel.DBQuery{
 		ID:    "RLQ-ROLE_MGT-14",
@@ -149,7 +159,7 @@ var (
 	// queryGetRoleAssignmentsByType retrieves assignments for a role filtered by assignee type with pagination.
 	queryGetRoleAssignmentsByType = dbmodel.DBQuery{
 		ID: "RLQ-ROLE_MGT-17",
-		Query: `SELECT ASSIGNEE_ID, ASSIGNEE_TYPE FROM "ROLE_ASSIGNMENT"
+		Query: `SELECT ASSIGNEE_ID, ASSIGNEE_TYPE, ASSIGNMENT_OU_ID FROM "ROLE_ASSIGNMENT"
 			WHERE ROLE_ID = $1 AND ASSIGNEE_TYPE = $5 AND DEPLOYMENT_ID = $4 ORDER BY CREATED_AT LIMIT $2 OFFSET $3`,
 	}
 

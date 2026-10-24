@@ -486,6 +486,7 @@ func (f *fileBasedStore) GetAuthorizedPermissionsByResourceServer(
 	groupIDs, roleIDs []string,
 	resourceServerID string,
 	requestPermissions []string,
+	ouID string,
 ) ([]string, error) {
 	if len(requestPermissions) == 0 {
 		return []string{}, nil
@@ -522,6 +523,9 @@ func (f *fileBasedStore) GetAuthorizedPermissionsByResourceServer(
 			log.GetLogger().Warn(ctx, "Skipping malformed role in GetAuthorizedPermissions",
 				log.String("roleID", item.ID.ID),
 				log.Error(err))
+			continue
+		}
+		if ouID != "" && roleData.OUID != ouID {
 			continue
 		}
 		// A role named directly in roleIDs counts even with no matching assignment, the same way

@@ -248,7 +248,7 @@ func (suite *RoleFileBasedStoreTestSuite) TestGetAuthorizedPermissions() {
 		"user1",
 		[]string{"group1"}, nil, "",
 
-		[]string{"perm2", "perm3"})
+		[]string{"perm2", "perm3"}, "")
 
 	suite.NoError(err)
 	suite.Equal([]string{"perm2"}, perms)

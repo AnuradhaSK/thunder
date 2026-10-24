@@ -439,19 +439,20 @@ func (c *compositeRoleStore) GetAuthorizedPermissionsByResourceServer(
 	groupIDs, roleIDs []string,
 	resourceServerID string,
 	requestPermissions []string,
+	ouID string,
 ) ([]string, error) {
 	if len(requestPermissions) == 0 {
 		return []string{}, nil
 	}
 
 	dbPerms, err := c.dbStore.GetAuthorizedPermissionsByResourceServer(
-		ctx, entityID, groupIDs, roleIDs, resourceServerID, requestPermissions)
+		ctx, entityID, groupIDs, roleIDs, resourceServerID, requestPermissions, ouID)
 	if err != nil {
 		return nil, err
 	}
 
 	filePerms, err := c.fileStore.GetAuthorizedPermissionsByResourceServer(
-		ctx, entityID, groupIDs, roleIDs, resourceServerID, requestPermissions)
+		ctx, entityID, groupIDs, roleIDs, resourceServerID, requestPermissions, ouID)
 	if err != nil {
 		return nil, err
 	}
@@ -459,7 +460,7 @@ func (c *compositeRoleStore) GetAuthorizedPermissionsByResourceServer(
 	// roleIDs are resolved directly, not through an entity/group assignment, so the cross-store
 	// (DB assignment + file-defined role) case does not apply to them.
 	crossStorePerms, err := c.crossStoreAuthorizedPermissions(
-		ctx, entityID, groupIDs, resourceServerID, requestPermissions)
+		ctx, entityID, groupIDs, resourceServerID, requestPermissions, ouID)
 	if err != nil {
 		return nil, err
 	}
@@ -477,6 +478,7 @@ func (c *compositeRoleStore) crossStoreAuthorizedPermissions(
 	groupIDs []string,
 	resourceServerID string,
 	requestPermissions []string,
+	ouID string,
 ) ([]string, error) {
 	if entityID == "" && len(groupIDs) == 0 {
 		return []string{}, nil
@@ -520,6 +522,9 @@ func (c *compositeRoleStore) crossStoreAuthorizedPermissions(
 				"Failed to load declarative role for cross-store permission resolution",
 				log.String("roleID", id), log.Error(err))
 			return nil, fmt.Errorf("composite role store: load declarative role %q: %w", id, err)
+		}
+		if ouID != "" && role.OUID != ouID {
+			continue
 		}
 		for _, rp := range role.Permissions {
 			if resourceServerID != "" && rp.ResourceServerID != resourceServerID {

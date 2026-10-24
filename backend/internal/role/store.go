@@ -41,9 +41,12 @@ type roleStoreInterface interface {
 	RemoveAssignments(ctx context.Context, id string, assignments []RoleAssignment) error
 	CheckRoleNameExists(ctx context.Context, ouID, name string) (bool, error)
 	CheckRoleNameExistsExcludingID(ctx context.Context, ouID, name, excludeRoleID string) (bool, error)
+	// GetAuthorizedPermissionsByResourceServer returns the requested permissions the entity, its
+	// groups, or the named roles hold. A non-empty ouID counts only roles owned by that
+	// organization unit.
 	GetAuthorizedPermissionsByResourceServer(
 		ctx context.Context, entityID string, groupIDs, roleIDs []string, resourceServerID string,
-		requestedPermissions []string) ([]string, error)
+		requestedPermissions []string, ouID string) ([]string, error)
 	// GetAllPermissionsForAssignees returns every permission the entity and/or groups hold through
 	// their assigned roles, grouped by resource server. It takes no filters: it enumerates.
 	GetAllPermissionsForAssignees(
@@ -724,6 +727,7 @@ func (s *roleStore) GetAuthorizedPermissionsByResourceServer(
 	groupIDs, roleIDs []string,
 	resourceServerID string,
 	requestedPermissions []string,
+	ouID string,
 ) ([]string, error) {
 	dbClient, err := s.getConfigDBClient()
 	if err != nil {
@@ -740,7 +744,7 @@ func (s *roleStore) GetAuthorizedPermissionsByResourceServer(
 
 	// Build dynamic query based on provided parameters
 	query, args := buildAuthorizedPermissionsQuery(
-		entityID, groupIDs, roleIDs, resourceServerID, requestedPermissions, s.scope(ctx))
+		entityID, groupIDs, roleIDs, resourceServerID, requestedPermissions, ouID, s.scope(ctx))
 
 	results, err := dbClient.QueryContext(ctx, query, args...)
 	if err != nil {

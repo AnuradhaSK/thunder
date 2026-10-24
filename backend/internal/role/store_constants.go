@@ -206,13 +206,15 @@ func buildGetRolesByNamesQuery(names []string, deploymentID string) (dbmodel.DBQ
 }
 
 // buildAuthorizedPermissionsQuery constructs a database-specific query to retrieve authorized permissions
-// for an entity and/or groups from their assigned roles.
+// for an entity and/or groups from their assigned roles. A non-empty ouID counts only roles owned
+// by that organization unit.
 // It builds separate queries for PostgreSQL and SQLite to handle array parameters correctly.
 func buildAuthorizedPermissionsQuery(
 	entityID string,
 	groupIDs, roleIDs []string,
 	resourceServerID string,
 	requestedPermissions []string,
+	ouID string,
 	deploymentID string,
 ) (dbmodel.DBQuery, []interface{}) {
 	// Base query structure. LEFT JOIN, not INNER JOIN: a role named directly in roleIDs (an
@@ -231,6 +233,9 @@ func buildAuthorizedPermissionsQuery(
 		argsCapacity++
 	}
 	if resourceServerID != "" {
+		argsCapacity++
+	}
+	if ouID != "" {
 		argsCapacity++
 	}
 	args := make([]interface{}, 0, argsCapacity)
@@ -292,6 +297,15 @@ func buildAuthorizedPermissionsQuery(
 		postgresScopeWhere = append(postgresScopeWhere, fmt.Sprintf("rp.RESOURCE_SERVER_ID = $%d", paramIndex))
 		sqliteScopeWhere = append(sqliteScopeWhere, "rp.RESOURCE_SERVER_ID = ?")
 		args = append(args, resourceServerID)
+		paramIndex++
+	}
+	if ouID != "" {
+		postgresScopeWhere = append(postgresScopeWhere, fmt.Sprintf(
+			`rp.ROLE_ID IN (SELECT r.ID FROM "ROLE" r WHERE r.DEPLOYMENT_ID = $1 AND r.OU_ID = $%d)`,
+			paramIndex))
+		sqliteScopeWhere = append(sqliteScopeWhere,
+			`rp.ROLE_ID IN (SELECT r.ID FROM "ROLE" r WHERE r.DEPLOYMENT_ID = $1 AND r.OU_ID = ?)`)
+		args = append(args, ouID)
 		paramIndex++
 	}
 

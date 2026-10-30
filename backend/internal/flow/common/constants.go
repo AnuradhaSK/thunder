@@ -166,6 +166,9 @@ const (
 
 // RuntimeData keys.
 const (
+	// RuntimeKeyOUID holds the organization unit a flow has been asked to act for, such as the one a user picked on a
+	// prompt.
+	RuntimeKeyOUID = "ouId"
 	// RuntimeKeyUserAutoProvisioned indicates whether the user was auto-provisioned
 	RuntimeKeyUserAutoProvisioned = "userAutoProvisioned"
 	// RuntimeKeyUserEligibleForProvisioning indicates whether the user is eligible for auto provisioning

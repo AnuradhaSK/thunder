@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/thunder-id/thunderid/internal/entitytype"
+	"github.com/thunder-id/thunderid/internal/flow/common"
 	"github.com/thunder-id/thunderid/internal/flow/executormeta"
 	oauth2const "github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
 )
@@ -139,7 +140,7 @@ const (
 
 	governanceInputOperatorNote = "operatorNote"
 
-	ouIDKey        = "ouId"
+	ouIDKey        = common.RuntimeKeyOUID
 	ouHandleKey    = "ouHandle"
 	defaultOUIDKey = "defaultOUID"
 

@@ -1,0 +1,2409 @@
+{
+  "info": {
+    "_postman_id": "eea7afc2-26ef-46e7-906b-fdb480858be7",
+    "name": "Wayfinder Enterprise - API Provisioning",
+    "description": "Creates the same resources as thunderid-config/thunderid-config.yaml through the ThunderID management API, then onboards a company and plugs its identity provider into the shared sign-in flow. Run the folders in order.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "01 - Get Management Token",
+      "item": [
+        {
+          "name": "01 - Get Management Token",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "function base64UrlEncode(buffer) {",
+                  "    return btoa(String.fromCharCode(...new Uint8Array(buffer)))",
+                  "        .replace(/\\+/g, '-')",
+                  "        .replace(/\\//g, '_')",
+                  "        .replace(/=/g, '');",
+                  "}",
+                  "",
+                  "const baseUrl = `${pm.environment.get('scheme')}://${pm.environment.get('host')}:${pm.environment.get('port')}`;",
+                  "const clientId = pm.environment.get('MGT_TOKEN_APP_CLIENT_ID');",
+                  "const redirectUri = pm.environment.get('MGT_TOKEN_APP_REDIRECT_URI');",
+                  "const scope = pm.environment.get('MGT_TOKEN_SCOPE');\nconst resource = pm.environment.get('MGT_TOKEN_RESOURCE');",
+                  "const username = pm.environment.get('ADMIN_USERNAME');",
+                  "const password = pm.environment.get('ADMIN_PASSWORD');",
+                  "",
+                  "const array = new Uint8Array(32);",
+                  "crypto.getRandomValues(array);",
+                  "const codeVerifier = base64UrlEncode(array);",
+                  "pm.variables.set('codeVerifier', codeVerifier);",
+                  "",
+                  "return new Promise((resolve, reject) => {",
+                  "    crypto.subtle.digest('SHA-256', new TextEncoder().encode(codeVerifier))",
+                  "        .then(hash => {",
+                  "            const codeChallenge = base64UrlEncode(hash);",
+                  "",
+                  "            // Step 1: Initiate Authorization",
+                  "            const authorizeUrl = `${baseUrl}/oauth2/authorize?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scope)}&resource=${encodeURIComponent(resource)}&state=test-state&code_challenge=${codeChallenge}&code_challenge_method=S256`;",
+                  "            pm.sendRequest({ url: authorizeUrl, method: 'GET', followRedirects: false }, (err, res) => {",
+                  "                if (err) return reject('Authorize failed: ' + err);",
+                  "                const location = res.headers.get('Location');",
+                  "                if (!location) return reject('No Location header from /authorize');",
+                  "                const redirectUrl = new URL(location);",
+                  "                const authId = redirectUrl.searchParams.get('authId');",
+                  "                const executionId = redirectUrl.searchParams.get('executionId');",
+                  "                if (!executionId) return reject('No executionId in redirect: ' + location);",
+                  "                console.log('✓ Step 1: executionId:', executionId);",
+                  "",
+                  "                // Step 2: Init Flow",
+                  "                pm.sendRequest({",
+                  "                    url: `${baseUrl}/flow/execute`,",
+                  "                    method: 'POST',",
+                  "                    header: { 'Content-Type': 'application/json' },",
+                  "                    body: { mode: 'raw', raw: JSON.stringify({ executionId, challengeToken: null }) }",
+                  "                }, (err, res) => {",
+                  "                    if (err) return reject('Init flow failed: ' + err);",
+                  "                    const initResp = res.json();",
+                  "                    console.log('✓ Step 2: Flow initialized, status:', initResp.flowStatus);",
+                  "",
+                  "                    // Step 3: Execute Flow with credentials",
+                  "                    pm.sendRequest({",
+                  "                        url: `${baseUrl}/flow/execute`,",
+                  "                        method: 'POST',",
+                  "                        header: { 'Content-Type': 'application/json' },",
+                  "                        body: {",
+                  "                            mode: 'raw',",
+                  "                            raw: JSON.stringify({ executionId, challengeToken: initResp.challengeToken, inputs: { username, password }, action: 'action_001' })",
+                  "                        }",
+                  "                    }, (err, res) => {",
+                  "                        if (err) return reject('Execute flow failed: ' + err);",
+                  "                        const execResp = res.json();",
+                  "                        if (execResp.flowStatus !== 'COMPLETE' || !execResp.assertion) {",
+                  "                            return reject('Auth failed: ' + (execResp.error?.message?.defaultValue || execResp.error?.description?.defaultValue || execResp.flowStatus));",
+                  "                        }",
+                  "                        console.log('✓ Step 3: Credentials verified');",
+                  "",
+                  "                        // Step 4: Complete Authorization",
+                  "                        pm.sendRequest({",
+                  "                            url: `${baseUrl}/oauth2/auth/callback`,",
+                  "                            method: 'POST',",
+                  "                            header: { 'Content-Type': 'application/json' },",
+                  "                            body: { mode: 'raw', raw: JSON.stringify({ authId, assertion: execResp.assertion }) }",
+                  "                        }, (err, res) => {",
+                  "                            if (err) return reject('Complete auth failed: ' + err);",
+                  "                            const callbackResp = res.json();",
+                  "                            const redirectUriStr = callbackResp.redirect_uri || callbackResp.redirectUri;",
+                  "                            if (!redirectUriStr) return reject('No redirect_uri in callback response: ' + JSON.stringify(callbackResp));",
+                  "                            const authCode = new URL(redirectUriStr).searchParams.get('code');",
+                  "                            if (!authCode) return reject('No auth code in redirect URI');",
+                  "                            pm.variables.set('authCode', authCode);",
+                  "                            console.log('✓ Step 4: Authorization code obtained');",
+                  "                            resolve();",
+                  "                        });",
+                  "                    });",
+                  "                });",
+                  "            });",
+                  "        })",
+                  "        .catch(reject);",
+                  "});",
+                  ""
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Token obtained', function() {",
+                  "    pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "const token = pm.response.json();",
+                  "if (token.access_token) {",
+                  "    pm.environment.set('accessToken', token.access_token);",
+                  "    pm.environment.set('expiresAt', String(Date.now() + (token.expires_in * 1000)));",
+                  "    if (token.refresh_token) {",
+                  "        pm.environment.set('refreshToken', token.refresh_token);",
+                  "    }",
+                  "    console.log('✓ Access token stored, expires in:', token.expires_in, 'seconds');",
+                  "}",
+                  ""
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "authorization_code",
+                  "type": "text"
+                },
+                {
+                  "key": "code",
+                  "value": "{{authCode}}",
+                  "type": "text"
+                },
+                {
+                  "key": "redirect_uri",
+                  "value": "{{MGT_TOKEN_APP_REDIRECT_URI}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_id",
+                  "value": "{{MGT_TOKEN_APP_CLIENT_ID}}",
+                  "type": "text"
+                },
+                {
+                  "key": "code_verifier",
+                  "value": "{{codeVerifier}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/oauth2/token",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "oauth2",
+                "token"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "Signs in as a ThunderID administrator through the Console client and stores a token with the system permission."
+          },
+          "response": []
+        }
+      ],
+      "auth": {
+        "type": "noauth"
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {},
+            "exec": [
+              ""
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {},
+            "exec": [
+              ""
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 - Provision Wayfinder Enterprise",
+      "item": [
+        {
+          "name": "01 - Create the Wayfinder Enterprise organization unit",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});",
+                  "if (pm.response.json().id) { pm.environment.set('parentOuId', pm.response.json().id); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/organization-units",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "organization-units"
+              ]
+            },
+            "description": "A root organization unit. Every company that signs up becomes a child of it.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"handle\": \"{{parentOuHandle}}\",\n  \"name\": \"{{parentOuName}}\",\n  \"description\": \"Parent of every company that signs up to Wayfinder Enterprise\",\n  \"parent\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "02 - Create the Wayfinder user type",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});",
+                  "if (pm.response.json().id) { pm.environment.set('userTypeId', pm.response.json().id); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-types",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-types"
+              ]
+            },
+            "description": "Owned by the parent unit, so every company beneath it can use it.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"handle\": \"{{userTypeHandle}}\",\n  \"displayName\": \"Wayfinder User\",\n  \"ouId\": \"{{parentOuId}}\",\n  \"allowSelfRegistration\": true,\n  \"systemAttributes\": {\n    \"display\": \"username\"\n  },\n  \"schema\": {\n    \"username\": {\n      \"type\": \"string\",\n      \"displayName\": \"Username\",\n      \"required\": false,\n      \"unique\": true\n    },\n    \"password\": {\n      \"type\": \"string\",\n      \"displayName\": \"Password\",\n      \"required\": false,\n      \"credential\": true\n    },\n    \"email\": {\n      \"type\": \"string\",\n      \"displayName\": \"Email\",\n      \"required\": true,\n      \"unique\": true,\n      \"regex\": \"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\\\.[a-zA-Z]{2,}$\"\n    },\n    \"given_name\": {\n      \"type\": \"string\",\n      \"displayName\": \"First Name\",\n      \"required\": false\n    },\n    \"family_name\": {\n      \"type\": \"string\",\n      \"displayName\": \"Last Name\",\n      \"required\": false\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "03 - Create the Wayfinder Enterprise API resource server",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});",
+                  "if (pm.response.json().id) { pm.environment.set('apiResourceServerId', pm.response.json().id); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/resource-servers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "resource-servers"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"{{apiResourceServerName}}\",\n  \"description\": \"Permissions of the Wayfinder Enterprise app\",\n  \"identifier\": \"{{apiResource}}\",\n  \"ouId\": \"{{parentOuId}}\",\n  \"delimiter\": \":\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "04 - Create the booking resource",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});",
+                  "if (pm.response.json().id) { pm.environment.set('bookingResourceId', pm.response.json().id); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/resource-servers/{{apiResourceServerId}}/resources",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "resource-servers",
+                "{{apiResourceServerId}}",
+                "resources"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Booking\",\n  \"handle\": \"booking\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "05 - Create the booking:view action",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/resource-servers/{{apiResourceServerId}}/resources/{{bookingResourceId}}/actions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "resource-servers",
+                "{{apiResourceServerId}}",
+                "resources",
+                "{{bookingResourceId}}",
+                "actions"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"View\",\n  \"handle\": \"view\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "06 - Create the booking:create action",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/resource-servers/{{apiResourceServerId}}/resources/{{bookingResourceId}}/actions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "resource-servers",
+                "{{apiResourceServerId}}",
+                "resources",
+                "{{bookingResourceId}}",
+                "actions"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Create\",\n  \"handle\": \"create\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "07 - Create the booking:manage action",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/resource-servers/{{apiResourceServerId}}/resources/{{bookingResourceId}}/actions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "resource-servers",
+                "{{apiResourceServerId}}",
+                "resources",
+                "{{bookingResourceId}}",
+                "actions"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Manage\",\n  \"handle\": \"manage\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "08 - Create the policy resource",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});",
+                  "if (pm.response.json().id) { pm.environment.set('policyResourceId', pm.response.json().id); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/resource-servers/{{apiResourceServerId}}/resources",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "resource-servers",
+                "{{apiResourceServerId}}",
+                "resources"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Travel policy\",\n  \"handle\": \"policy\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "09 - Create the policy:view action",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/resource-servers/{{apiResourceServerId}}/resources/{{policyResourceId}}/actions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "resource-servers",
+                "{{apiResourceServerId}}",
+                "resources",
+                "{{policyResourceId}}",
+                "actions"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"View\",\n  \"handle\": \"view\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "10 - Create the policy:manage action",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/resource-servers/{{apiResourceServerId}}/resources/{{policyResourceId}}/actions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "resource-servers",
+                "{{apiResourceServerId}}",
+                "resources",
+                "{{policyResourceId}}",
+                "actions"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Manage\",\n  \"handle\": \"manage\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "11 - Create the user resource",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});",
+                  "if (pm.response.json().id) { pm.environment.set('userResourceId', pm.response.json().id); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/resource-servers/{{apiResourceServerId}}/resources",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "resource-servers",
+                "{{apiResourceServerId}}",
+                "resources"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"User\",\n  \"handle\": \"user\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "12 - Create the user:view action",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/resource-servers/{{apiResourceServerId}}/resources/{{userResourceId}}/actions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "resource-servers",
+                "{{apiResourceServerId}}",
+                "resources",
+                "{{userResourceId}}",
+                "actions"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"View\",\n  \"handle\": \"view\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "13 - Create the user:manage action",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/resource-servers/{{apiResourceServerId}}/resources/{{userResourceId}}/actions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "resource-servers",
+                "{{apiResourceServerId}}",
+                "resources",
+                "{{userResourceId}}",
+                "actions"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Manage\",\n  \"handle\": \"manage\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "14 - Create the group resource",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});",
+                  "if (pm.response.json().id) { pm.environment.set('groupResourceId', pm.response.json().id); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/resource-servers/{{apiResourceServerId}}/resources",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "resource-servers",
+                "{{apiResourceServerId}}",
+                "resources"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Group\",\n  \"handle\": \"group\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "15 - Create the group:view action",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/resource-servers/{{apiResourceServerId}}/resources/{{groupResourceId}}/actions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "resource-servers",
+                "{{apiResourceServerId}}",
+                "resources",
+                "{{groupResourceId}}",
+                "actions"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"View\",\n  \"handle\": \"view\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "16 - Create the group:manage action",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/resource-servers/{{apiResourceServerId}}/resources/{{groupResourceId}}/actions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "resource-servers",
+                "{{apiResourceServerId}}",
+                "resources",
+                "{{groupResourceId}}",
+                "actions"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Manage\",\n  \"handle\": \"manage\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "17 - Create the role resource",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});",
+                  "if (pm.response.json().id) { pm.environment.set('roleResourceId', pm.response.json().id); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/resource-servers/{{apiResourceServerId}}/resources",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "resource-servers",
+                "{{apiResourceServerId}}",
+                "resources"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Role assignment\",\n  \"handle\": \"role\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "18 - Create the role:view action",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/resource-servers/{{apiResourceServerId}}/resources/{{roleResourceId}}/actions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "resource-servers",
+                "{{apiResourceServerId}}",
+                "resources",
+                "{{roleResourceId}}",
+                "actions"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"View\",\n  \"handle\": \"view\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "19 - Create the role:manage action",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/resource-servers/{{apiResourceServerId}}/resources/{{roleResourceId}}/actions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "resource-servers",
+                "{{apiResourceServerId}}",
+                "resources",
+                "{{roleResourceId}}",
+                "actions"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Manage\",\n  \"handle\": \"manage\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "20 - Create the sso resource",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});",
+                  "if (pm.response.json().id) { pm.environment.set('ssoResourceId', pm.response.json().id); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/resource-servers/{{apiResourceServerId}}/resources",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "resource-servers",
+                "{{apiResourceServerId}}",
+                "resources"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Enterprise SSO\",\n  \"handle\": \"sso\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "21 - Create the sso:view action",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/resource-servers/{{apiResourceServerId}}/resources/{{ssoResourceId}}/actions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "resource-servers",
+                "{{apiResourceServerId}}",
+                "resources",
+                "{{ssoResourceId}}",
+                "actions"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"View\",\n  \"handle\": \"view\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "22 - Create the sso:manage action",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/resource-servers/{{apiResourceServerId}}/resources/{{ssoResourceId}}/actions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "resource-servers",
+                "{{apiResourceServerId}}",
+                "resources",
+                "{{ssoResourceId}}",
+                "actions"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Manage\",\n  \"handle\": \"manage\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "23 - Create the Wayfinder Admin role",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});",
+                  "if (pm.response.json().id) { pm.environment.set('adminRoleId', pm.response.json().id); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/roles",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "roles"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Wayfinder Admin\",\n  \"description\": \"Manages a company's travel policy, team and enterprise sign-in\",\n  \"ouId\": \"{{parentOuId}}\",\n  \"permissions\": [\n    {\n      \"resourceServerId\": \"{{apiResourceServerId}}\",\n      \"permissions\": [\n        \"booking:view\",\n        \"booking:create\",\n        \"booking:manage\",\n        \"policy:view\",\n        \"policy:manage\",\n        \"user:view\",\n        \"user:manage\",\n        \"group:view\",\n        \"group:manage\",\n        \"role:view\",\n        \"role:manage\",\n        \"sso:view\",\n        \"sso:manage\"\n      ]\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "24 - Share the Wayfinder Admin role with every company",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/roles/{{adminRoleId}}/sharing-policies",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "roles",
+                "{{adminRoleId}}",
+                "sharing-policies"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"childUnits\": {\n    \"mode\": \"all\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "25 - Create the Wayfinder Member role",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});",
+                  "if (pm.response.json().id) { pm.environment.set('memberRoleId', pm.response.json().id); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/roles",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "roles"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Wayfinder Member\",\n  \"description\": \"Books flights within the company's travel policy\",\n  \"ouId\": \"{{parentOuId}}\",\n  \"permissions\": [\n    {\n      \"resourceServerId\": \"{{apiResourceServerId}}\",\n      \"permissions\": [\n        \"booking:view\",\n        \"booking:create\",\n        \"policy:view\"\n      ]\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "26 - Share the Wayfinder Member role with every company",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/roles/{{memberRoleId}}/sharing-policies",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "roles",
+                "{{memberRoleId}}",
+                "sharing-policies"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"childUnits\": {\n    \"mode\": \"all\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "27 - Create the company sign-up flow",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});",
+                  "if (pm.response.json().id) { pm.environment.set('signUpFlowId', pm.response.json().id); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/flows",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "flows"
+              ]
+            },
+            "description": "Creates the company as a child of the parent unit, creates its first user inside it, and assigns the Wayfinder Admin role.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Wayfinder Enterprise Company Sign-up\",\n  \"handle\": \"{{signUpFlowHandle}}\",\n  \"flowType\": \"REGISTRATION\",\n  \"ouId\": \"{{parentOuId}}\",\n  \"nodes\": [\n    {\n      \"id\": \"start\",\n      \"type\": \"START\",\n      \"onSuccess\": \"user_type_resolver\"\n    },\n    {\n      \"id\": \"user_type_resolver\",\n      \"type\": \"TASK_EXECUTION\",\n      \"executor\": {\n        \"name\": \"UserTypeResolver\"\n      },\n      \"onSuccess\": \"prompt_account\"\n    },\n    {\n      \"id\": \"prompt_account\",\n      \"type\": \"PROMPT\",\n      \"meta\": {\n        \"components\": [\n          {\n            \"alt\": \"Wayfinder Enterprise\",\n            \"category\": \"DISPLAY\",\n            \"id\": \"image_logo_account\",\n            \"resourceType\": \"ELEMENT\",\n            \"src\": \"{{ meta(application.logoUrl) }}\",\n            \"type\": \"IMAGE\",\n            \"height\": \"48\",\n            \"width\": \"\"\n          },\n          {\n            \"align\": \"center\",\n            \"type\": \"TEXT\",\n            \"id\": \"heading_account\",\n            \"label\": \"Register your company\",\n            \"variant\": \"HEADING_1\"\n          },\n          {\n            \"align\": \"center\",\n            \"type\": \"TEXT\",\n            \"id\": \"text_account\",\n            \"label\": \"First, create your account. You become your company's first admin.\",\n            \"variant\": \"BODY_1\"\n          },\n          {\n            \"type\": \"BLOCK\",\n            \"id\": \"block_account\",\n            \"components\": [\n              {\n                \"id\": \"input_username\",\n                \"ref\": \"username\",\n                \"type\": \"TEXT_INPUT\",\n                \"label\": \"Username\",\n                \"required\": true,\n                \"placeholder\": \"Choose a username\"\n              },\n              {\n                \"id\": \"input_email\",\n                \"ref\": \"email\",\n                \"type\": \"EMAIL_INPUT\",\n                \"label\": \"Work email\",\n                \"required\": true,\n                \"placeholder\": \"you@company.com\"\n              },\n              {\n                \"id\": \"input_password\",\n                \"ref\": \"password\",\n                \"type\": \"PASSWORD_INPUT\",\n                \"label\": \"Password\",\n                \"required\": true,\n                \"placeholder\": \"Choose a password\"\n              },\n              {\n                \"type\": \"ACTION\",\n                \"id\": \"action_account\",\n                \"label\": \"Continue\",\n                \"variant\": \"PRIMARY\",\n                \"eventType\": \"SUBMIT\"\n              }\n            ]\n          }\n        ]\n      },\n      \"prompts\": [\n        {\n          \"inputs\": [\n            {\n              \"ref\": \"input_username\",\n              \"identifier\": \"username\",\n              \"type\": \"TEXT_INPUT\",\n              \"required\": true\n            },\n            {\n              \"ref\": \"input_email\",\n              \"identifier\": \"email\",\n              \"type\": \"EMAIL_INPUT\",\n              \"required\": true\n            },\n            {\n              \"ref\": \"input_password\",\n              \"identifier\": \"password\",\n              \"type\": \"PASSWORD_INPUT\",\n              \"required\": true\n            }\n          ],\n          \"action\": {\n            \"ref\": \"action_account\",\n            \"nextNode\": \"credentials_auth\"\n          }\n        }\n      ]\n    },\n    {\n      \"id\": \"credentials_auth\",\n      \"type\": \"TASK_EXECUTION\",\n      \"executor\": {\n        \"name\": \"CredentialsAuthExecutor\"\n      },\n      \"onSuccess\": \"prompt_company\",\n      \"onFailure\": \"prompt_account\"\n    },\n    {\n      \"id\": \"prompt_company\",\n      \"type\": \"PROMPT\",\n      \"meta\": {\n        \"components\": [\n          {\n            \"alt\": \"Wayfinder Enterprise\",\n            \"category\": \"DISPLAY\",\n            \"id\": \"image_logo_company\",\n            \"resourceType\": \"ELEMENT\",\n            \"src\": \"{{ meta(application.logoUrl) }}\",\n            \"type\": \"IMAGE\",\n            \"height\": \"48\",\n            \"width\": \"\"\n          },\n          {\n            \"align\": \"center\",\n            \"type\": \"TEXT\",\n            \"id\": \"heading_company\",\n            \"label\": \"Tell us about your company\",\n            \"variant\": \"HEADING_1\"\n          },\n          {\n            \"align\": \"center\",\n            \"type\": \"TEXT\",\n            \"id\": \"text_company\",\n            \"label\": \"Your team signs in to its own Wayfinder workspace with this organization handle.\",\n            \"variant\": \"BODY_1\"\n          },\n          {\n            \"type\": \"BLOCK\",\n            \"id\": \"block_company\",\n            \"components\": [\n              {\n                \"id\": \"input_ou_name\",\n                \"ref\": \"ouName\",\n                \"type\": \"TEXT_INPUT\",\n                \"label\": \"Company name\",\n                \"required\": true,\n                \"placeholder\": \"Northstar Labs\"\n              },\n              {\n                \"id\": \"input_ou_handle\",\n                \"ref\": \"ouHandle\",\n                \"type\": \"TEXT_INPUT\",\n                \"label\": \"Organization handle\",\n                \"required\": true,\n                \"placeholder\": \"northstar\"\n              },\n              {\n                \"type\": \"ACTION\",\n                \"id\": \"action_company\",\n                \"label\": \"Create company\",\n                \"variant\": \"PRIMARY\",\n                \"eventType\": \"SUBMIT\"\n              }\n            ]\n          }\n        ]\n      },\n      \"prompts\": [\n        {\n          \"inputs\": [\n            {\n              \"ref\": \"input_ou_name\",\n              \"identifier\": \"ouName\",\n              \"type\": \"TEXT_INPUT\",\n              \"required\": true\n            },\n            {\n              \"ref\": \"input_ou_handle\",\n              \"identifier\": \"ouHandle\",\n              \"type\": \"TEXT_INPUT\",\n              \"required\": true\n            }\n          ],\n          \"action\": {\n            \"ref\": \"action_company\",\n            \"nextNode\": \"create_company\"\n          }\n        }\n      ]\n    },\n    {\n      \"id\": \"create_company\",\n      \"type\": \"TASK_EXECUTION\",\n      \"executor\": {\n        \"name\": \"OUExecutor\",\n        \"inputs\": [\n          {\n            \"ref\": \"input_ou_name\",\n            \"identifier\": \"ouName\",\n            \"type\": \"TEXT_INPUT\",\n            \"required\": true\n          },\n          {\n            \"ref\": \"input_ou_handle\",\n            \"identifier\": \"ouHandle\",\n            \"type\": \"TEXT_INPUT\",\n            \"required\": true\n          }\n        ]\n      },\n      \"properties\": {\n        \"parentOuId\": \"{{parentOuId}}\"\n      },\n      \"onSuccess\": \"provisioning\",\n      \"onIncomplete\": \"prompt_company\"\n    },\n    {\n      \"id\": \"provisioning\",\n      \"type\": \"TASK_EXECUTION\",\n      \"executor\": {\n        \"name\": \"ProvisioningExecutor\"\n      },\n      \"properties\": {\n        \"assignRole\": \"{{adminRoleId}}\"\n      },\n      \"onSuccess\": \"end\",\n      \"onIncomplete\": \"prompt_schema_attrs\"\n    },\n    {\n      \"id\": \"prompt_schema_attrs\",\n      \"type\": \"PROMPT\",\n      \"meta\": {\n        \"components\": [\n          {\n            \"alt\": \"Wayfinder Enterprise\",\n            \"category\": \"DISPLAY\",\n            \"id\": \"image_logo_schema_attrs\",\n            \"resourceType\": \"ELEMENT\",\n            \"src\": \"{{ meta(application.logoUrl) }}\",\n            \"type\": \"IMAGE\",\n            \"height\": \"48\",\n            \"width\": \"\"\n          },\n          {\n            \"align\": \"center\",\n            \"type\": \"TEXT\",\n            \"id\": \"heading_schema_attrs\",\n            \"label\": \"{{ t(signup:forms.user_info.title) }}\",\n            \"variant\": \"HEADING_1\"\n          },\n          {\n            \"type\": \"BLOCK\",\n            \"id\": \"block_dynamic_user_inputs\",\n            \"components\": [\n              {\n                \"type\": \"DYNAMIC_INPUT_PLACEHOLDER\",\n                \"id\": \"dynamic_inputs\"\n              },\n              {\n                \"type\": \"ACTION\",\n                \"id\": \"action_schema_attrs\",\n                \"label\": \"{{ t(signup:forms.user_info.actions.continue.label) }}\",\n                \"variant\": \"PRIMARY\",\n                \"eventType\": \"SUBMIT\"\n              }\n            ]\n          }\n        ]\n      },\n      \"prompts\": [\n        {\n          \"inputs\": [],\n          \"action\": {\n            \"ref\": \"action_schema_attrs\",\n            \"nextNode\": \"provisioning\"\n          }\n        }\n      ]\n    },\n    {\n      \"id\": \"end\",\n      \"type\": \"END\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "28 - Create the sign-in flow",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});",
+                  "if (pm.response.json().id) { pm.environment.set('signInFlowId', pm.response.json().id); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/flows",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "flows"
+              ]
+            },
+            "description": "A password, or enterprise SSO through the identity provider the company selects for the enterpriseIdp variable.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Wayfinder Enterprise Sign-in\",\n  \"handle\": \"{{signInFlowHandle}}\",\n  \"flowType\": \"AUTHENTICATION\",\n  \"ouId\": \"{{parentOuId}}\",\n  \"nodes\": [\n    {\n      \"id\": \"start\",\n      \"type\": \"START\",\n      \"onSuccess\": \"prompt_signin\"\n    },\n    {\n      \"id\": \"prompt_signin\",\n      \"type\": \"PROMPT\",\n      \"meta\": {\n        \"components\": [\n          {\n            \"alt\": \"Wayfinder Enterprise\",\n            \"category\": \"DISPLAY\",\n            \"id\": \"image_logo_signin\",\n            \"resourceType\": \"ELEMENT\",\n            \"src\": \"{{ meta(application.logoUrl) }}\",\n            \"type\": \"IMAGE\",\n            \"height\": \"48\",\n            \"width\": \"\"\n          },\n          {\n            \"align\": \"center\",\n            \"type\": \"TEXT\",\n            \"id\": \"heading_signin\",\n            \"label\": \"Sign in to Wayfinder Enterprise\",\n            \"variant\": \"HEADING_1\"\n          },\n          {\n            \"type\": \"BLOCK\",\n            \"id\": \"block_credentials\",\n            \"components\": [\n              {\n                \"id\": \"input_username\",\n                \"ref\": \"username\",\n                \"type\": \"TEXT_INPUT\",\n                \"label\": \"{{ t(signin:forms.credentials.fields.username.label) }}\",\n                \"required\": true,\n                \"placeholder\": \"{{ t(signin:forms.credentials.fields.username.placeholder) }}\"\n              },\n              {\n                \"id\": \"input_password\",\n                \"ref\": \"password\",\n                \"type\": \"PASSWORD_INPUT\",\n                \"label\": \"{{ t(signin:forms.credentials.fields.password.label) }}\",\n                \"required\": true,\n                \"placeholder\": \"{{ t(signin:forms.credentials.fields.password.placeholder) }}\"\n              },\n              {\n                \"type\": \"ACTION\",\n                \"id\": \"action_credentials\",\n                \"label\": \"{{ t(signin:forms.credentials.actions.submit.label) }}\",\n                \"variant\": \"PRIMARY\",\n                \"eventType\": \"SUBMIT\"\n              }\n            ]\n          },\n          {\n            \"category\": \"DISPLAY\",\n            \"id\": \"divider_signin\",\n            \"label\": \"Or\",\n            \"resourceType\": \"ELEMENT\",\n            \"type\": \"DIVIDER\",\n            \"variant\": \"HORIZONTAL\"\n          },\n          {\n            \"category\": \"ACTION\",\n            \"type\": \"BLOCK\",\n            \"id\": \"block_enterprise\",\n            \"resourceType\": \"ELEMENT\",\n            \"eventType\": \"TRIGGER\",\n            \"components\": [\n              {\n                \"category\": \"ACTION\",\n                \"type\": \"ACTION\",\n                \"id\": \"action_enterprise\",\n                \"label\": \"Sign in with enterprise SSO\",\n                \"resourceType\": \"ELEMENT\",\n                \"variant\": \"OUTLINED\",\n                \"eventType\": \"TRIGGER\"\n              }\n            ]\n          },\n          {\n            \"category\": \"DISPLAY\",\n            \"id\": \"rich_text_register\",\n            \"action\": {\n              \"ref\": \"action_register\"\n            },\n            \"label\": \"<p class=\\\"rich-text-paragraph\\\"><span class=\\\"rich-text-pre-wrap\\\">New to Wayfinder? </span><a href=\\\"#\\\" data-action-ref=\\\"action_register\\\" class=\\\"rich-text-link\\\"><span class=\\\"rich-text-pre-wrap\\\">Register your company</span></a></p>\",\n            \"resourceType\": \"ELEMENT\",\n            \"type\": \"RICH_TEXT\"\n          }\n        ]\n      },\n      \"prompts\": [\n        {\n          \"inputs\": [\n            {\n              \"ref\": \"input_username\",\n              \"identifier\": \"username\",\n              \"type\": \"TEXT_INPUT\",\n              \"required\": true\n            },\n            {\n              \"ref\": \"input_password\",\n              \"identifier\": \"password\",\n              \"type\": \"PASSWORD_INPUT\",\n              \"required\": true\n            }\n          ],\n          \"action\": {\n            \"ref\": \"action_credentials\",\n            \"nextNode\": \"credentials_auth\"\n          }\n        },\n        {\n          \"action\": {\n            \"ref\": \"action_enterprise\",\n            \"nextNode\": \"resolve_company\"\n          }\n        },\n        {\n          \"action\": {\n            \"ref\": \"action_register\",\n            \"nextNode\": \"register_company\"\n          }\n        }\n      ]\n    },\n    {\n      \"id\": \"credentials_auth\",\n      \"type\": \"TASK_EXECUTION\",\n      \"executor\": {\n        \"name\": \"CredentialsAuthExecutor\"\n      },\n      \"onSuccess\": \"authorization_check\",\n      \"onIncomplete\": \"prompt_signin\"\n    },\n    {\n      \"id\": \"register_company\",\n      \"type\": \"CALL\",\n      \"flow\": {\n        \"ref\": \"{{signUpFlowId}}\"\n      },\n      \"onSuccess\": \"authorization_check\"\n    },\n    {\n      \"id\": \"resolve_company\",\n      \"type\": \"TASK_EXECUTION\",\n      \"executor\": {\n        \"name\": \"OUResolverExecutor\",\n        \"inputs\": [\n          {\n            \"ref\": \"input_org_handle\",\n            \"identifier\": \"ouHandle\",\n            \"type\": \"TEXT_INPUT\",\n            \"required\": true\n          }\n        ]\n      },\n      \"properties\": {\n        \"resolveFrom\": \"prompt\",\n        \"parentOuId\": \"{{parentOuId}}\",\n        \"directChildrenOnly\": true\n      },\n      \"onSuccess\": \"company_settings\",\n      \"onIncomplete\": \"prompt_company\"\n    },\n    {\n      \"id\": \"prompt_company\",\n      \"type\": \"PROMPT\",\n      \"meta\": {\n        \"components\": [\n          {\n            \"alt\": \"Wayfinder Enterprise\",\n            \"category\": \"DISPLAY\",\n            \"id\": \"image_logo_company\",\n            \"resourceType\": \"ELEMENT\",\n            \"src\": \"{{ meta(application.logoUrl) }}\",\n            \"type\": \"IMAGE\",\n            \"height\": \"48\",\n            \"width\": \"\"\n          },\n          {\n            \"align\": \"center\",\n            \"type\": \"TEXT\",\n            \"id\": \"heading_company\",\n            \"label\": \"Enterprise sign-in\",\n            \"variant\": \"HEADING_1\"\n          },\n          {\n            \"align\": \"center\",\n            \"type\": \"TEXT\",\n            \"id\": \"text_company\",\n            \"label\": \"Enter your company's organization handle to continue with its identity provider.\",\n            \"variant\": \"BODY_1\"\n          },\n          {\n            \"type\": \"BLOCK\",\n            \"id\": \"block_company\",\n            \"components\": [\n              {\n                \"id\": \"input_org_handle\",\n                \"ref\": \"ouHandle\",\n                \"type\": \"TEXT_INPUT\",\n                \"label\": \"Organization handle\",\n                \"required\": true,\n                \"placeholder\": \"northstar\"\n              },\n              {\n                \"type\": \"ACTION\",\n                \"id\": \"action_company\",\n                \"label\": \"Continue\",\n                \"variant\": \"PRIMARY\",\n                \"eventType\": \"SUBMIT\"\n              }\n            ]\n          }\n        ]\n      },\n      \"prompts\": [\n        {\n          \"inputs\": [\n            {\n              \"ref\": \"input_org_handle\",\n              \"identifier\": \"ouHandle\",\n              \"type\": \"TEXT_INPUT\",\n              \"required\": true\n            }\n          ],\n          \"action\": {\n            \"ref\": \"action_company\",\n            \"nextNode\": \"resolve_company\"\n          }\n        }\n      ]\n    },\n    {\n      \"id\": \"company_settings\",\n      \"type\": \"VARIABLES\",\n      \"inputs\": [\n        {\n          \"identifier\": \"enterpriseIdp\",\n          \"type\": \"CONNECTION_SELECT\",\n          \"category\": \"IDENTITY_PROVIDER\",\n          \"connectionTypes\": [\n            \"oidc\"\n          ],\n          \"label\": \"Enterprise identity provider\",\n          \"description\": \"The OpenID Connect identity provider the company's employees sign in with\",\n          \"defaultValue\": \"\"\n        }\n      ],\n      \"onSuccess\": \"enterprise_auth\"\n    },\n    {\n      \"id\": \"enterprise_auth\",\n      \"type\": \"TASK_EXECUTION\",\n      \"executor\": {\n        \"name\": \"OIDCAuthExecutor\"\n      },\n      \"properties\": {\n        \"idpId\": \"{{var(enterpriseIdp)}}\",\n        \"allowAuthenticationWithoutLocalUser\": true\n      },\n      \"onSuccess\": \"provision_member\"\n    },\n    {\n      \"id\": \"provision_member\",\n      \"type\": \"TASK_EXECUTION\",\n      \"condition\": {\n        \"key\": \"{{ctx(userEligibleForProvisioning)}}\",\n        \"value\": \"true\",\n        \"onSkip\": \"authorization_check\"\n      },\n      \"executor\": {\n        \"name\": \"ProvisioningExecutor\"\n      },\n      \"properties\": {\n        \"assignRole\": \"{{memberRoleId}}\"\n      },\n      \"onSuccess\": \"authorization_check\"\n    },\n    {\n      \"id\": \"authorization_check\",\n      \"type\": \"TASK_EXECUTION\",\n      \"executor\": {\n        \"name\": \"AuthorizationExecutor\"\n      },\n      \"onSuccess\": \"auth_assert\"\n    },\n    {\n      \"id\": \"auth_assert\",\n      \"type\": \"TASK_EXECUTION\",\n      \"executor\": {\n        \"name\": \"AuthAssertExecutor\"\n      },\n      \"onSuccess\": \"end\"\n    },\n    {\n      \"id\": \"end\",\n      \"type\": \"END\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "29 - Share the sign-in flow and let each company set enterpriseIdp",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/flows/{{signInFlowId}}/sharing-policies",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "flows",
+                "{{signInFlowId}}",
+                "sharing-policies"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"childUnits\": {\n    \"mode\": \"all\",\n    \"overlayRules\": {\n      \"variables.enterpriseIdp\": {\n        \"editable\": true\n      }\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "30 - Create the Wayfinder theme",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});",
+                  "if (pm.response.json().id) { pm.environment.set('themeId', pm.response.json().id); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/design/themes",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "design",
+                "themes"
+              ]
+            },
+            "description": "Wayfinder's blue and yellow, and Inter, for the sign-in and sign-up screens.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"handle\": \"{{themeHandle}}\",\n  \"displayName\": \"Wayfinder\",\n  \"description\": \"Blue and yellow screens for Wayfinder Enterprise\",\n  \"theme\": {\n    \"defaultColorScheme\": \"light\",\n    \"direction\": \"ltr\",\n    \"shape\": {\n      \"borderRadius\": 8\n    },\n    \"typography\": {\n      \"fontFamily\": \"'Inter Variable', Inter, 'Segoe UI', Arial, sans-serif\",\n      \"h1\": {\n        \"fontSize\": \"1.75rem\",\n        \"fontWeight\": 800,\n        \"lineHeight\": 1.2\n      },\n      \"h2\": {\n        \"fontSize\": \"1.375rem\",\n        \"fontWeight\": 700,\n        \"lineHeight\": 1.25\n      },\n      \"body1\": {\n        \"fontSize\": \"0.95rem\"\n      },\n      \"button\": {\n        \"fontWeight\": 650,\n        \"textTransform\": \"none\"\n      }\n    },\n    \"colorSchemes\": {\n      \"light\": {\n        \"palette\": {\n          \"primary\": {\n            \"main\": \"#1d4ed8\",\n            \"dark\": \"#1e3a8a\",\n            \"light\": \"#e8efff\",\n            \"contrastText\": \"#ffffff\"\n          },\n          \"secondary\": {\n            \"main\": \"#ffd166\",\n            \"dark\": \"#f4b740\",\n            \"contrastText\": \"#0f172a\"\n          },\n          \"background\": {\n            \"default\": \"#061a33\",\n            \"paper\": \"#ffffff\"\n          },\n          \"text\": {\n            \"primary\": \"#0f172a\",\n            \"secondary\": \"#5f6b7a\"\n          }\n        }\n      }\n    },\n    \"components\": {\n      \"MuiButton\": {\n        \"styleOverrides\": {\n          \"containedPrimary\": {\n            \"backgroundColor\": \"#ffd166\",\n            \"backgroundImage\": \"none\",\n            \"color\": \"#0f172a\",\n            \"boxShadow\": \"0 8px 20px rgba(255, 177, 66, 0.25)\",\n            \"&:hover\": {\n              \"backgroundColor\": \"#f4b740\",\n              \"boxShadow\": \"0 8px 20px rgba(255, 177, 66, 0.35)\"\n            }\n          }\n        }\n      }\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "31 - Create the Wayfinder layout",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});",
+                  "if (pm.response.json().id) { pm.environment.set('layoutId', pm.response.json().id); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/design/layouts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "design",
+                "layouts"
+              ]
+            },
+            "description": "A centered card on Wayfinder's background. With a theme or a layout assigned, the screens drop ThunderID's own branding.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"handle\": \"{{layoutHandle}}\",\n  \"displayName\": \"Wayfinder Centered\",\n  \"description\": \"A centered card on Wayfinder's navy, blue and yellow background\",\n  \"layout\": {\n    \"head\": {\n      \"stylesheets\": [\n        {\n          \"id\": \"wayfinder-background\",\n          \"type\": \"inline\",\n          \"content\": \"body{background:radial-gradient(circle at 82% 14%,rgba(255,209,102,0.35) 0,rgba(255,209,102,0) 26%),radial-gradient(circle at 12% 88%,rgba(37,99,235,0.6) 0,rgba(37,99,235,0) 42%),repeating-linear-gradient(118deg,rgba(255,209,102,0) 0 46px,rgba(255,209,102,0.07) 46px 48px),linear-gradient(135deg,#061a33 0%,#0f2f6b 58%,#1d4ed8 100%) fixed !important;}main{background:transparent !important;}\"\n        }\n      ]\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "32 - Create the Wayfinder Enterprise application",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});",
+                  "if (pm.response.json().id) { pm.environment.set('appId', pm.response.json().id); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/applications",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "applications"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ouId\": \"{{parentOuId}}\",\n  \"name\": \"{{appName}}\",\n  \"description\": \"B2B travel management sample on ThunderID\",\n  \"type\": \"fullstack\",\n  \"url\": \"{{appUrl}}\",\n  \"logoUrl\": \"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyMzIiIGhlaWdodD0iNDgiIHZpZXdCb3g9IjAgMCAyMzIgNDgiIHJvbGU9ImltZyIgYXJpYS1sYWJlbD0iV2F5ZmluZGVyIEVudGVycHJpc2UiPgogIDxyZWN0IHg9IjIiIHk9IjIiIHdpZHRoPSI0NCIgaGVpZ2h0PSI0NCIgcng9IjEwIiBmaWxsPSIjZmZkMTY2Ii8+CiAgPHBhdGggZD0iTTEyIDI1LjUgMzcgMTNsLTYuNSAyMy02LjItNy40LTUuMyA0LjQuNi03LjF6IiBmaWxsPSIjMDYxYTMzIi8+CiAgPHBhdGggZD0ibTE5LjYgMjguNSAxNy40LTE1LjUtMTIuNyAxNS42eiIgZmlsbD0iIzFkNGVkOCIvPgogIDx0ZXh0IHg9IjU4IiB5PSIyNiIgZm9udC1mYW1pbHk9IkludGVyLCAnU2Vnb2UgVUknLCBBcmlhbCwgc2Fucy1zZXJpZiIgZm9udC1zaXplPSIyMSIgZm9udC13ZWlnaHQ9IjgwMCIgZmlsbD0iIzBmMTcyYSI+V2F5ZmluZGVyPC90ZXh0PgogIDx0ZXh0IHg9IjU5IiB5PSI0MSIgZm9udC1mYW1pbHk9IkludGVyLCAnU2Vnb2UgVUknLCBBcmlhbCwgc2Fucy1zZXJpZiIgZm9udC1zaXplPSIxMCIgZm9udC13ZWlnaHQ9IjcwMCIgbGV0dGVyLXNwYWNpbmc9IjIuNiIgZmlsbD0iIzFkNGVkOCI+RU5URVJQUklTRTwvdGV4dD4KPC9zdmc+Cg==\",\n  \"authFlowId\": \"{{signInFlowId}}\",\n  \"isRegistrationFlowEnabled\": true,\n  \"registrationFlowId\": \"{{signUpFlowId}}\",\n  \"isRecoveryFlowEnabled\": false,\n  \"assertion\": {\n    \"validityPeriod\": 3600\n  },\n  \"loginConsent\": {\n    \"validityPeriod\": 0\n  },\n  \"allowedUserTypes\": [\n    \"{{userTypeHandle}}\"\n  ],\n  \"inboundAuthConfig\": [\n    {\n      \"type\": \"oauth2\",\n      \"config\": {\n        \"clientId\": \"{{appClientId}}\",\n        \"clientSecret\": \"{{appClientSecret}}\",\n        \"redirectUris\": [\n          \"{{appUrl}}\"\n        ],\n        \"postLogoutRedirectUris\": [\n          \"{{appUrl}}\"\n        ],\n        \"grantTypes\": [\n          \"authorization_code\",\n          \"refresh_token\"\n        ],\n        \"responseTypes\": [\n          \"code\"\n        ],\n        \"tokenEndpointAuthMethod\": \"client_secret_basic\",\n        \"pkceRequired\": true,\n        \"publicClient\": false,\n        \"requirePushedAuthorizationRequests\": false,\n        \"token\": {\n          \"accessToken\": {\n            \"userConfig\": {\n              \"validityPeriod\": 3600,\n              \"attributes\": [\n                \"username\",\n                \"email\",\n                \"given_name\",\n                \"family_name\",\n                \"roles\",\n                \"ouId\",\n                \"ouHandle\",\n                \"ouName\"\n              ]\n            }\n          },\n          \"idToken\": {\n            \"validityPeriod\": 3600,\n            \"userAttributes\": [\n              \"username\",\n              \"email\",\n              \"given_name\",\n              \"family_name\",\n              \"roles\",\n              \"ouId\",\n              \"ouHandle\",\n              \"ouName\"\n            ],\n            \"responseType\": \"JWT\"\n          },\n          \"refreshToken\": {\n            \"validityPeriod\": 86400\n          }\n        },\n        \"userInfo\": {\n          \"responseType\": \"JSON\",\n          \"userAttributes\": [\n            \"username\",\n            \"email\",\n            \"given_name\",\n            \"family_name\",\n            \"roles\",\n            \"ouId\",\n            \"ouHandle\",\n            \"ouName\"\n          ]\n        },\n        \"scopeClaims\": {\n          \"profile\": [\n            \"username\",\n            \"given_name\",\n            \"family_name\"\n          ],\n          \"email\": [\n            \"email\",\n            \"email_verified\"\n          ],\n          \"roles\": [\n            \"roles\"\n          ],\n          \"ou\": [\n            \"ouId\",\n            \"ouHandle\",\n            \"ouName\"\n          ]\n        }\n      }\n    }\n  ],\n  \"themeId\": \"{{themeId}}\",\n  \"layoutId\": \"{{layoutId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "33 - Share the application with every company",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/applications/{{appId}}/sharing-policies",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "applications",
+                "{{appId}}",
+                "sharing-policies"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"childUnits\": {\n    \"mode\": \"all\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "34 - Create the backend application",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});",
+                  "if (pm.response.json().id) { pm.environment.set('backendAppId', pm.response.json().id); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/applications",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "applications"
+              ]
+            },
+            "description": "The confidential client the app backend uses for the root-only management calls it makes on a company admin's behalf. It is owned by the Wayfinder Enterprise organization unit and names the company in its tokens.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ouId\": \"{{parentOuId}}\",\n  \"name\": \"{{backendAppName}}\",\n  \"description\": \"Backend client of the Wayfinder Enterprise sample\",\n  \"type\": \"m2m\",\n  \"inboundAuthConfig\": [\n    {\n      \"type\": \"oauth2\",\n      \"config\": {\n        \"clientId\": \"{{backendClientId}}\",\n        \"clientSecret\": \"{{backendClientSecret}}\",\n        \"grantTypes\": [\n          \"client_credentials\"\n        ],\n        \"tokenEndpointAuthMethod\": \"client_secret_basic\",\n        \"publicClient\": false,\n        \"token\": {\n          \"accessToken\": {\n            \"clientConfig\": {\n              \"attributes\": [\n                \"ouId\",\n                \"ouHandle\",\n                \"ouName\"\n              ]\n            }\n          }\n        }\n      }\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "35 - Share the backend application with every company",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/applications/{{backendAppId}}/sharing-policies",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "applications",
+                "{{backendAppId}}",
+                "sharing-policies"
+              ]
+            },
+            "description": "Lets the backend request a token for any company at /ou/{ouId}/oauth2/token.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"childUnits\": {\n    \"mode\": \"all\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "36 - Create the backend role and assign it to the backend application",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});",
+                  "if (pm.response.json().id) { pm.environment.set('backendRoleId', pm.response.json().id); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/roles",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "roles"
+              ]
+            },
+            "description": "Grants the root system permission to the backend application. The role is assigned in the application's own organization unit, because only those roles count when it gets a token for a company.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"{{backendRoleName}}\",\n  \"description\": \"Lets the Wayfinder Enterprise backend manage roles, connections and flow variables for companies\",\n  \"ouId\": \"{{parentOuId}}\",\n  \"permissions\": [\n    {\n      \"resourceServerId\": \"{{systemResourceServerId}}\",\n      \"permissions\": [\n        \"system\"\n      ]\n    }\n  ],\n  \"assignments\": [\n    {\n      \"id\": \"{{backendAppId}}\",\n      \"type\": \"app\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 - Onboard a Company",
+      "item": [
+        {
+          "name": "01 - Start the company sign-up flow",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});",
+                  "if (pm.response.json().executionId) { pm.environment.set('signUpExecutionId', pm.response.json().executionId); }",
+                  "if (pm.response.json().challengeToken) { pm.environment.set('signUpChallengeToken', pm.response.json().challengeToken); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/flow/execute",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "flow",
+                "execute"
+              ]
+            },
+            "description": "The same flow ThunderID's sign-up page runs when someone chooses Register your company in the app.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"applicationId\": \"{{appId}}\",\n  \"flowType\": \"REGISTRATION\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "02 - Enter the first admin's account",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "pm.test('Asks for the company', function () {",
+                  "    pm.expect(pm.response.json().data.inputs.map((input) => input.identifier)).to.include('ouHandle');",
+                  "});",
+                  "pm.environment.set('signUpChallengeToken', pm.response.json().challengeToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/flow/execute",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "flow",
+                "execute"
+              ]
+            },
+            "description": "The first step of the sign-up flow. A taken username returns this step again.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"executionId\": \"{{signUpExecutionId}}\",\n  \"challengeToken\": \"{{signUpChallengeToken}}\",\n  \"action\": \"action_account\",\n  \"inputs\": {\n    \"username\": \"{{companyAdminUsername}}\",\n    \"email\": \"{{companyAdminEmail}}\",\n    \"password\": \"{{companyAdminPassword}}\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "03 - Enter the company",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});",
+                  "pm.test('Flow completed', function () {",
+                  "    pm.expect(pm.response.json().flowStatus).to.equal('COMPLETE');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/flow/execute",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "flow",
+                "execute"
+              ]
+            },
+            "description": "Completes with flowStatus COMPLETE. The company is created under the parent unit with its admin inside it. A taken organization handle returns this step again.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"executionId\": \"{{signUpExecutionId}}\",\n  \"challengeToken\": \"{{signUpChallengeToken}}\",\n  \"action\": \"action_company\",\n  \"inputs\": {\n    \"ouName\": \"{{companyName}}\",\n    \"ouHandle\": \"{{companyHandle}}\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "04 - Find the company organization unit",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});",
+                  "const handle = pm.environment.get('companyHandle');",
+                  "const unit = (pm.response.json().organizationUnits || []).find((ou) => ou.handle === handle);",
+                  "if (unit) { pm.environment.set('companyOuId', unit.id); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/organization-units/{{parentOuId}}/ous",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "organization-units",
+                "{{parentOuId}}",
+                "ous"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "05 - Get a backend token for the company",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "const claims = JSON.parse(atob(pm.response.json().access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));",
+                  "pm.test('Issued for the company', function () {",
+                  "    pm.expect(claims.ouId).to.equal(pm.environment.get('companyOuId'));",
+                  "});",
+                  "pm.environment.set('companyBackendToken', pm.response.json().access_token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "{{backendClientId}}",
+                  "type": "string"
+                },
+                {
+                  "key": "password",
+                  "value": "{{backendClientSecret}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials",
+                  "type": "text"
+                },
+                {
+                  "key": "scope",
+                  "value": "system",
+                  "type": "text"
+                },
+                {
+                  "key": "resource",
+                  "value": "{{MGT_TOKEN_RESOURCE}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/ou/{{companyOuId}}/oauth2/token",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ou",
+                "{{companyOuId}}",
+                "oauth2",
+                "token"
+              ]
+            },
+            "description": "The backend application's client credentials at the company's token endpoint. The token names the company in its ouId, and the requests after it use it, as the app's admin routes do."
+          }
+        },
+        {
+          "name": "06 - Create the company's OpenID Connect identity provider",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});",
+                  "if (pm.response.json().id) { pm.environment.set('companyConnectionId', pm.response.json().id); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/connections/oidc",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "connections",
+                "oidc"
+              ]
+            },
+            "description": "Owned by the company. Register {{baseUrl}}/gate/callback as the callback URL at the identity provider. In the app, the OIDCConnectionCreate component does this.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"{{companyName}} SSO\",\n  \"ouId\": \"{{companyOuId}}\",\n  \"clientId\": \"{{ENTERPRISE_IDP_CLIENT_ID}}\",\n  \"clientSecret\": \"{{ENTERPRISE_IDP_CLIENT_SECRET}}\",\n  \"redirectUri\": \"{{baseUrl}}/gate/callback\",\n  \"authorizationEndpoint\": \"{{ENTERPRISE_IDP_AUTHORIZATION_ENDPOINT}}\",\n  \"tokenEndpoint\": \"{{ENTERPRISE_IDP_TOKEN_ENDPOINT}}\",\n  \"userInfoEndpoint\": \"{{ENTERPRISE_IDP_USERINFO_ENDPOINT}}\",\n  \"jwksEndpoint\": \"{{ENTERPRISE_IDP_JWKS_ENDPOINT}}\",\n  \"issuer\": \"{{ENTERPRISE_IDP_ISSUER}}\",\n  \"scopes\": [\n    \"openid\",\n    \"profile\",\n    \"email\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{companyBackendToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "07 - Plug the identity provider into the sign-in flow for the company",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/flows/{{signInFlowId}}/variables",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "flows",
+                "{{signInFlowId}}",
+                "variables"
+              ]
+            },
+            "description": "Sets the company's value of the shared sign-in flow's enterpriseIdp variable. In the app, the FlowConnectionBinding component does this.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ouId\": \"{{companyOuId}}\",\n  \"values\": {\n    \"enterpriseIdp\": \"{{companyConnectionId}}\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{companyBackendToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "08 - Read the company's sign-in flow variables",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Succeeded', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/flows/{{signInFlowId}}/variables?ouId={{companyOuId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "flows",
+                "{{signInFlowId}}",
+                "variables"
+              ],
+              "query": [
+                {
+                  "key": "ouId",
+                  "value": "{{companyOuId}}"
+                }
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{companyBackendToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "packages": {},
+        "requests": {},
+        "exec": [
+          "// Skip token check for auth-related endpoints",
+          "const skipPaths = [\"/oauth2/authorize\", \"/oauth2/token\", \"/flow/execute\"];",
+          "const requestPath = pm.request.url.getPath();",
+          "if (skipPaths.some(path => requestPath.includes(path))) {",
+          "    return;",
+          "}",
+          "// Check if we have a valid token",
+          "const accessToken = pm.environment.get(\"accessToken\");",
+          "const expiresAt = parseInt(pm.environment.get(\"expiresAt\") || \"0\");",
+          "const currentTime = Date.now();",
+          "const REFRESH_BUFFER_MS = 5 * 60 * 1000; // 5 minutes",
+          "if (accessToken && expiresAt && (currentTime < expiresAt - REFRESH_BUFFER_MS)) {",
+          "    console.log(\"✓ Token still valid\");",
+          "    return;",
+          "}",
+          "// Try to refresh token if we have one",
+          "const refreshToken = pm.environment.get(\"refreshToken\");",
+          "if (refreshToken) {",
+          "    console.log(\"⟳ Attempting token refresh...\");",
+          "    ",
+          "    pm.sendRequest({",
+          "        url: pm.environment.get(\"baseUrl\") + \"/oauth2/token\",",
+          "        method: 'POST',",
+          "        header: { 'Content-Type': 'application/x-www-form-urlencoded' },",
+          "        body: {",
+          "            mode: 'urlencoded',",
+          "            urlencoded: [",
+          "                { key: 'grant_type', value: 'refresh_token' },",
+          "                { key: 'refresh_token', value: refreshToken },",
+          "                { key: 'client_id', value: pm.environment.get(\"MGT_TOKEN_APP_CLIENT_ID\") }",
+          "            ]",
+          "        }",
+          "    }, (err, res) => {",
+          "        if (!err && res.code === 200) {",
+          "            const token = res.json();",
+          "            pm.environment.set(\"accessToken\", token.access_token);",
+          "            pm.environment.set(\"expiresAt\", String(Date.now() + (token.expires_in * 1000)));",
+          "            if (token.refresh_token) {",
+          "                pm.environment.set(\"refreshToken\", token.refresh_token);",
+          "            }",
+          "            console.log(\"✓ Token refreshed successfully\");",
+          "        } else {",
+          "            console.log(\"✗ Token refresh failed - run auth flow manually\");",
+          "            pm.environment.set(\"accessToken\", \"\");",
+          "        }",
+          "    });",
+          "} else {",
+          "    console.log(\"⚠ No token available - run the Auth folder requests first\");",
+          "}",
+          ""
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "packages": {},
+        "requests": {},
+        "exec": [
+          ""
+        ]
+      }
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{accessToken}}",
+        "type": "string"
+      }
+    ]
+  }
+}

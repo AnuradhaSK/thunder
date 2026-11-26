@@ -70,6 +70,8 @@ func (s *RoleAuthzTestSuite) SetupTest() {
 	authz.On("CanGrantPermissions", mock.Anything, mock.Anything).Return((*tidcommon.ServiceError)(nil)).Maybe()
 	authz.On("CanGrantMembership", mock.Anything, mock.Anything, mock.Anything).
 		Return((*tidcommon.ServiceError)(nil)).Maybe()
+	authz.On("CanGrantRoleInOU", mock.Anything, mock.Anything, mock.Anything).
+		Return((*tidcommon.ServiceError)(nil)).Maybe()
 	s.service = newRoleService(s.store, nil, nil, ous, nil, &fakeTransactioner{}, authz, s.sharing,
 		discardingBus{}, nil)
 	s.assignments = newRoleAssignmentService(s.store, nil, nil, nil, nil, &fakeTransactioner{}, authz, s.sharing,

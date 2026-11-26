@@ -23,6 +23,9 @@ type ResourceServerResponse struct {
 	HierarchicalPermissions bool                                `json:"hierarchicalPermissions"`
 	AuthorizationEngine     providers.AuthorizationEngineConfig `json:"authorizationEngine,omitempty"`
 	IsReadOnly              bool                                `json:"isReadOnly"`
+	// IsOwnedByOU is set only on a read in an organization unit: true for a resource server the unit owns, false
+	// for one shared with it.
+	IsOwnedByOU *bool `json:"isOwnedByOU,omitempty"`
 }
 
 // ResourceResponse represents a resource.

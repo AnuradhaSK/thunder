@@ -71,6 +71,7 @@ type listResourceServersMCPInput struct {
 	Name      string `json:"name,omitempty" jsonschema:"Part of the resource server's name or identifier, in any case, such as orders"`
 	Type      string `json:"type,omitempty" jsonschema:"Kind of resource server to list: API, MCP (an MCP server) or CUSTOM"`
 	ProjectID string `json:"projectId,omitempty" jsonschema:"ID of a project, from list_projects, to list only the resource servers in that project"`
+	OUID      string `json:"ouId,omitempty" jsonschema:"ID of an organization unit, to list the resource servers it owns and then the ones shared with it: the ones a role in that unit can grant. With projectId, only the project's resource servers that unit owns."`
 	Limit     int    `json:"limit,omitempty" jsonschema:"Maximum number of resource servers to return, at most 100, and 30 when not given. Only without name and type: a search returns every match."`
 	Offset    int    `json:"offset,omitempty" jsonschema:"Number of resource servers to skip. Only without name and type."`
 }
@@ -83,6 +84,7 @@ type resourceServerMCPItem struct {
 	Description    string `json:"description,omitempty"`
 	OUID           string `json:"ouId"`
 	ProjectID      string `json:"projectId,omitempty"`
+	Shared         bool   `json:"shared,omitempty"`
 }
 
 // resourceServerListMCPResponse is the list_resource_servers output.
@@ -283,7 +285,9 @@ func RegisterMCPTools(server *mcp.Server, roleService RoleServiceInterface,
 		Description: `Find the resource servers whose permissions roles grant: the APIs and MCP servers this ` +
 			`server protects, such as "the orders API" or "our messaging MCP server". name matches part of a ` +
 			`resource server's name or identifier in any case, type lists only APIs, MCP servers or custom ` +
-			`ones, and projectId lists only a project's resource servers. Returns each one's identifier, which ` +
+			`ones, and projectId lists only a project's resource servers. ouId lists the resource servers an ` +
+			`organization unit owns, then the ones shared with it, marked shared: a role in that unit can grant ` +
+			`permissions only of these. Returns each one's identifier, which ` +
 			`list_resource_server_permissions, list_roles, create_role and update_role_permissions take, its ` +
 			`type and its project. A search by name or type returns every match. Without one, the resource ` +
 			`servers are paged with limit and offset, and totalResults counts them all.`,
@@ -314,7 +318,9 @@ func RegisterMCPTools(server *mcp.Server, roleService RoleServiceInterface,
 			`nothing is created and the error names that role, to grant with update_role_assignments instead. ` +
 			`projectId creates the role in a project; find its ID with list_projects. Without ouId, the role ` +
 			`goes in the Default organization unit, or with projectId in the system organization unit, which ` +
-			`every project includes. Use update_role_assignments to grant it later.`,
+			`every project includes. The role's organization unit must own the resource server or have it ` +
+			`shared with it; list_resource_servers with ouId lists the ones it can use. Use ` +
+			`update_role_assignments to grant it later.`,
 		InputSchema: tool.GenerateSchema[createRoleMCPInput](
 			tool.WithEnum("assignees", "type", assigneeTypes)),
 		Annotations: &mcp.ToolAnnotations{
@@ -324,7 +330,7 @@ func RegisterMCPTools(server *mcp.Server, roleService RoleServiceInterface,
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "update_role_permissions",
 		Description: `Add and remove a role's permissions on one resource server, without resending the rest. ` +
-			`It changes ` +
+			`The role's organization unit must own the resource server or have it shared with it. It changes ` +
 			`access for every holder, so check them with get_role first. Removals run first, and nothing is ` +
 			`added if a removal is refused. ` + tools.removalNotice(),
 		InputSchema: tool.GenerateSchema[updateRolePermissionsMCPInput](),
@@ -524,7 +530,10 @@ func (t *roleTools) listResourceServers(ctx context.Context, _ *mcp.CallToolRequ
 	// A project's resource servers come from the project's own listing.
 	list := func(limit, offset int) (*resourcepkg.ResourceServerList, *tidcommon.ServiceError) {
 		if input.ProjectID != "" {
-			return t.resourceService.GetResourceServerListByProject(ctx, input.ProjectID, "", limit, offset)
+			return t.resourceService.GetResourceServerListByProject(ctx, input.ProjectID, input.OUID, limit, offset)
+		}
+		if input.OUID != "" {
+			return t.resourceService.GetResourceServerListByOUID(ctx, input.OUID, limit, offset)
 		}
 		return t.resourceService.GetResourceServerList(ctx, limit, offset)
 	}
@@ -876,7 +885,8 @@ func (t *roleTools) describeRole(ctx context.Context, roleID, ouID string) (*rol
 // resourceServerItemOf describes a resource server in a list.
 func resourceServerItemOf(server providers.ResourceServer) resourceServerMCPItem {
 	return resourceServerMCPItem{ResourceServer: server.Identifier, Name: server.Name, Type: typeOf(&server),
-		Description: server.Description, OUID: server.OUID, ProjectID: server.ProjectID}
+		Description: server.Description, OUID: server.OUID, ProjectID: server.ProjectID,
+		Shared: server.IsOwnedByOU != nil && !*server.IsOwnedByOU}
 }
 
 // typeOf returns a resource server's type. One without a type is a custom resource server, as the

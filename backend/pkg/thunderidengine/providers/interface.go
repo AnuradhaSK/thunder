@@ -214,6 +214,12 @@ type ResourceServerProvider interface {
 	ValidatePermissions(
 		ctx context.Context, resourceServerID string, permissions []string,
 	) ([]string, *common.ServiceError)
+	// IsResourceServerAvailableInOU reports whether the organization unit owns the resource server or a sharing
+	// policy of it reaches the unit. A request acting for an organization unit uses only resource servers available
+	// there.
+	IsResourceServerAvailableInOU(
+		ctx context.Context, resourceServerID, ouID string,
+	) (bool, *common.ServiceError)
 }
 
 // IDPProvider defines the interface for the identity provider provider.

@@ -62,6 +62,12 @@ func (r *stubPermissionResolver) ResolveForEntity(
 	return r.entityPerms, r.entityErr
 }
 
+func (r *stubPermissionResolver) ResolveHeldByEntity(
+	ctx context.Context, entityID string,
+) (security.PermissionSet, error) {
+	return r.ResolveForEntity(ctx, entityID)
+}
+
 func (r *stubPermissionResolver) ResolveForGroup(
 	_ context.Context, _ string,
 ) (security.PermissionSet, error) {
@@ -88,6 +94,27 @@ func (r *perEntityResolver) ResolveForEntity(_ context.Context, entityID string)
 		return nil, r.entityErr
 	}
 	return r.entities[entityID], nil
+}
+
+func (r *perEntityResolver) ResolveHeldByEntity(ctx context.Context, entityID string) (security.PermissionSet, error) {
+	return r.ResolveForEntity(ctx, entityID)
+}
+
+// usableAndHeldResolver tells what an entity may use apart from everything its roles hold.
+type usableAndHeldResolver struct {
+	stubPermissionResolver
+	usable map[string]security.PermissionSet
+	held   map[string]security.PermissionSet
+}
+
+func (r *usableAndHeldResolver) ResolveForEntity(_ context.Context, entityID string) (security.PermissionSet, error) {
+	return r.usable[entityID], nil
+}
+
+func (r *usableAndHeldResolver) ResolveHeldByEntity(
+	_ context.Context, entityID string,
+) (security.PermissionSet, error) {
+	return r.held[entityID], nil
 }
 
 // newGuardService returns a service with the given resolver injected.
@@ -676,6 +703,27 @@ func TestCanControlEntity(t *testing.T) {
 
 		assert.Nil(t, svcErr)
 		assert.Zero(t, resolver.entityCalls, "controlling self must not trigger lookups")
+	})
+
+	// The caller counts only what it may use, and the entity everything its roles hold, since AuthZEN evaluation
+	// counts every assignment.
+	t.Run("ComparesEverythingTheEntityHoldsWithWhatTheCallerMayUse", func(t *testing.T) {
+		resolver := &usableAndHeldResolver{
+			usable: map[string]security.PermissionSet{
+				"david": {escRSSystem: {"system:user"}},
+				"bob":   {escRSSystem: {"system:user:view"}},
+			},
+			held: map[string]security.PermissionSet{
+				"david": {escRSSystem: {"system:user"}, escRSPayroll: {"payroll:write"}},
+				"bob":   {escRSSystem: {"system:user:view"}, escRSPayroll: {"payroll:write"}},
+			},
+		}
+		svc := newGuardService(resolver)
+
+		svcErr := svc.CanControlEntity(callerWith("david", "system:user"), "bob")
+
+		require.NotNil(t, svcErr)
+		assert.Equal(t, ErrorGrantNotPermitted.Code, svcErr.Code)
 	})
 
 	t.Run("AssistantCannotControlAdministratorEntity", func(t *testing.T) {

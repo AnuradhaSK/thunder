@@ -188,6 +188,80 @@ func (_c *ResourceServerProviderMock_GetResourceServerByIdentifier_Call) RunAndR
 	return _c
 }
 
+// IsResourceServerAvailableInOU provides a mock function for the type ResourceServerProviderMock
+func (_mock *ResourceServerProviderMock) IsResourceServerAvailableInOU(ctx context.Context, resourceServerID string, ouID string) (bool, *common.ServiceError) {
+	ret := _mock.Called(ctx, resourceServerID, ouID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for IsResourceServerAvailableInOU")
+	}
+
+	var r0 bool
+	var r1 *common.ServiceError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) (bool, *common.ServiceError)); ok {
+		return returnFunc(ctx, resourceServerID, ouID)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) bool); ok {
+		r0 = returnFunc(ctx, resourceServerID, ouID)
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string) *common.ServiceError); ok {
+		r1 = returnFunc(ctx, resourceServerID, ouID)
+	} else {
+		if ret.Get(1) != nil {
+			r1 = ret.Get(1).(*common.ServiceError)
+		}
+	}
+	return r0, r1
+}
+
+// ResourceServerProviderMock_IsResourceServerAvailableInOU_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'IsResourceServerAvailableInOU'
+type ResourceServerProviderMock_IsResourceServerAvailableInOU_Call struct {
+	*mock.Call
+}
+
+// IsResourceServerAvailableInOU is a helper method to define mock.On call
+//   - ctx context.Context
+//   - resourceServerID string
+//   - ouID string
+func (_e *ResourceServerProviderMock_Expecter) IsResourceServerAvailableInOU(ctx any, resourceServerID any, ouID any) *ResourceServerProviderMock_IsResourceServerAvailableInOU_Call {
+	return &ResourceServerProviderMock_IsResourceServerAvailableInOU_Call{Call: _e.mock.On("IsResourceServerAvailableInOU", ctx, resourceServerID, ouID)}
+}
+
+func (_c *ResourceServerProviderMock_IsResourceServerAvailableInOU_Call) Run(run func(ctx context.Context, resourceServerID string, ouID string)) *ResourceServerProviderMock_IsResourceServerAvailableInOU_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 string
+		if args[2] != nil {
+			arg2 = args[2].(string)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
+	})
+	return _c
+}
+
+func (_c *ResourceServerProviderMock_IsResourceServerAvailableInOU_Call) Return(b bool, serviceError *common.ServiceError) *ResourceServerProviderMock_IsResourceServerAvailableInOU_Call {
+	_c.Call.Return(b, serviceError)
+	return _c
+}
+
+func (_c *ResourceServerProviderMock_IsResourceServerAvailableInOU_Call) RunAndReturn(run func(ctx context.Context, resourceServerID string, ouID string) (bool, *common.ServiceError)) *ResourceServerProviderMock_IsResourceServerAvailableInOU_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // ValidatePermissions provides a mock function for the type ResourceServerProviderMock
 func (_mock *ResourceServerProviderMock) ValidatePermissions(ctx context.Context, resourceServerID string, permissions []string) ([]string, *common.ServiceError) {
 	ret := _mock.Called(ctx, resourceServerID, permissions)

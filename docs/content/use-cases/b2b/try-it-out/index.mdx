@@ -77,7 +77,11 @@ The fastest way to create the resources the walkthroughs need. First, [get <Prod
 3. Choose **Import / Export**, then **Import**. Upload `thunderid-config/organization-unit.yaml` as the configuration
    file. It needs no environment file. Choose **Continue**, and once the import test passes, choose
    **Import configuration**.
-4. Choose **Import / Export**, then **Import** again. Upload `thunderid-config/thunderid-config.yaml` as the
+4. Share the System resource server with Wayfinder Enterprise and its companies, with the two policies in
+   [Share the System Resource Server](../journeys/delegated-administration.mdx#share-the-system-resource-server). Send
+   them to the Control Plane's API, at the same address as its console. The second file's backend role holds a System
+   permission, so its import fails with `ROL-1047` without the share.
+5. Choose **Import / Export**, then **Import** again. Upload `thunderid-config/thunderid-config.yaml` as the
    configuration file and `thunderid-config/thunderid.env` as the environment variables file, to provide the variables
    the YAML references. Choose **Continue**, then **Import configuration**. A secret you left empty can be entered in
    the **Environment variables** editor before you import.
